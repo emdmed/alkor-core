@@ -1,0 +1,27 @@
+# The tests that need no model, no server and no contract pack.
+#
+# Everything here runs on a runner with nothing installed but Node: the transport is
+# exercised against scripted responses, the modes against fake tools, and pack-dependent
+# tests skip themselves rather than fail when no pack is on disk. A green run therefore
+# means the harness is sound, not that any model scored anything — those numbers come from
+# a machine with weights on it and are never claimed here.
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # The CLI is plain TypeScript run natively. 24 is the floor, and the floor is
+          # what CI should run: a newer Node would hide a syntax the stated minimum
+          # cannot strip.
+          node-version: '24'
+      - run: npm ci
+      - run: npm test

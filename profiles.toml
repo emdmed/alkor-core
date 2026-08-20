@@ -1,0 +1,40 @@
+# Which profiles exist, what contract pack each reads, and where its server lives.
+#
+# This is the ONLY file that may name a project outside this repository. Nothing under
+# src/core/ or src/modes/ knows such a path; point `pack` and `module` somewhere else and
+# the same checkout evaluates a different project.
+#
+# `pack` is a directory containing a pack.toml manifest, resolved relative to this file.
+# Override per profile with PACK_ROOT_<PROFILE> or `--pack DIR` (both resolve against the
+# current working directory instead).
+#
+# `module` is the other half of the same idea, and optional: a path to the profile's
+# profile.ts, resolved the same way (PROFILE_MODULE_<PROFILE> overrides it, against cwd).
+# Without it the built-in src/profiles/<name>/profile.ts is used. It exists because a
+# domain's prompts and its scoring rules are one secret: a project that keeps its pack
+# private has no use for a harness that makes it publish the scorer that reads it. Point
+# both `pack` and `module` at another repository and that domain lives entirely there.
+#
+# Profiles generally need DIFFERENT models, so each names its own server. Start one per
+# profile — the harness will not start one for you, because a server's flags are part of a
+# measurement and outlive many runs.
+
+# The agentic worked example: six tools, no pack, no domain. It is here to exercise the
+# tool loop and to be read by someone writing their own profile.
+#
+# Needs a model whose chat template supports tools. gemma-3 does not, and the loop then
+# sees prose where it expects tool_calls.
+[coding]
+mode = "agentic"
+url = "http://127.0.0.1:8082"
+model = "~/models/Qwen3-4B-Q4_K_M.gguf"
+ctx = 32768
+
+# The reference clinical pack lands here. Until then this file ships one profile, because
+# a config entry pointing at a directory that does not exist is worse than no entry.
+#
+# [clinical]
+# mode = "extract"
+# pack = "packs/clinical"
+# url  = "http://127.0.0.1:8081"
+# ctx  = 32768

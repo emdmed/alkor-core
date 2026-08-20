@@ -1,0 +1,36 @@
+{
+  "name": "medextract",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "description": "A harness for validating local-model extraction from clinical notes, against contract packs.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "medextract": "./src/cli.ts"
+  },
+  "files": [
+    "src",
+    "scripts",
+    "spec",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test 'test/*.test.ts'",
+    "profiles": "node src/cli.ts profiles",
+    "eval": "node src/cli.ts eval",
+    "agent": "node src/cli.ts agent"
+  },
+  "dependencies": {
+    "smol-toml": "^1.3.1",
+    "undici": "^8.10.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0"
+  }
+}
