@@ -1,0 +1,56 @@
+# The reference contract pack: vital-sign extraction from clinical notes.
+#
+# This is a worked example as much as it is a corpus. It is the pack `spec/` describes and
+# the one the profile in src/profiles/clinical/ reads, so a project writing its first pack
+# has something complete to copy: a prompt with no placeholders, a schema whose property
+# order is pinned to a golden, an answer key that states what each case discriminates, and
+# a model declaration naming the weights the numbers were measured on.
+#
+# THE NOTES ARE SYNTHETIC. They were written for this corpus and are not derived from,
+# edited from, or inspired by any real record. Anything added here must meet the same
+# standard: this directory is the single most likely place for patient data to enter a
+# public repository, and there the mistake cannot be taken back.
+#
+# Paths are relative to this file. The harness reads files by KEY, never by path, so
+# moving or renaming a contract is a change here rather than a change in code.
+
+spec = 1
+name = "clinical"
+
+# Per-case source documents. `{case}` is substituted with the eval case name, which is why
+# a case's `name` and its note's filename are the same string.
+documents = "notes/{case}.note.txt"
+
+[files]
+# The system prompt. NO placeholders: the note is the `user` message, not spliced into this
+# file. That is what keeps these bytes identical across every case, which is what lets
+# llama-server's `cache_prompt` reuse the KV cache from one note to the next — and what
+# would make a byte comparison against a second runtime mean something.
+vitalSignsPrompt       = "prompts/vital-signs.md"
+vitalSignsSchema       = "schemas/vital-signs.schema.json"
+# The schema AS SERIALIZED. Property order is compiled into the GBNF grammar, so the bytes
+# are pinned rather than the structure — a reordering that deep-equality would call
+# identical changes what the model is forced to emit first. See the schema's x-notes.
+vitalSignsSchemaGolden = "schemas/vital-signs.golden.json"
+vitalSignsCases        = "evals/vital-signs-cases.json"
+
+# The model declaration. Read by the profile for its per-task sampling, and by anyone who
+# wants to reproduce a number: a result quoted without the weights and the cap it ran
+# under is not reproducible.
+models = "models.default.toml"
+
+# --- Settings for the profile that reads this pack. -----------------------------------
+#
+# Inert to the harness core, which acts only on `spec`, `name`, `files`, `documents` and
+# `include`. Everything below is read by src/profiles/clinical/, and lives here rather
+# than in that code because it is part of the contract: a rule the eval applies and the
+# consuming application does not is a rule that ships unverified.
+[clinical]
+# `json_schema.name` in the request body. llama.cpp does not act on this label, but two
+# runtimes sharing this pack must send the SAME one or their pinned bodies differ for no
+# reason.
+vitalSignsSchemaName = "vital_signs"
+
+# Which task `eval --profile clinical` runs when none is named. One task today; the key
+# exists because the second one should not change the command line.
+defaultTask = "vital-signs"

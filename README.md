@@ -12,10 +12,10 @@ of it.
 node src/cli.ts eval --profile clinical --constrain
 ```
 
-> **Status: pre-release.** The harness, the pack format and the agentic worked example are
-> here and tested. The reference clinical pack and its corpus are being authored, and no
-> clinical numbers are quoted anywhere in this repository until they have been measured on
-> a corpus that ships with it. See [Status](#status).
+> **Status: pre-release.** The harness, the pack format, the reference clinical pack and
+> its corpus are here and tested. Every number below was measured on the corpus that ships
+> in this repository, against weights named by sha256. See [Measured](#measured) — including
+> what the result does *not* show.
 
 ## What this is, and what it is not
 
@@ -70,6 +70,9 @@ src/core/     config.ts    profiles.toml — which profiles exist, and what each
 src/modes/    extract.ts   single-shot constrained extraction, one retry
               agentic.ts   the tool loop, for one task run to completion
               session.ts   the same loop, multi-turn, with a consent gate
+src/profiles/ clinical/    the reference profile: reads the pack below, names no vital sign
+              coding/      the agentic worked example: six tools, no pack
+packs/        clinical/    the reference pack — prompt, schema + golden, cases, 12 notes
 src/index.ts  the public API — what a profile is written against
 src/cli.ts    eval, agent, profiles
 profiles.toml the only file that may name a project outside this repository
@@ -207,6 +210,46 @@ Every run writes JSONL to `${XDG_STATE_HOME:-~/.local/state}/medextract/traces/<
 raw completion, which for a clinical profile means the note. A profile that handles patient
 data supplies a `redact` hook and must set one before tracing anything real.
 
+## Measured
+
+`Qwen3-4B-Q4_K_M` (sha256 `7485fe6f…`, the weights `packs/clinical/models.default.toml`
+declares), llama.cpp with `--jinja`, thinking off, temperature 0, `max_tokens` 1024, one
+run per note:
+
+| | constrained | unconstrained |
+|---|---|---|
+| detection (the gate, floor 90%) | **46/46** | 46/46 |
+| value exact | 46/46 | 46/46 |
+| unit exact | 46/46 | 46/46 |
+| provenance (`raw_text` found in the note) | 46/46 | 46/46 |
+| hallucinations | 0 | 0 |
+| failed runs | 0 | 0 |
+
+**Read this as a statement about the corpus, not about the model.** A 4B model saturating
+every metric — and scoring identically with and without a grammar — means the corpus is
+currently a floor check rather than a discriminating benchmark. It says the contract is
+coherent and that an extractor built this way clears the bar on clean synthetic notes. It
+does not rank models, and it does not yet demonstrate what constrained decoding buys.
+
+The most likely reason is that the prompt names every trap the corpus sets: it forbids
+deriving a BMI, and the BMI case is a note whose BMI is derivable; it forbids using stale
+values, and the temporal case marks its stale values plainly. That is the right prompt for
+a product and the wrong corpus for a measurement. Harder cases — traps the prompt does not
+pre-announce, ambiguous units, values split across a line, notes that contradict
+themselves — are the next work on this pack, and the numbers above will fall when they land.
+That is the point of putting them here.
+
+Reproduce it:
+
+```bash
+LLAMA_PORT=8081 LLAMA_MODEL=~/models/Qwen3-4B-Q4_K_M.gguf scripts/llama-server.sh \
+  -ngl 99 --no-webui --parallel 1
+node src/cli.ts eval --profile clinical --constrain
+```
+
+Every case's full completion is written to the trace, so a suspiciously perfect score is
+checked by reading a file rather than by re-running the model.
+
 ## Status
 
 | | |
@@ -216,13 +259,14 @@ data supplies a `redact` hook and must set one before tracing anything real.
 | out-of-tree profiles and packs | done |
 | public API (`medextract` entry point) | done |
 | agentic worked example (`coding`) | done |
-| **reference clinical pack + corpus** | **in progress** |
+| reference clinical pack + corpus | done — 12 notes, 46 graded slots |
+| harder cases for that corpus | next |
 | `validate` verb, run records, CI | planned |
 
-The reference pack is a synthetic, bilingual, adversarial corpus with a per-case answer
-key. It is synthetic from the first commit and will never be derived from a real record —
-a public clinical corpus is the single most likely place for patient data to enter a
-repository, and there the mistake is unrecoverable.
+The reference pack is a synthetic, bilingual corpus with a per-case answer key that states
+what each case discriminates. It is synthetic from the first commit and will never be
+derived from a real record — a public clinical corpus is the single most likely place for
+patient data to enter a repository, and there the mistake is unrecoverable.
 
 ## Requirements
 

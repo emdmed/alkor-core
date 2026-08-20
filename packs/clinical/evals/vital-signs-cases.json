@@ -1,0 +1,151 @@
+{
+  "_comment": "Expected vital signs per synthetic case. The notes are synthetic and were written for this corpus: they contain no patient data, no identifiers and nothing derived from a real record. Anything added here must meet the same standard - a public clinical corpus is the single most likely place for patient data to enter a repository, and there the mistake is unrecoverable.",
+  "_fields": "The nine gradeable slots are blood_pressure, heart_rate, temperature, weight, height, oxygen_saturation, respiratory_rate, blood_glucose, bmi. The profile does not read this line: it derives the slot list from the schema's properties, which is the one place the order is load-bearing, and then asserts this list agrees. Two statements of the field set that can disagree is how a denominator goes quietly wrong.",
+  "_implicitAbsent": "A gradeable field NOT listed in a case's `fields` array is implicitly {kind: absent}. This is what makes hallucination counting total rather than sampled: every one of the nine slots is accounted for in every case, without 108 hand-written entries most of which would say the same thing. A case may still list `absent` explicitly when the note actively invites the mistake - that is emphasis for a human reader, not different semantics.",
+  "_expectKinds": {
+    "value": "Must be extracted. `value` and `unit` are both graded and reported separately: a right number with a wrong unit is a different bug from a wrong number, and lumping them hides which one a prompt change fixed.",
+    "bp": "As `value`, but systolic AND diastolic must both match. A half-right blood pressure is wrong - it is one reading, not two measurements.",
+    "unresolved": "The note names the sign without a number ('febrile', 'tachycardic'). Detection is NOT required and NOT rewarded; emitting any number here counts as a hallucination. This is the class that catches a model filling in what a clinician would have written.",
+    "absent": "The sign appears nowhere in the note, or appears only as a value the prompt tells the model to ignore. Any non-null output is a hallucination."
+  },
+  "_floor": "fieldRecallFloor gates the eval: of expectations with kind `value` or `bp`, the share the model extracted at all. Detection is the gated metric because a missed vital is invisible to the clinician, while a spurious one is visible and rejected in a click. 0.90 is a requirement of this contract, not a number fitted to a model - a run that lands under it fails, and the run's own report says by how much.",
+  "fieldRecallFloor": 0.9,
+  "cases": [
+    {
+      "name": "vs-en-01-vitals-block",
+      "class": "block",
+      "note": "Standard vitals block in the usual English abbreviations. Discriminator: abbreviation expansion (BP, HR, T, SpO2) and the canonical degree symbol where the note writes a bare 'C'. This is the case that should never fail; if it does, nothing below is interpretable.",
+      "fields": [
+        { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 148, "diastolic": 92, "unit": "mmHg" } },
+        { "field": "heart_rate", "expect": { "kind": "value", "value": 78, "unit": "bpm" } },
+        { "field": "temperature", "expect": { "kind": "value", "value": 36.4, "unit": "°C" } },
+        { "field": "weight", "expect": { "kind": "value", "value": 82.5, "unit": "kg" } },
+        { "field": "height", "expect": { "kind": "value", "value": 171, "unit": "cm" } },
+        { "field": "oxygen_saturation", "expect": { "kind": "value", "value": 97, "unit": "%" } }
+      ]
+    },
+    {
+      "name": "vs-en-02-imperial",
+      "class": "units",
+      "note": "Imperial units throughout. Discriminator: the measurement system must be transcribed as written (°F, lb, in), NOT silently converted to metric. A converted value is scored as a unit error even when the arithmetic is right, because a conversion hides a transcription error behind a plausible number.",
+      "fields": [
+        { "field": "temperature", "expect": { "kind": "value", "value": 101.2, "unit": "°F" } },
+        { "field": "weight", "expect": { "kind": "value", "value": 187, "unit": "lb" } },
+        { "field": "height", "expect": { "kind": "value", "value": 69, "unit": "in" } },
+        { "field": "heart_rate", "expect": { "kind": "value", "value": 102, "unit": "bpm" } },
+        { "field": "respiratory_rate", "expect": { "kind": "value", "value": 22, "unit": "breaths/min" } },
+        { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 118, "diastolic": 74, "unit": "mmHg" } }
+      ]
+    },
+    {
+      "name": "vs-en-03-prose",
+      "class": "prose",
+      "note": "No vitals block at all - every value is embedded in running prose, and every unit is spelled out ('106 over 68', '88 beats per minute', '18 times a minute', '37.1 degrees', '94 per cent'). Discriminator: extraction without the visual scaffolding of a labelled block, which is how ward evolution notes are actually written, plus canonicalising a unit the note never writes as a symbol.",
+      "fields": [
+        { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 106, "diastolic": 68, "unit": "mmHg" } },
+        { "field": "heart_rate", "expect": { "kind": "value", "value": 88, "unit": "bpm" } },
+        { "field": "respiratory_rate", "expect": { "kind": "value", "value": 18, "unit": "breaths/min" } },
+        { "field": "temperature", "expect": { "kind": "value", "value": 37.1, "unit": "°C" } },
+        { "field": "oxygen_saturation", "expect": { "kind": "value", "value": 94, "unit": "%" } }
+      ]
+    },
+    {
+      "name": "vs-en-04-historical",
+      "class": "temporal",
+      "note": "Carries two historical weights (104 kg, 97 kg) and a historical blood pressure (156/94), all clearly attributed to previous visits, alongside today's values. Discriminator: only THIS encounter's observations. Emitting 104 or 97 as the weight is the failure being measured, and it is the most clinically dangerous one in the corpus because the number is real, just stale.",
+      "fields": [
+        { "field": "weight", "expect": { "kind": "value", "value": 91.2, "unit": "kg" } },
+        { "field": "height", "expect": { "kind": "value", "value": 168, "unit": "cm" } },
+        { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 132, "diastolic": 84, "unit": "mmHg" } },
+        { "field": "heart_rate", "expect": { "kind": "value", "value": 72, "unit": "bpm" } }
+      ]
+    },
+    {
+      "name": "vs-en-05-no-vitals",
+      "class": "none",
+      "note": "A telephone consultation with no examination and no observations of any kind. Every slot is implicitly absent, so this case grades nothing and can only lose points - it exists to measure whether the model invents a plausible set of normal vitals when handed a note that has none. The single most important case in the corpus for a clinical reader.",
+      "fields": []
+    },
+    {
+      "name": "vs-en-06-qualitative",
+      "class": "qualitative",
+      "note": "Four signs named in words with no figure attached ('febrile', 'tachycardic', 'tachypnoeic', 'saturating well'), and one real number that happens to be a weight recorded for drug dosing. Discriminator: a qualitative description is not a measurement. A model that turns 'febrile' into 38.5 has done the one thing the prompt forbids.",
+      "fields": [
+        { "field": "weight", "expect": { "kind": "value", "value": 64, "unit": "kg" } },
+        { "field": "temperature", "expect": { "kind": "unresolved" } },
+        { "field": "heart_rate", "expect": { "kind": "unresolved" } },
+        { "field": "respiratory_rate", "expect": { "kind": "unresolved" } },
+        { "field": "oxygen_saturation", "expect": { "kind": "unresolved" } }
+      ]
+    },
+    {
+      "name": "vs-es-07-bloque",
+      "class": "language",
+      "note": "A full Spanish vitals block. Three discriminators at once: Spanish abbreviations (PA, FC, T, Peso, Talla, SatO2, FR), the decimal comma ('36,8', '70,5') which must become a JSON number with a point, and unit canonicalisation across languages ('lpm' -> 'bpm', 'rpm' -> 'breaths/min'). The measurement system is unchanged by any of that, which is the distinction the prompt draws.",
+      "fields": [
+        { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 128, "diastolic": 76, "unit": "mmHg" } },
+        { "field": "heart_rate", "expect": { "kind": "value", "value": 64, "unit": "bpm" } },
+        { "field": "temperature", "expect": { "kind": "value", "value": 36.8, "unit": "°C" } },
+        { "field": "weight", "expect": { "kind": "value", "value": 70.5, "unit": "kg" } },
+        { "field": "height", "expect": { "kind": "value", "value": 162, "unit": "cm" } },
+        { "field": "oxygen_saturation", "expect": { "kind": "value", "value": 98, "unit": "%" } },
+        { "field": "respiratory_rate", "expect": { "kind": "value", "value": 16, "unit": "breaths/min" } }
+      ]
+    },
+    {
+      "name": "vs-es-08-glucemia-repetida",
+      "class": "repeat",
+      "note": "Blood glucose measured twice in the same encounter: 240 mg/dL on arrival, 155 mg/dL two hours later. The last measurement is the answer. The first figure is the alarming one and it opens the note, which is exactly why the rule exists and exactly what makes this case discriminating.",
+      "fields": [
+        { "field": "blood_glucose", "expect": { "kind": "value", "value": 155, "unit": "mg/dL" } },
+        { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 138, "diastolic": 88, "unit": "mmHg" } }
+      ]
+    },
+    {
+      "name": "vs-en-09-distractors",
+      "class": "negative-controls",
+      "note": "Numbers that look like vital signs and are not: a creatinine in mg/dL, sodium and potassium in mmol/L, a pain score written '7/10' in the shape of a blood pressure, a drug dose, an oxygen FLOW rate of 2 L/min, and a room number. Two real observations sit underneath them. The absent expectations here are listed explicitly rather than left implicit, because each names a specific trap.",
+      "fields": [
+        { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 122, "diastolic": 78, "unit": "mmHg" } },
+        { "field": "temperature", "expect": { "kind": "value", "value": 36.9, "unit": "°C" } },
+        { "field": "blood_glucose", "expect": { "kind": "absent" } },
+        { "field": "oxygen_saturation", "expect": { "kind": "absent" } }
+      ]
+    },
+    {
+      "name": "vs-en-10-extreme",
+      "class": "extreme",
+      "note": "Every value is clinically implausible but internally consistent with a critically unwell patient: HR 210, BP 88/44, glucose 612 mg/dL. Discriminator: the prompt says transcribe rather than correct, and the schema's numeric bounds are deliberately wide enough to admit all of these. A model that 'fixes' 210 to 110 has silently destroyed the one reading that mattered.",
+      "fields": [
+        { "field": "heart_rate", "expect": { "kind": "value", "value": 210, "unit": "bpm" } },
+        { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 88, "diastolic": 44, "unit": "mmHg" } },
+        { "field": "blood_glucose", "expect": { "kind": "value", "value": 612, "unit": "mg/dL" } },
+        { "field": "temperature", "expect": { "kind": "value", "value": 38.9, "unit": "°C" } },
+        { "field": "respiratory_rate", "expect": { "kind": "value", "value": 32, "unit": "breaths/min" } }
+      ]
+    },
+    {
+      "name": "vs-es-11-imc-declarado",
+      "class": "derived",
+      "note": "BMI is WRITTEN DOWN ('IMC 28,7 kg/m2') alongside the weight and height it came from, so it is extracted like any other transcribed value. Paired with vs-en-12, which withholds it. Also carries the decimal comma and a unit written without the superscript.",
+      "fields": [
+        { "field": "weight", "expect": { "kind": "value", "value": 88, "unit": "kg" } },
+        { "field": "height", "expect": { "kind": "value", "value": 175, "unit": "cm" } },
+        { "field": "bmi", "expect": { "kind": "value", "value": 28.7, "unit": "kg/m²" } },
+        { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 130, "diastolic": 82, "unit": "mmHg" } }
+      ]
+    },
+    {
+      "name": "vs-en-12-bmi-not-stated",
+      "class": "derived",
+      "note": "Weight 70 kg and height 180 cm are both present and the BMI is trivially computable, and it is NOT written in the note - so it is absent. The pair with vs-es-11 is the whole point: the same two inputs, one note that states the derived value and one that does not, and only the stated one may be emitted. A model that computes 21.6 here is doing arithmetic the prompt forbids, and doing it well is not a defence.",
+      "fields": [
+        { "field": "weight", "expect": { "kind": "value", "value": 70, "unit": "kg" } },
+        { "field": "height", "expect": { "kind": "value", "value": 180, "unit": "cm" } },
+        { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 124, "diastolic": 76, "unit": "mmHg" } },
+        { "field": "heart_rate", "expect": { "kind": "value", "value": 68, "unit": "bpm" } },
+        { "field": "bmi", "expect": { "kind": "absent" } }
+      ]
+    }
+  ]
+}

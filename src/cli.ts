@@ -112,7 +112,7 @@ if (command === 'agent') {
   if (profile!.mode !== 'agentic') usage(`profile '${profile!.name}' is mode '${profile!.mode}', which has no agent loop`)
   if (!profile!.tools?.length) usage(`profile '${profile!.name}' declares no tools`)
 
-  const trace = openTrace(profile!.name)
+  const trace = openTrace(profile!.name, profile!.redact)
   const res = await runAgent({
     systemPrompt: profile!.systemPrompt ?? '',
     task: values.task!,
@@ -130,7 +130,7 @@ if (command === 'agent') {
   process.exit(res.stop === 'done' ? 0 : 1)
 }
 
-const trace = openTrace(profile!.name)
+const trace = openTrace(profile!.name, profile!.redact)
 const verdict = await profile!.runEval({
   config: profileConfig!,
   pack,

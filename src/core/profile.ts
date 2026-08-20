@@ -22,7 +22,7 @@ import { pathToFileURL } from 'node:url'
 import type { Pack } from './pack.ts'
 import type { ToolDef } from './tools.ts'
 import { CONFIG_NAME, envSuffix, type Mode, type ProfileConfig } from './config.ts'
-import type { Trace } from './trace.ts'
+import type { Redactor, Trace } from './trace.ts'
 
 const envKey = (name: string) => `PROFILE_MODULE_${envSuffix(name)}`
 
@@ -70,6 +70,13 @@ export interface ProfileModule {
   tools?: ToolDef[]
   /** Agentic profiles only: default step cap, overridable with --steps. */
   maxSteps?: number
+  /**
+   * Redaction for this profile's trace lines. `trace.ts` promises this hook and it has to
+   * be reachable from somewhere: a trace holds the raw prompt and the raw completion, so
+   * for a profile over real records it holds patient data. Absent means identity, which is
+   * a statement about a synthetic corpus rather than a safe default.
+   */
+  redact?: Redactor
   /** Extract profiles only: documents in the pack that `review` will accept by name. */
   documentNames?(pack: Pack): string[]
   /** Extract profiles only: one interactive document review. */

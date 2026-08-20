@@ -1,0 +1,57 @@
+# What "the model" means for this pack.
+#
+# A recall figure quoted without the weights, the quantisation and the token cap it ran
+# under is not reproducible, and a pack that does not state them invites its numbers to be
+# read as properties of the harness. This file is that statement, and it is data so that a
+# consuming application can seed its own runtime config from the same declaration the eval
+# used.
+
+[generation]
+# A label, not a lookup. Whatever produced a stored result should stay attributable to it,
+# so this changes whenever the weights change.
+id = "Qwen3-4B-Q4_K_M"
+
+# Where the weights come from for a fresh machine. The harness does not download anything
+# — it talks to a server you started — but the eval numbers in the README were measured
+# against exactly these bytes.
+hf_repo = "Qwen/Qwen3-4B-GGUF"
+hf_file = "Qwen3-4B-Q4_K_M.gguf"
+sha256 = "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5"
+size_bytes = 2497280256
+
+# 32768 costs 1-2 GB of KV cache on top of ~2.5 GB of weights. It is declared rather than
+# hardcoded precisely so a low-memory machine can drop it; this task's inputs are single
+# notes and would fit in far less.
+ctx_size = 32768
+
+# --jinja applies the model's own chat template. Required, not optional: without it
+# `chat_template_kwargs` below is silently ignored.
+jinja = true
+
+# Qwen3 is a hybrid reasoning model and its template turns thinking ON by default, so
+# --jinja opts every request into it unless this says otherwise. Measured on a sibling
+# harness, asking "What is 2+2? Answer in one word": thinking on = 199 completion tokens
+# and ~15 s; off = 3 tokens and 0.3 s. Nothing here reads `reasoning_content`.
+enable_thinking = false
+
+# --no-webui: llama-server serves a chat UI by default, which has no business being
+# reachable from a machine handling clinical text and is not what the port is for.
+# --parallel 1: one slot. Extra slots only fragment the KV cache `cache_prompt` depends on.
+extra_args = ["--no-webui", "--parallel", "1"]
+
+# --- Per-task sampling. ---
+#
+# temperature 0 on a graded task is the point rather than a preference: the task emits a
+# JSON contract, and two runs over the same note must agree or the eval is measuring dice
+# rather than the model.
+#
+# top_p is deliberately ABSENT. At temperature 0 it does nothing, and matching another
+# runtime's request body means omitting the field, not setting it to the same number.
+
+[sampling.vital_signs]
+temperature = 0.0
+# The whole answer is one closed object of at most eleven short fields. 1024 is roughly
+# four times a maximal legal response, which leaves room for a model that pads without
+# letting a runaway generation hold the run open until the timeout.
+max_tokens = 1024
+timeout_secs = 300

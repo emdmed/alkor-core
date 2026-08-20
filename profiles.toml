@@ -30,11 +30,18 @@ url = "http://127.0.0.1:8082"
 model = "~/models/Qwen3-4B-Q4_K_M.gguf"
 ctx = 32768
 
-# The reference clinical pack lands here. Until then this file ships one profile, because
-# a config entry pointing at a directory that does not exist is worse than no entry.
+# The reference pack: vital-sign extraction from twelve synthetic clinical notes, English
+# and Spanish. Unlike every other pack the harness reads, this one lives IN this repository
+# — it is the worked example, so it has to be here to be read.
 #
-# [clinical]
-# mode = "extract"
-# pack = "packs/clinical"
-# url  = "http://127.0.0.1:8081"
-# ctx  = 32768
+# Qwen3-4B-Q4_K_M is what the numbers in the README were measured against; the pack's
+# models.default.toml names the exact weights and the sampling.
+[clinical]
+mode = "extract"
+pack = "packs/clinical"
+url = "http://127.0.0.1:8081"
+# The `.official` suffix is load-bearing: it is the file whose sha256 matches the one the
+# pack declares. A local copy 384 bytes larger, matching no upstream repo, is the kind of
+# thing that makes a published number unreproducible on anyone else's machine.
+model = "~/models/Qwen3-4B-Q4_K_M.official.gguf"
+ctx = 32768

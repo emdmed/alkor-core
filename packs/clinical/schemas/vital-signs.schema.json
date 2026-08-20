@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://medextract.dev/packs/clinical/vital-signs.schema.json",
+  "title": "VitalSigns",
+  "description": "Shape contract for the vital-signs extraction pass. The nine gradeable slots come first, in the order a clinician records them, followed by two metadata fields that are never graded.",
+  "x-notes": {
+    "propertyOrder": "LOAD-BEARING, not cosmetic. llama.cpp compiles object properties into the GBNF grammar in the order given, so the model must emit them in this order, and the order here matches the FORMAT block in prompts/vital-signs.md so a reader comparing the two sees one sequence. extraction_confidence sits near the END so the model commits to measurements before scoring itself; asking for a confidence first has been measured, on a sibling schema, to take one case from 6 items to 77 items of padding.",
+    "nullability": "Every property is REQUIRED and typed `anyOf: [<shape>, null]` rather than being made optional with a short `required` list. This is the non-obvious half of the contract. An optional property compiles to an ordered maybe-branch in the grammar, which hands the model a legal way to stop early -- that is how a run comes back as `{}`. Requiring the key and permitting a null VALUE means the model must visit every vital sign and say something about each, which is exactly what the prompt asks for.",
+    "measurementRequiredValue": "Inside a measurement object, `value` is a plain number and cannot be null. There must be exactly ONE way to say a sign is absent -- the whole property being null -- because two spellings (`null` vs `{\"value\": null}`) would split the eval's detection counts across both and make recall unreadable.",
+    "unitIsNotAnEnum": "Deliberately a free string. An enum would make a unit error impossible to emit and therefore impossible to measure, and unit accuracy is reported separately from value accuracy precisely because a right number with a wrong unit is a different bug. The canonical symbols live in the prompt, where they can be got wrong.",
+    "rawTextLast": "raw_text follows value/unit inside a measurement so the model commits to the number before quoting the evidence for it. The opposite order -- quote first, then read the number out of it -- is plausible and untested here; if it is tried, it is a schema change and the golden below moves with it.",
+    "noArrayBounds": "Deliberately absent: the top level is a closed OBJECT and there is no unbounded repetition anywhere, so the grammar terminates at the closing brace. maxItems/uniqueItems belong on schemas whose top level is an array, where a grammar blocks EOS until the array closes.",
+    "numericBounds": "minimum/maximum are documentation and validator input, not decoding constraints -- llama.cpp's json-schema-to-grammar does not enforce numeric ranges in GBNF. They are deliberately wide enough to admit a genuine emergency reading, because the prompt tells the model to transcribe an implausible value rather than correct it and a bound that rejected it would contradict the prompt."
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "blood_pressure",
+    "heart_rate",
+    "temperature",
+    "weight",
+    "height",
+    "oxygen_saturation",
+    "respiratory_rate",
+    "blood_glucose",
+    "bmi",
+    "extraction_confidence",
+    "notes"
+  ],
+  "properties": {
+    "blood_pressure": {
+      "anyOf": [{ "$ref": "#/$defs/bloodPressure" }, { "type": "null" }]
+    },
+    "heart_rate": {
+      "anyOf": [{ "$ref": "#/$defs/measurement" }, { "type": "null" }]
+    },
+    "temperature": {
+      "anyOf": [{ "$ref": "#/$defs/measurement" }, { "type": "null" }]
+    },
+    "weight": {
+      "anyOf": [{ "$ref": "#/$defs/measurement" }, { "type": "null" }]
+    },
+    "height": {
+      "anyOf": [{ "$ref": "#/$defs/measurement" }, { "type": "null" }]
+    },
+    "oxygen_saturation": {
+      "anyOf": [{ "$ref": "#/$defs/measurement" }, { "type": "null" }]
+    },
+    "respiratory_rate": {
+      "anyOf": [{ "$ref": "#/$defs/measurement" }, { "type": "null" }]
+    },
+    "blood_glucose": {
+      "anyOf": [{ "$ref": "#/$defs/measurement" }, { "type": "null" }]
+    },
+    "bmi": {
+      "anyOf": [{ "$ref": "#/$defs/measurement" }, { "type": "null" }]
+    },
+    "extraction_confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "notes": {
+      "anyOf": [{ "type": "string" }, { "type": "null" }]
+    }
+  },
+  "$defs": {
+    "measurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "unit", "raw_text"],
+      "properties": {
+        "value": { "type": "number", "minimum": -100, "maximum": 100000 },
+        "unit": { "type": "string", "minLength": 1, "maxLength": 12 },
+        "raw_text": { "type": "string", "minLength": 1, "maxLength": 200 }
+      }
+    },
+    "bloodPressure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["systolic", "diastolic", "unit", "raw_text"],
+      "properties": {
+        "systolic": { "type": "number", "minimum": 0, "maximum": 400 },
+        "diastolic": { "type": "number", "minimum": 0, "maximum": 300 },
+        "unit": { "type": "string", "minLength": 1, "maxLength": 12 },
+        "raw_text": { "type": "string", "minLength": 1, "maxLength": 200 }
+      }
+    }
+  }
+}
