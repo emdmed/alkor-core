@@ -212,43 +212,60 @@ data supplies a `redact` hook and must set one before tracing anything real.
 
 ## Measured
 
-`Qwen3-4B-Q4_K_M` (sha256 `7485fe6f…`, the weights `packs/clinical/models.default.toml`
-declares), llama.cpp with `--jinja`, thinking off, temperature 0, `max_tokens` 1024, one
-run per note:
+Temperature 0, `max_tokens` 1024, one run per note, 12 notes / 46 graded slots. Qwen3-4B is
+the local file whose sha256 `packs/clinical/models.default.toml` pins; the other two are
+whatever `llama-server -hf` resolved from `Qwen/Qwen3-1.7B-GGUF` and
+`ggml-org/gemma-3-4b-it-GGUF` on 2026-08-20.
 
-| | constrained | unconstrained |
-|---|---|---|
-| detection (the gate, floor 90%) | **46/46** | 46/46 |
-| value exact | 46/46 | 46/46 |
-| unit exact | 46/46 | 46/46 |
-| provenance (`raw_text` found in the note) | 46/46 | 46/46 |
-| hallucinations | 0 | 0 |
-| failed runs | 0 | 0 |
+| model | grammar | detection (gate) | value | unit | provenance | halluc | failed |
+|---|---|---|---|---|---|---|---|
+| Qwen3-4B-Q4_K_M | constrained | 46/46 | 46/46 | 46/46 | 46/46 | 0 | 0 |
+| Qwen3-4B-Q4_K_M | free | 46/46 | 46/46 | 46/46 | 46/46 | 0 | 0 |
+| Qwen3-1.7B | constrained | 46/46 | 45/46 | 46/46 | 40/46 | 1 | 0 |
+| Qwen3-1.7B | free | 44/46 | 44/44 | 44/44 | 38/44 | 2 | 0 |
+| gemma-3-4b-it | constrained | 46/46 | 45/46 | 42/46 | 46/46 | 3 | 0 |
+| gemma-3-4b-it | free | **0/46** | — | — | — | — | **12** |
 
-**Read this as a statement about the corpus, not about the model.** A 4B model saturating
-every metric — and scoring identically with and without a grammar — means the corpus is
-currently a floor check rather than a discriminating benchmark. It says the contract is
-coherent and that an extractor built this way clears the bar on clean synthetic notes. It
-does not rank models, and it does not yet demonstrate what constrained decoding buys.
+Four things in that table are the reason this repository exists.
 
-The most likely reason is that the prompt names every trap the corpus sets: it forbids
-deriving a BMI, and the BMI case is a note whose BMI is derivable; it forbids using stale
-values, and the temporal case marks its stale values plainly. That is the right prompt for
-a product and the wrong corpus for a measurement. Harder cases — traps the prompt does not
-pre-announce, ambiguous units, values split across a line, notes that contradict
-themselves — are the next work on this pack, and the numbers above will fall when they land.
-That is the point of putting them here.
+**A saturated row is not a good result.** Qwen3-4B scores perfectly on every metric with and
+without a grammar. That is a statement about the corpus, not the model: on these notes it is
+a floor check rather than a discriminating benchmark. Quoting the 46/46 without this sentence
+would be a misleading number rather than an impressive one.
 
-Reproduce it:
+**Models of the same size fail in different places.** gemma-3-4b matches Qwen3-4B on
+detection and provenance and loses four points on units — it writes `F` for `°F`, keeps
+`lpm` and `rpm` from the Spanish note, and spells BMI `kg/m2`. Qwen3-1.7B has the opposite
+profile: units perfect, provenance 40/46, because on the prose note it *paraphrases* the
+sentence it claims to be quoting. One number would have hidden both. This is why value,
+unit and provenance are counted apart.
+
+**The provenance check earns its place.** Every one of Qwen3-1.7B's six provenance failures
+carries a correct value attached to a sentence that is not in the note. No JSON Schema
+keyword can express "substring of the prompt" and GBNF has no back-reference to the context,
+so a grammar cannot catch this — only comparing the quote to the note can.
+
+**`0/46` is what an unconstrained contract looks like on the wrong day.** gemma-3-4b wrapped
+every single unconstrained reply in a ```json fence, so nothing parsed. Re-scoring those same
+traced completions with the fence stripped gives 45/45 detection — the model could read the
+notes perfectly well, it just would not answer in the format asked for, and one case also
+emitted `{"value": null}` where the contract allows exactly one spelling of absent. The
+grammar makes both impossible: it cannot emit a backtick outside the JSON, and it cannot
+take the null branch inside a measurement. The eval refuses to strip the fence for you,
+because an application that does not strip it gets nothing either — but it names the failure
+as a fence rather than as broken JSON, so nobody spends an afternoon on the wrong bug.
+
+Reproduce any row:
 
 ```bash
 LLAMA_PORT=8081 LLAMA_MODEL=~/models/Qwen3-4B-Q4_K_M.gguf scripts/llama-server.sh \
   -ngl 99 --no-webui --parallel 1
-node src/cli.ts eval --profile clinical --constrain
+node src/cli.ts eval --profile clinical --constrain            # add --url for another port
 ```
 
-Every case's full completion is written to the trace, so a suspiciously perfect score is
-checked by reading a file rather than by re-running the model.
+Every case's full completion goes into the trace, so a suspiciously perfect score is checked
+by reading a file rather than by re-running the model — which is how the gemma re-scoring
+above was done, with no model running at all.
 
 ## Status
 
@@ -259,8 +276,8 @@ checked by reading a file rather than by re-running the model.
 | out-of-tree profiles and packs | done |
 | public API (`medextract` entry point) | done |
 | agentic worked example (`coding`) | done |
-| reference clinical pack + corpus | done — 12 notes, 46 graded slots |
-| harder cases for that corpus | next |
+| reference clinical pack + corpus | done — 12 notes, 46 graded slots, three models measured |
+| harder cases for that corpus | next — Qwen3-4B saturates it |
 | `validate` verb, run records, CI | planned |
 
 The reference pack is a synthetic, bilingual corpus with a per-case answer key that states

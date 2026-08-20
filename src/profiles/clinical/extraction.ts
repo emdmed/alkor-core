@@ -48,6 +48,21 @@ export const parseVitalSigns = (raw: string, fields: GradedField[]): VitalSigns 
 }
 
 const parseJson = (raw: string): Record<string, unknown> => {
+  // A fenced reply is NOT quietly unwrapped, and the refusal is deliberate. The eval must
+  // report what a caller actually receives: an application that does not strip fences gets
+  // nothing from this reply, so scoring it as a success would measure a leniency the
+  // product does not have. But a bare "not valid JSON" hides which failure this is —
+  // measured on gemma-3-4b, every unconstrained reply was fenced and every one of them was
+  // good JSON inside, so the run scored 0% for a reason that has nothing to do with whether
+  // the model can read a note. Name it, and the fix (a grammar, or a pack whose
+  // application strips fences and says so) is one line away instead of an afternoon.
+  if (raw.trim().startsWith('```')) {
+    throw new Error(
+      'the reply is wrapped in a markdown code fence, so it is not JSON — the content inside may be ' +
+        'perfectly good. Constrained decoding makes this impossible: a grammar cannot emit a backtick ' +
+        'outside the JSON',
+    )
+  }
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)

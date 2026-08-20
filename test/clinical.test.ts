@@ -185,6 +185,19 @@ test('prose instead of JSON fails with the prose in the message', () => {
   assert.throws(() => parseVitalSigns('I could not find any vital signs.', fields), /not valid JSON/)
 })
 
+/**
+ * A fenced reply is a distinct failure from an unparseable one and is reported as such.
+ * Measured on gemma-3-4b: unconstrained, every reply was fenced and every one held good
+ * JSON, so the run scored 0% for a reason unrelated to reading a note. A run that cannot
+ * tell those two apart sends someone to debug the wrong thing.
+ */
+test('a fenced reply is named as a fence, not as broken JSON', () => {
+  assert.throws(
+    () => parseVitalSigns('```json\n{"heart_rate": null}\n```', fields),
+    /wrapped in a markdown code fence/,
+  )
+})
+
 // --- the scorer ------------------------------------------------------------------------
 
 const caseNamed = (name: string) => cases.find((c) => c.name === name)!
