@@ -263,9 +263,15 @@ LLAMA_PORT=8081 LLAMA_MODEL=~/models/Qwen3-4B-Q4_K_M.gguf scripts/llama-server.s
 node src/cli.ts eval --profile clinical --constrain            # add --url for another port
 ```
 
-Every case's full completion goes into the trace, so a suspiciously perfect score is checked
-by reading a file rather than by re-running the model — which is how the gemma re-scoring
-above was done, with no model running at all.
+Every case's full completion goes into the trace, and a `run` event at the top of each trace
+records the model the server reported, the URL, whether a grammar was used and the sampling.
+So a suspiciously perfect score is checked by reading a file rather than by re-running the
+model — which is how the gemma re-scoring above was done, with no model running at all.
+
+The per-case breakdown behind this table, and the conditions each row ran under, are in
+[`packs/clinical/RESULTS.md`](packs/clinical/RESULTS.md). Results live beside the corpus
+they were measured on: change a note or a floor and the old numbers describe a pack that no
+longer exists, so an entry there gets a new date rather than an edit.
 
 ## Status
 

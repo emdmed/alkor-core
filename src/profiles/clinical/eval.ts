@@ -12,6 +12,7 @@
  */
 import type { Pack } from '../../core/pack.ts'
 import type { Trace } from '../../core/trace.ts'
+import { serverModel } from '../../core/client.ts'
 import { extract } from '../../modes/extract.ts'
 import {
   gradedExpectations,
@@ -54,8 +55,26 @@ export const runVitalSignsEval = async (o: VitalEvalOptions): Promise<VitalEvalR
   const misses: Miss[] = []
   const runs = Math.max(1, o.runs ?? 1)
 
+  // Ask the server what it is serving rather than reporting what the pack declares. The
+  // two differ the moment anyone points --url at a second model, and a result that names
+  // the wrong weights is worse than one that names none.
+  const served = (await serverModel(o.baseUrl)) ?? '(server did not say)'
+  const conditions = {
+    model: served,
+    declared: o.pack.toml<{ generation?: { id?: string } }>('models').generation?.id,
+    baseUrl: o.baseUrl,
+    constrained: o.constrain,
+    sampling,
+    pack: { name: o.pack.name, spec: o.pack.spec },
+    cases: cases.length,
+    gradedSlots: gradedExpectations(cases),
+    runs,
+  }
+  o.trace.write({ event: 'run', ...conditions })
+
   console.log(`\n=== Vital signs — ${cases.length} notes, ${gradedExpectations(cases)} graded slots ===`)
-  console.log(`pack '${o.pack.name}' spec ${o.pack.spec} · ${o.constrain ? 'constrained' : 'unconstrained'} · ` +
+  console.log(`model '${served}' · pack '${o.pack.name}' spec ${o.pack.spec} · ` +
+    `${o.constrain ? 'constrained' : 'unconstrained'} · ` +
     `temp ${sampling.temperature} · max_tokens ${sampling.max_tokens}${runs > 1 ? ` · ${runs} runs` : ''}\n`)
 
   for (const c of cases) {

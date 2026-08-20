@@ -429,6 +429,31 @@ const finishStream = (acc: StreamState): StreamResult => ({
   usage: acc.usage,
 })
 
+/**
+ * What the server says it is actually serving.
+ *
+ * The harness does not start servers, so the model behind a URL is whatever someone
+ * launched — which is not necessarily what the pack declares. That gap is not hypothetical:
+ * the same pack was deliberately run against three different models on one afternoon, and
+ * a result recorded as "the model in models.default.toml" would have been wrong for two of
+ * them. A number is only reproducible if it names the thing that produced it, and the only
+ * honest source for that is the server.
+ *
+ * Best effort: a server too old to expose /v1/models, or one that is simply down, yields
+ * undefined rather than an error. Failing a run over a label would be worse than recording
+ * that the label was unavailable.
+ */
+export const serverModel = async (baseUrl: string = LLAMA_DEFAULT_URL): Promise<string | undefined> => {
+  try {
+    const res = await fetch(`${baseUrl.replace(/\/$/, '')}/v1/models`, { dispatcher })
+    if (!res.ok) return undefined
+    const body = (await res.json()) as { data?: { id?: string }[] }
+    return body.data?.[0]?.id
+  } catch {
+    return undefined
+  }
+}
+
 export const llamaChat = async (o: ChatOptions): Promise<string> => {
   const baseUrl = (o.baseUrl ?? process.env.LLAMA_URL ?? LLAMA_DEFAULT_URL).replace(/\/+$/, '')
   const url = `${baseUrl}/v1/chat/completions`

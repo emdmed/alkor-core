@@ -68,6 +68,7 @@ export {
   LLAMA_DEFAULT_URL,
   LlamaError,
   llamaChat,
+  serverModel,
   streamChat,
   toolChat,
   type ChatOptions,
