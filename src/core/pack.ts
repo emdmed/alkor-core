@@ -17,8 +17,9 @@
  * prompts, schemas and scoring rules — all data. Share the data, keep the runtime
  * native to each side.
  */
+import { createHash } from 'node:crypto'
 import { readFileSync, existsSync } from 'node:fs'
-import { isAbsolute, join, resolve } from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import { parse as parseToml } from 'smol-toml'
 import { envSuffix } from './config.ts'
 
@@ -81,6 +82,17 @@ export interface Pack {
    * and single-pass per key, so an included file containing `{{X}}` is left alone.
    */
   render(key: string, vars?: Record<string, string>): string
+  /**
+   * sha256 of every file this pack has actually READ, keyed by path relative to the pack
+   * root. Sorted, so two runs of the same contracts produce byte-identical records.
+   *
+   * Read rather than declared, and that distinction is the whole value. A record listing
+   * the manifest's keys would claim coverage of files this run never opened, and would
+   * silently omit the per-case documents, which are named by a template rather than by a
+   * key — the notes are the measured input, so a record that pins the answer key and not
+   * the notes pins the wrong half. Call it at the END of a run.
+   */
+  digest(): Record<string, string>
 }
 
 /**
@@ -139,6 +151,8 @@ export const loadPack = (root: string): Pack => {
   }
 
   const files = manifest.files ?? {}
+  // Every file handed out, so `digest` can state what was read rather than what was offered.
+  const opened = new Set<string>()
 
   const path = (key: string): string => {
     const rel = files[key]
@@ -148,7 +162,9 @@ export const loadPack = (root: string): Pack => {
           `add it under [files] in ${manifestPath} (declared: ${Object.keys(files).join(', ') || 'none'})`,
       )
     }
-    return resolve(root, rel)
+    const abs = resolve(root, rel)
+    opened.add(abs)
+    return abs
   }
 
   const read = (key: string): string => {
@@ -186,11 +202,20 @@ export const loadPack = (root: string): Pack => {
         throw new PackError(`pack '${manifest.name}' declares no 'documents' template, so it has no per-case documents`)
       }
       const abs = resolve(root, manifest.documents.replaceAll('{case}', caseName))
+      opened.add(abs)
       try {
         return readFileSync(abs, 'utf8')
       } catch (e) {
         throw new PackError(`pack '${manifest.name}' document for case '${caseName}' -> ${abs}: ${(e as Error).message}`)
       }
+    },
+    digest: () => {
+      const out: Record<string, string> = {}
+      for (const abs of [...opened].sort()) {
+        if (!existsSync(abs)) continue
+        out[relative(root, abs)] = createHash('sha256').update(readFileSync(abs)).digest('hex')
+      }
+      return out
     },
     render: (key: string, vars: Record<string, string> = {}) => {
       let out = read(key)

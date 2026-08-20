@@ -127,6 +127,9 @@ byte-for-byte, which is what makes a cross-runtime comparison mean anything.
 does not read is refused rather than read under the old rules — a misunderstood manifest
 would otherwise produce a number instead of an error.
 
+The format is documented in full in [`spec/pack.md`](spec/pack.md), including goldens, the
+`[include]` rules, and the three constrained-decoding constraints a schema has to respect.
+
 ## Writing a profile
 
 A profile is the code that reads a pack: it builds the prompt, parses the output, scores it
@@ -268,6 +271,11 @@ records the model the server reported, the URL, whether a grammar was used and t
 So a suspiciously perfect score is checked by reading a file rather than by re-running the
 model — which is how the gemma re-scoring above was done, with no model running at all.
 
+Each trace also closes with a **record**: the harness version, the model, whether a grammar
+was used, and a sha256 per contract file the run actually read — every prompt, schema, case
+file and note. Read rather than declared, because the notes are named by a template rather
+than by a key, and a record that pins the answer key but not the inputs pins the wrong half.
+
 The per-case breakdown behind this table, and the conditions each row ran under, are in
 [`packs/clinical/RESULTS.md`](packs/clinical/RESULTS.md). Results live beside the corpus
 they were measured on: change a note or a floor and the old numbers describe a pack that no
@@ -295,6 +303,13 @@ patient data to enter a repository, and there the mistake is unrecoverable.
 
 Node ≥ 24. The CLI is plain TypeScript run natively by Node — no bundler, no transpile,
 no build step. What you read is what runs.
+
+## Contributing
+
+[`CONTRIBUTING.md`](CONTRIBUTING.md). The short version: no patient data, ever; no number
+that was not measured; a bad result stays; and core names no domain.
+
+The corpus needs harder cases more than the harness needs features.
 
 ## License
 

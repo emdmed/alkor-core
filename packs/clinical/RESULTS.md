@@ -103,4 +103,7 @@ Two gaps, both found by having a result to interrogate rather than by review:
    gemma re-scoring above was possible at all.
 2. The trace did not record *which model answered*, so these seven runs were mapped to models
    by timestamp. A `run` event now opens every trace with the model the server reported, the
-   URL, whether a grammar was used, the sampling, and the pack's name and spec.
+   URL, whether a grammar was used, the sampling, and the pack's name and spec — and a
+   `record` event closes it with the harness version and a sha256 per contract file the run
+   read. A run recorded after 2026-08-20 states its own provenance; the rows above were
+   reconstructed by hand, which is precisely why it exists.

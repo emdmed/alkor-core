@@ -13,6 +13,7 @@
 import type { Pack } from '../../core/pack.ts'
 import type { Trace } from '../../core/trace.ts'
 import { serverModel } from '../../core/client.ts'
+import { HARNESS_VERSION } from '../../core/version.ts'
 import { extract } from '../../modes/extract.ts'
 import {
   gradedExpectations,
@@ -60,6 +61,7 @@ export const runVitalSignsEval = async (o: VitalEvalOptions): Promise<VitalEvalR
   // the wrong weights is worse than one that names none.
   const served = (await serverModel(o.baseUrl)) ?? '(server did not say)'
   const conditions = {
+    harness: HARNESS_VERSION,
     model: served,
     declared: o.pack.toml<{ generation?: { id?: string } }>('models').generation?.id,
     baseUrl: o.baseUrl,
@@ -136,6 +138,23 @@ export const runVitalSignsEval = async (o: VitalEvalOptions): Promise<VitalEvalR
     console.log(`\nwhat went wrong (${misses.length}):`)
     for (const m of misses) console.log(`  ${m.reason.padEnd(14)} ${m.case} · ${m.field} — ${m.detail}`)
   }
+
+  // Written LAST, because it states which bytes were actually read — every prompt, schema,
+  // case file and note the run opened, hashed. With the `run` event at the top of the same
+  // trace, a saved result names the harness, the model, the conditions and the contracts,
+  // which is the difference between a number that can be reproduced and one that has to be
+  // believed.
+  o.trace.write({
+    event: 'record',
+    harness: HARNESS_VERSION,
+    model: served,
+    constrained: o.constrain,
+    contracts: o.pack.digest(),
+    tally: total,
+    floor: fieldRecallFloor,
+    recall,
+    pass: recall >= fieldRecallFloor,
+  })
 
   return { tally: total, misses, floor: fieldRecallFloor, recall, cases: cases.length }
 }

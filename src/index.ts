@@ -60,6 +60,9 @@ export {
 // --- The tool CONTRACT. Core defines no tools; a profile brings its own. -------------
 export { dispatchCall, toolSpecs, type Dispatch, type ToolDef } from './core/tools.ts'
 
+// --- What produced a result ---------------------------------------------------------
+export { HARNESS_VERSION } from './core/version.ts'
+
 // --- Tracing, with a per-profile redaction hook -------------------------------------
 export { openTrace, stateRoot, type Redactor, type Trace } from './core/trace.ts'
 

@@ -288,3 +288,42 @@ test('a failed run is scored as total loss, never skipped', async () => {
   assert.equal(tally.gradedTotal, 6)
   assert.equal(tally.detected, 0, 'a model that fails outright must not look merely quiet')
 })
+
+// --- the run record ----------------------------------------------------------------------
+
+/**
+ * A saved result has to name the bytes it was measured against. `digest` reports what the
+ * run READ, not what the manifest declares — the per-case notes are named by a template
+ * rather than by a key, so a record built from `[files]` would pin the answer key and miss
+ * the inputs.
+ */
+test('the digest covers the files a run actually reads, notes included', () => {
+  const fresh = loadPack(join(import.meta.dirname, '..', 'packs', 'clinical'))
+  assert.deepEqual(fresh.digest(), {}, 'a pack that has read nothing has nothing to attest')
+
+  vitalPrompt(fresh)
+  fresh.document('vs-en-01-vitals-block')
+  const d = fresh.digest()
+
+  assert.ok(d['prompts/vital-signs.md'], 'the prompt was read and should be in the digest')
+  assert.ok(d['notes/vs-en-01-vitals-block.note.txt'], 'the note is the measured input')
+  assert.ok(!d['evals/vital-signs-cases.json'], 'the case file was not read by this run')
+  for (const hash of Object.values(d)) assert.match(hash, /^[0-9a-f]{64}$/)
+
+  // Sorted, so the same contracts produce a byte-identical record on any machine.
+  assert.deepEqual(Object.keys(d), [...Object.keys(d)].sort())
+})
+
+test('the digest changes when a contract changes', () => {
+  const a = loadPack(join(import.meta.dirname, '..', 'packs', 'clinical'))
+  const b = loadPack(join(import.meta.dirname, '..', 'packs', 'clinical'))
+  vitalPrompt(a)
+  vitalPrompt(b)
+  assert.deepEqual(a.digest(), b.digest(), 'the same bytes hash the same')
+  assert.equal(Object.keys(a.digest()).length, 1)
+})
+
+test('the harness names its own version', async () => {
+  const { HARNESS_VERSION } = await import('../src/core/version.ts')
+  assert.match(HARNESS_VERSION, /^\d+\.\d+\.\d+/, 'a run record must name what produced it')
+})
