@@ -1,0 +1,12 @@
+HIGH DEPENDENCY UNIT - OBSERVATION CHART (transcribed)
+
+Time      06:00   10:00   14:00   18:00
+BP        104/62  110/66  118/70  121/74
+HR        112     104     96      91
+RR        26      24      20      19
+SpO2      91      93      95      96
+Temp      38.4    38.0    37.6    37.2
+
+Oxygen delivery 4 L/min at 06:00, weaned to air by 14:00.
+
+Chart reviewed at 18:30 by the registrar. Escalation not required overnight.

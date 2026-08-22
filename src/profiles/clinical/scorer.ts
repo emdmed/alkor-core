@@ -16,11 +16,18 @@
  *   prompt" and GBNF has no back-reference to the context, so the schema can guarantee the
  *   shape of the quote and the truth of it not at all. This is the only check that catches
  *   a right-looking number attached to a fabricated citation.
+ *
+ *   It runs through `core/verify.ts` under the PACK'S rule, the same one note formatting
+ *   uses. It did not, and the divergence was invisible in the place it mattered: this task
+ *   compared case- and accent-insensitively while the pack declared `caseSensitive = true`,
+ *   so the two provenance columns printed side by side in RESULTS.md were not the same
+ *   measurement, and a pack could tighten its quote rule without this task noticing.
  * - **Failed runs.** Scored as total misses, never skipped, so a model that fails outright
  *   cannot look merely quiet.
  */
 import type { VitalCase, VitalExpectation } from './contracts.ts'
 import { isBloodPressure, type Reading, type VitalSigns } from './extraction.ts'
+import { verifyQuote, type QuoteRule } from '../../core/verify.ts'
 
 /**
  * A zero denominator scores 1.0. Not a rounding detail: it decides whether an eval that
@@ -60,6 +67,14 @@ export interface VitalTally {
   unitExact: number
   /** Of those detected: `raw_text` is genuinely a fragment of the note. */
   quoteVerified: number
+  /**
+   * Of the quote failures: found once case is ignored. A tidied capital, not a fabrication.
+   *
+   * Reported for the same reason note formatting reports it — under a case-sensitive rule the
+   * two are different accusations, and this harness has MEASURED the difference between two
+   * runs of one model coming down to `weight` against `Weight`.
+   */
+  quotesEditedOnly: number
   /** A reading emitted where the corpus expects `absent` or `unresolved`. */
   hallucinations: number
   failedRuns: number
@@ -71,6 +86,7 @@ export const emptyTally = (): VitalTally => ({
   valueExact: 0,
   unitExact: 0,
   quoteVerified: 0,
+  quotesEditedOnly: 0,
   hallucinations: 0,
   failedRuns: 0,
 })
@@ -81,6 +97,7 @@ export const absorb = (into: VitalTally, o: VitalTally): void => {
   into.valueExact += o.valueExact
   into.unitExact += o.unitExact
   into.quoteVerified += o.quoteVerified
+  into.quotesEditedOnly += o.quotesEditedOnly
   into.hallucinations += o.hallucinations
   into.failedRuns += o.failedRuns
 }
@@ -97,11 +114,15 @@ export interface CaseScore {
   misses: Miss[]
 }
 
-/** Score one case's extraction against its expectations. */
-export const scoreCase = (c: VitalCase, got: VitalSigns, note: string): CaseScore => {
+/**
+ * Score one case's extraction against its expectations.
+ *
+ * `rule` is the pack's, and is required rather than defaulted: a quote rule that defaulted
+ * here would be a check the pack thinks it configured and this task quietly did not run.
+ */
+export const scoreCase = (c: VitalCase, got: VitalSigns, note: string, rule: QuoteRule): CaseScore => {
   const tally = emptyTally()
   const misses: Miss[] = []
-  const haystack = norm(collapse(note))
 
   for (const e of c.fields) {
     const reading = got[e.field] ?? null
@@ -145,20 +166,27 @@ export const scoreCase = (c: VitalCase, got: VitalSigns, note: string): CaseScor
         detail: `expected unit '${wantUnit}', got '${reading.unit ?? '(none)'}'`,
       })
 
-    // Literal containment after normalisation is the entire provenance check, and it is
-    // deliberately not a regex: a pattern built from the model's own output has to escape
-    // every '.', '(', '/' and '°' the quote contains, and one unescaped character turns a
-    // failed verification into a passing one — the single failure mode a verifier must not
-    // have.
+    // One verifier, shared with note formatting, applying the rule the PACK states. Literal
+    // containment rather than a regex — a pattern built from the model's own output has to
+    // escape every '.', '(', '/' and '°' the quote contains, and one unescaped character
+    // turns a failed verification into a passing one, the single failure mode a verifier
+    // must not have. See core/verify.ts.
     const quote = reading.raw_text
-    if (quote && haystack.includes(norm(collapse(quote)))) tally.quoteVerified++
-    else
+    const verdict = quote ? verifyQuote(quote, note, rule) : undefined
+    if (verdict?.ok) tally.quoteVerified++
+    else {
+      if (verdict && verdict.drift !== 'absent') tally.quotesEditedOnly++
       misses.push({
         case: c.name,
         field: e.field,
         reason: 'quote',
-        detail: quote ? `raw_text is not in the note: '${quote}'` : 'no raw_text',
+        detail: !quote
+          ? 'no raw_text'
+          : verdict && verdict.drift !== 'absent'
+            ? `raw_text differs from the note only in ${verdict.drift}: '${quote}'`
+            : `raw_text is not in the note: '${quote}'`,
       })
+    }
   }
 
   return { tally, misses }

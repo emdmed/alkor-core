@@ -1,0 +1,219 @@
+{
+  "_comment": "Expected structure per case for the note-formatting task: one clinical note sorted into presenting complaint / history / plan / current medication, every item carrying the span it came from. Like the summary cases this grades SET EXTRACTION over free text, so an expectation is a set of terms rather than a literal string - there is no single correct wording for 'routine review of chronic kidney disease'.",
+  "_input": "ONE note per case. `source` names a case in the vital-signs corpus and the harness reads THAT case's document, so the notes are shared rather than duplicated: 30 notes now grade three tasks, and a note fixed once is fixed for all of them. Case names are `fmt-*` and deliberately NOT the note's name, because the case is the expectation set and the note is the input - the day a second expectation set runs over the same note, only this file changes.",
+  "_matching": "`match` works exactly as in patient-summary-cases.json: alternatives of AND-groups, compared case- and accent-insensitively against an item's `text`. A medication expectation may also carry `dose`, matched the same way against that item's `dose` field, or `doseNull: true` when the note names the drug without one - a dose invented for a drug the note doses vaguely is a different failure from a missing drug, and reporting them together would hide it.",
+  "_expectKinds": {
+    "present": "An item matching these terms must appear in the named section. The gated denominator.",
+    "absent": "No item in the named section may match. Each one names a specific trap the note lays.",
+    "empty": "The whole section must be `[]`. Six cases here turn on it, for five different reasons: a drug named only by its class, an encounter with no drugs at all, an infusion whose contents are never stated, a pre-operative assessment whose history is made of negatives, and a dietetic visit that prescribes nothing. In every one of them any content at all is an invention, and each is a different route to inventing it."
+  },
+  "_provenance": "Two checks run on EVERY item the model emits, not only on the expected ones, and they are reported apart because they are different accusations. `quote` must be found in the note by literal containment under [clinical.quoteVerification]. `text` (and `dose`) must be derivable from that quote by DELETION ONLY under [clinical.textDerivation] - every word already in the quote, in the same order. The second check exists because the first is not enough: on a sibling pack a model emitted a quote that verified character for character beside an item that had turned `ceftriaxona` into `ceptriaxona`. Provenance was perfect and the line a clinician reads named a drug that does not exist.",
+  "_floors": "itemRecallFloor gates the run, as detection does for vital signs. quoteFloor, derivationFloor and fabricationFloor are SUB-GATES: a run that finds every expected item while fabricating the spans it cites has not passed, and a single averaged number would let a good recall hide it. All four must clear.",
+  "_fabricationFloor": "quoteFloor covers two different accusations at one number. A quote that differs from the note in a capital or an accent is a model TIDYING while claiming to copy; a quote that is absent under any relaxation is a model INVENTING a sentence and attaching evidence to it. Measured on this corpus, the two came apart completely: one model's provenance failures on vs-en-03 were entirely the first kind, while another model's five failures on vs-en-17-flowsheet were entirely the second - every value correct, every citation invented. One floor scores those two runs the same way and describes neither. fabricationFloor is the share of quotes that EXIST in the note under some relaxation, and it is set to 1.0 because that is what this contract means: an application showing a clinician a span that is not in the record has failed in a way no recall number compensates for, while a lowercased sentence-initial capital costs a tenth of the quoteFloor's ten per cent budget and no clinical meaning. It is optional in the format - a pack whose application shows the quote verbatim has a real objection to an edited span too, and forcing it to write two numbers where it means one would be the harness inventing a policy.",
+  "itemRecallFloor": 0.75,
+  "quoteFloor": 0.9,
+  "derivationFloor": 0.9,
+  "fabricationFloor": 1.0,
+  "cases": [
+    {
+      "name": "fmt-01-nephrology",
+      "class": "clinic-letter",
+      "difficulty": 3,
+      "source": "vs-en-09-distractors",
+      "note": "A routine renal clinic review with one drug, one plan and a section-sorting trap: home oxygen at 2 L/min is a treatment the patient is on and is NOT a drug, so it may appear in the plan and never in the medication list. The pain score, the electrolytes and the room number are the vital-signs corpus's distractors and are simply not facts this task collects.",
+      "fields": [
+        { "field": "history", "expect": { "kind": "present", "match": [["chronic kidney"], ["kidney disease"], ["ckd"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["renal function"], ["repeat", "six months"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["paracetamol"]], "dose": [["500 mg"], ["500"]] } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["oxygen"]] } }
+      ]
+    },
+    {
+      "name": "fmt-02-gp-review",
+      "class": "clinic-letter",
+      "difficulty": 4,
+      "source": "vs-en-15-third-party",
+      "note": "The chronic-disease review whose note also carries the HUSBAND's readings and his advice to book his own appointment. Nothing of his belongs in any section: the discriminator is the same attribution question the vital-signs case asks, one level up, because here it decides whose problem list this is. One drug, continued with its dose.",
+      "fields": [
+        { "field": "plan", "expect": { "kind": "present", "match": [["amlodipine"], ["continue"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["review", "three months"], ["three months"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["amlodipine"]], "dose": [["5 mg"], ["5"]] } },
+        { "field": "history", "expect": { "kind": "absent", "match": [["husband"]] } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["home machine"], ["pulse"]] } }
+      ]
+    },
+    {
+      "name": "fmt-03-discharge",
+      "class": "discharge",
+      "difficulty": 5,
+      "source": "vs-en-20-discharge",
+      "note": "The longest note in the corpus, and the one where sorting is hardest: three drugs with three doses, an antibiotic SWITCH (intravenous co-amoxiclav to oral amoxicillin) that legitimately produces two medication items, two oxygen flow rates that produce none, and a presenting complaint that is an admission rather than a complaint. The follow-up is split across two sentences at opposite ends of the note.",
+      "fields": [
+        { "field": "presenting_complaint", "expect": { "kind": "present", "match": [["pneumonia"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["chest radiograph"], ["radiograph", "six weeks"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["blood pressure"], ["gp", "review"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["amoxicillin"]], "dose": [["500 mg"], ["500"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["paracetamol"]], "dose": [["1 g"], ["1"]] } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["oxygen"]] } }
+      ]
+    },
+    {
+      "name": "fmt-04-unnamed-drug",
+      "class": "empty-section",
+      "difficulty": 5,
+      "source": "vs-en-21-typography",
+      "note": "The respiratory letter increases 'her inhaled steroid' and never names it. A drug CLASS is not a drug name, so the medication section must be EMPTY while the plan records the increase - and a model that supplies beclometasone or fluticasone has written a prescription the note does not contain. This is the case that most rewards a prompt rule and most punishes clinical fluency.",
+      "fields": [
+        { "field": "plan", "expect": { "kind": "present", "match": [["inhaled steroid"], ["increased"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["review", "two months"], ["two months"]] } },
+        { "field": "current_medication", "expect": { "kind": "empty" } }
+      ]
+    },
+    {
+      "name": "fmt-05-pre-assessment",
+      "class": "empty-section",
+      "difficulty": 4,
+      "source": "vs-en-16-addendum",
+      "note": "A pre-assessment clinic note with no drugs at all and an addendum correcting a weight. Two things are being measured: an empty medication section on a note that reads like a full clinical encounter, and whether the correction leaks into the formatted sections - the addendum is a data-quality event, not a clinical fact, and a 'weight corrected to 61.4 kg' item in the plan is the model reporting the note's own housekeeping.",
+      "fields": [
+        { "field": "presenting_complaint", "expect": { "kind": "present", "match": [["cholecystectomy"], ["pre-assessment"]] } },
+        { "field": "current_medication", "expect": { "kind": "empty" } },
+        { "field": "history", "expect": { "kind": "absent", "match": [["weight"], ["61.4"]] } }
+      ]
+    },
+    {
+      "name": "fmt-06-urgencias",
+      "class": "language",
+      "difficulty": 4,
+      "source": "vs-es-08-glucemia-repetida",
+      "note": "The Spanish emergency note. The sections must be filled from Spanish prose with English keys, which is the same separation the vital-signs task draws between the language of a note and the shape of a contract. Insulin is administered without a written dose ('segun pauta'), so its item carries a null dose - a dose supplied here would be one the note never wrote.",
+      "fields": [
+        { "field": "presenting_complaint", "expect": { "kind": "present", "match": [["malestar"], ["vision borrosa"], ["blurred"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["diabet"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["alta"], ["discharge"], ["domicilio"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["insulina"], ["insulin"]], "doseNull": true } }
+      ]
+    },
+    {
+      "name": "fmt-07-weight-clinic",
+      "class": "temporal",
+      "difficulty": 4,
+      "source": "vs-en-04-historical",
+      "note": "The weight-management review whose note carries three weights and two blood pressures across three different visits. Nothing here is about transcribing them - this task collects prose - but the same attribution question decides the sections: the January and April figures belong to a history of the ILLNESS and not to today's plan, and the metformin that was 'started' at the April visit is medication the patient is on now. The drug is named with no dose anywhere in the note, so its item carries a null dose; a dose supplied here is one the note never wrote.",
+      "fields": [
+        { "field": "history", "expect": { "kind": "present", "match": [["obesity"], ["impaired glucose"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["continue metformin"], ["metformin"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["hba1c"], ["three months"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["metformin"]], "doseNull": true } },
+        { "field": "history", "expect": { "kind": "absent", "match": [["104"], ["97 kg"]] } }
+      ]
+    },
+    {
+      "name": "fmt-08-resus",
+      "class": "acute",
+      "difficulty": 5,
+      "source": "vs-en-10-extreme",
+      "note": "The resuscitation-room note: the shortest sentences in the corpus, the most numbers per line, and a presenting complaint that is a collapse rather than a symptom the patient reports. The trap is the neighbour who found the patient - a person who appears in the first paragraph and belongs in no section of a summary about somebody else, which is the vs-en-15 attribution problem with the roles reversed.",
+      "fields": [
+        { "field": "presenting_complaint", "expect": { "kind": "present", "match": [["collapsed"], ["unwell"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["fluid resuscitation"], ["fluid"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["critical care"], ["monitoring"]] } },
+        { "field": "history", "expect": { "kind": "absent", "match": [["neighbour"]] } }
+      ]
+    },
+    {
+      "name": "fmt-09-telephone",
+      "class": "clinic-letter",
+      "difficulty": 3,
+      "source": "vs-en-05-no-vitals",
+      "note": "A telephone consultation with no examination and no observations, which makes it the easiest note in this task and one of the hardest in the vital-signs task - the same note grading differently under two contracts is the point of sharing the corpus. Melatonin is started here rather than continued, and it is still current medication with a dose the note states. The negation trap is 'Denies low mood': a set matcher that credits a term to the clause that reverses it turns a negative into a problem the patient does not have.",
+      "fields": [
+        { "field": "presenting_complaint", "expect": { "kind": "present", "match": [["sleep"], ["insomnia"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["sleep hygiene"], ["hygiene"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["melatonin"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["melatonin"]], "dose": [["2 mg"], ["2"]] } },
+        { "field": "history", "expect": { "kind": "absent", "match": [["low mood"]] } }
+      ]
+    },
+    {
+      "name": "fmt-10-no-drugs",
+      "class": "empty-section",
+      "difficulty": 5,
+      "source": "vs-en-13-negation",
+      "note": "A whole emergency-department encounter with no drug in it at all, so the medication section is EMPTY - and everything about the note argues otherwise: a glucose threshold in mg/dL, a blood-pressure target in mmHg, and a discharge. Both numbers are things that have not happened yet, which is what makes them the sharpest test in this task of the difference between a plan and a fact. The saturation and the weight are recorded as NOT obtained, which is a data-quality event and not a clinical finding.",
+      "fields": [
+        { "field": "presenting_complaint", "expect": { "kind": "present", "match": [["headache"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["headache advice"], ["discharged"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["practice nurse"], ["checked"]] } },
+        { "field": "current_medication", "expect": { "kind": "empty" } },
+        { "field": "history", "expect": { "kind": "absent", "match": [["130/80"]] } }
+      ]
+    },
+    {
+      "name": "fmt-11-primaria",
+      "class": "language",
+      "difficulty": 4,
+      "source": "vs-es-07-bloque",
+      "note": "The Spanish primary-care review, sorted into English section keys. One drug with an explicit dose and an interval, a plan that names the same drug because it is being CONTINUED - which legitimately produces an item in two sections rather than a duplicate - and a negation run in the Spanish the corpus is written in: 'Niega poliuria, polidipsia ni perdida de peso' must produce none of those three as history.",
+      "fields": [
+        { "field": "history", "expect": { "kind": "present", "match": [["diabetes"], ["dm2"], ["diabet"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["metformina"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["hba1c"], ["analitica"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["metformina"]], "dose": [["850"]] } },
+        { "field": "history", "expect": { "kind": "absent", "match": [["poliuria"], ["polidipsia"]] } }
+      ]
+    },
+    {
+      "name": "fmt-12-nutricion",
+      "class": "language",
+      "difficulty": 3,
+      "source": "vs-es-11-imc-declarado",
+      "note": "A first dietetic appointment in Spanish with no drugs at all: the medication section is empty, and the plan is made entirely of things that are not prescriptions. It is the counterpart to fmt-10 in the other language, and it is rated lower because nothing in it is retracted, targeted or attributed elsewhere - the difficulty is reading Spanish prose into English keys and stopping there.",
+      "fields": [
+        { "field": "presenting_complaint", "expect": { "kind": "present", "match": [["sobrepeso"], ["overweight"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["dietetica"], ["dieta"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["actividad fisica"], ["ejercicio"], ["actividad"]] } },
+        { "field": "current_medication", "expect": { "kind": "empty" } }
+      ]
+    },
+    {
+      "name": "fmt-13-pre-op",
+      "class": "empty-section",
+      "difficulty": 3,
+      "source": "vs-en-12-bmi-not-stated",
+      "note": "A pre-operative assessment that reads like a full clinical encounter and contains no medication. Its history is made of NEGATIVES - no cardiac history, never smoked, no previous anaesthetic problems - which is the section a model most wants to fill from what such a patient usually has. The Mallampati grade and the ASA class are examination findings and gradings rather than history, and they are in measurement shape.",
+      "fields": [
+        { "field": "presenting_complaint", "expect": { "kind": "present", "match": [["arthroscopy"], ["knee"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["routine bloods"], ["bloods"], ["ecg"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["fasting"]] } },
+        { "field": "current_medication", "expect": { "kind": "empty" } }
+      ]
+    },
+    {
+      "name": "fmt-14-infusion",
+      "class": "empty-section",
+      "difficulty": 4,
+      "source": "vs-en-25-lab-panel-table",
+      "note": "The day-unit note whose drug is never named: an infusion is given over two hours and nothing says what it was. The medication section is therefore empty, exactly as in fmt-04 where an inhaled steroid is increased without a name - and this one is harder, because a table of laboratory results sits above it inviting a model to fill history with haemoglobins and creatinines. A drug supplied here is a prescription the note does not contain.",
+      "fields": [
+        { "field": "presenting_complaint", "expect": { "kind": "present", "match": [["infusion"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["next visit"], ["four weeks"]] } },
+        { "field": "current_medication", "expect": { "kind": "empty" } },
+        { "field": "history", "expect": { "kind": "absent", "match": [["haemoglobin"], ["creatinine"], ["platelets"]] } }
+      ]
+    },
+    {
+      "name": "fmt-15-same-day",
+      "class": "clinic-letter",
+      "difficulty": 3,
+      "source": "vs-en-28-cough-not-the-example",
+      "note": "A same-day appointment for a cough, advised 'simple analgesia' - a class, not a drug. The medication expectation here is an ABSENT rather than an EMPTY, and that is the sharper of the two questions: the section may legitimately be empty, and what must not happen is a named drug appearing in it. A model that writes paracetamol has filled in the most likely prescription in the country the note is written in, which is exactly the clinical fluency this task punishes.",
+      "fields": [
+        { "field": "presenting_complaint", "expect": { "kind": "present", "match": [["cough"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["analgesia"], ["fluids"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["safety-netted"], ["return"]] } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["paracetamol"], ["ibuprofen"], ["amoxicillin"]] } }
+      ]
+    }
+  ]
+}

@@ -33,6 +33,7 @@ const CONTRACT = [
   'loadProfileModule',
   'resolveProfileModule',
   'chatPrompt',
+  'requireDocumentName',
   'ProfileError',
   // the tool contract
   'toolSpecs',
@@ -46,11 +47,26 @@ const CONTRACT = [
   'streamChat',
   'LlamaError',
   'LLAMA_DEFAULT_URL',
+  'serverProps',
+  // what a run cost
+  'summarizeBench',
+  'formatBench',
+  'percentile',
+  'median',
+  // provenance, and the input side of a contract
+  'verifyQuote',
+  'verifyDerivation',
+  'collapse',
+  'assembleDocument',
+  'truncateOnCharBoundary',
   // the modes
   'extract',
   'briefing',
   'runAgent',
   'createSession',
+  // The redaction hook is part of the contract a profile is written against, and the one
+  // place where a host reading the wrong field writes patient data rather than a wrong string.
+  'redactor',
 ] as const
 
 test('the package exports everything a profile is written against', () => {
@@ -78,6 +94,10 @@ test('no profile is reachable through the package', () => {
  */
 test('deep imports are refused', async () => {
   await assert.rejects(
+    // @ts-expect-error — the specifier is not exported, which is the whole assertion. The
+    // suppression is load-bearing in both directions: if `exports` ever starts resolving
+    // this path, tsc reports the unused suppression and the boundary's erosion fails the
+    // typecheck as well as the test.
     () => import('medextract/src/core/pack.ts'),
     (e: Error & { code?: string }) => {
       assert.equal(e.code, 'ERR_PACKAGE_PATH_NOT_EXPORTED')
@@ -92,7 +112,11 @@ test('deep imports are refused', async () => {
  * than a library.
  */
 test('importing the package costs nothing', () => {
-  assert.equal(medextract.SPEC_VERSION, 1)
+  assert.equal(medextract.SPEC_VERSION, 3)
+  // The changelog travels with the version. A consumer that refuses a pack older than the
+  // harness needs to be able to say what changed, and re-deriving that from release notes is
+  // how two runtimes come to disagree about one format.
+  assert.ok(medextract.specGap(1).length > 0)
   assert.equal(typeof medextract.LLAMA_DEFAULT_URL, 'string')
   assert.equal(medextract.envSuffix('note-format'), 'NOTE_FORMAT')
 })

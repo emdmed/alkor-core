@@ -1,0 +1,218 @@
+{
+  "_comment": "Expected structure per case for the dictated-transcript task: ONE transcript of a clinician speaking a note aloud, sorted into the same four sections the note-formatting task produces. The OUTPUT contract is deliberately identical - a clinician reads one structure, and a pack that grew a second one for the same encounter would be measuring two answers to one question. What differs is the INPUT, and therefore the prompt: written prose is organised and a dictation is not.",
+  "_input": "ONE transcript per case, read through the `transcript` documents template rather than the `notes` one - `transcripts/{case}.transcript.txt`. Unlike the note-format cases, these are NOT shared with another task's corpus: there is no written note they correspond to, and inventing one would defeat the point. Case names ARE the transcript filenames, which is the constraint the documents template imposes everywhere in this pack.",
+  "_synthetic": "THE TRANSCRIPTS ARE SYNTHETIC, on the same terms as the notes. They were written for this corpus to exhibit named dictation failures and are not transcribed from, derived from, or edited down from any real recording. A dictation corpus is the likeliest of all of them to carry a real voice into a public repository, because the raw material exists as audio somebody recorded.",
+  "_whatThisTaskAdds": "Everything the note-format task measures, over an input that has five properties a written note does not:\n  - ORDER IS NOT MEANING. The plan may be dictated first and the history last. A model that partitions by position rather than by content sorts this corpus wrongly and sorts the written one correctly.\n  - THE SPEAKER CORRECTS THEMSELVES OUT LOUD. A dose, a drug, and in one case a whole surgical history are stated and then withdrawn. The withdrawn version is still in the transcript, still quotable, and must appear nowhere in the answer. This is the axis with no analogue in the note corpus and it is the reason the task exists.\n  - THE SPEAKER DICTATES MARKUP. 'comma', 'period', 'new paragraph', 'colon' are instructions to a typist. They are inside the spans a model must quote, and deletion-only derivation is exactly the tool for removing them - which is a pleasant accident rather than a design: the rule that stops a drug name drifting also strips a filler.\n  - THE SPEAKER TALKS TO THE ROOM. Asides to a typist, to a colleague, and to the door are not clinical facts, and they are phrased in the imperative, which is what a plan item is phrased in.\n  - THE TRANSCRIBER MISSES WORDS. '[inaudible]' is where a dose should be. It is not a value, and a model that supplies a plausible one has written a prescription nobody dictated.",
+  "_matching": "`match` works exactly as in note-format-cases.json: alternatives of AND-groups, compared case- and accent-insensitively against an item's `text`. A medication expectation may also carry `dose`, matched the same way against that item's `dose`, or `doseNull: true` where the speaker names a drug without a usable dose. The dose expectations here are doing more work than in the note corpus: on tr-en-02 and tr-en-07 the WRONG dose is also present in the transcript and is also quotable, so a dose error is a model taking the speaker's first word instead of their last.",
+  "_expectKinds": {
+    "present": "An item matching these terms must appear in the named section. The gated denominator.",
+    "absent": "No item in the named section may match. Each names a specific trap the transcript lays - a retracted drug, a relative's symptom, a dictated punctuation word, an aside to the typist, or two drug names inside one medication item (see _mergedItems).",
+    "empty": "The whole section must be `[]`. Three cases turn on it: a pre-operative dictation that states there is no medication and then stops before anything is decided (two empty sections in one case, for two different reasons), and a telephone call whose patient has no past history at all."
+  },
+  "_mergedItems": "Every case naming two or more drugs carries an `absent` expectation whose AND-group is two DRUG NAMES: an item matching both is one item that should have been two. It is here because the first graded run walked straight through the gap it closes. On tr-en-12 the model emitted a single medication item whose `text` named all three drugs and whose `dose` held all three schedules, and it scored 3/3 on the drugs with no dose error - a set matcher looking for 'folic acid' finds it in a merged string exactly as well as in its own item, so the contract's one-item-per-drug rule was unmeasured on the axis it matters most. The schema predicted this and said it could not be enforced: no JSON Schema keyword expresses 'text must be a single drug name'. What a schema cannot enforce, an answer key has to check.\n\nThe trap is on ALL SIX multi-drug cases rather than on the one where the failure was seen. A check written only where a model already failed is a check fitted to a run, and it would report nothing the next time the same defect appeared two cases over. It costs nothing when the answer is right: three separate items match no pair.\n\nIt changes no denominator. `absent` expectations are not gated items, so item recall stays comparable across the key change and only the hallucination count moves.",
+  "_negationLimit": "An `absent` expectation cannot catch a NEGATED emission: the matcher refuses a match when a negator opens the clause, so a model that emits 'no fever' as a history item scores as though it emitted nothing. That is correct for measuring recall and it means the traps here are written on UN-negated content wherever possible - a retracted drug, an examination finding, a third party's problem. tr-en-09's negation run is graded by `empty` on history rather than by a list of `absent`s, which is the one expectation kind that catches an invention nobody named in advance.",
+  "_provenance": "Two checks run on EVERY item, exactly as in note formatting. `quote` must be found in the TRANSCRIPT by literal containment under [clinical.quoteVerification]; `text` and `dose` must be derivable from that quote by deletion only under [clinical.textDerivation]. The transcripts are lower-case throughout, which removes the sentence-initial-capital drift that dominated the note corpus's edited-only failures - so an edited-only failure here is a more interesting signal than it is there.",
+  "_floors": "MEASURED. Set on 2026-08-22 from two runs of Qwen3-4B-Q4_K_M.official.gguf, constrained, temp 0, on the twelve transcripts and the tightened key — 82% item recall (60/73), 100% provenance (54/54), 91% derivation (61/67), 0 invented spans. The two runs were on separate server processes and agreed item for item, so the numbers below are a floor under a reproduced result rather than under a single pass. See RESULTS.md, 'Dictated transcripts'.",
+  "_floorsMargin": "Each gate sits a little UNDER what was measured, and the gap is doing a job. At temperature 0 this task is deterministic, so a floor set exactly at the measurement would turn any change at all — a prompt edit, a llama.cpp release that re-tokenises one span — into a failed run rather than a moved number, and the pack would spend its failures on noise instead of on regressions. Item recall 80 under 82 is one gated item of room out of 73. Provenance 95 under 100 is likewise about one item: quote verification is the check this corpus never failed, and it should stay near the top. Derivation 90 under 91 is the tightest of the four, deliberately — five of the six derivation failures are one Spanish case translating its own quote, so the number is one behaviour away from moving a long way in either direction and the floor should notice when it does. Fabrication stays at 1.0: it is not a rate to be traded against, and no run of this corpus has yet invented a span.",
+  "_floorsAreNotAmbitions": "These are floors under the REFERENCE model, not targets for a good one. 82% recall means thirteen items a clinician dictated are not in the reading, and 50% on the Spanish half is not a bilingual claim anybody should ship. A model that only clears these bars is a model this pack can measure, not one this corpus endorses.",
+  "itemRecallFloor": 0.8,
+  "quoteFloor": 0.95,
+  "derivationFloor": 0.9,
+  "fabricationFloor": 1.0,
+  "cases": [
+    {
+      "name": "tr-en-01-rambling",
+      "class": "dictation-order",
+      "difficulty": 3,
+      "note": "The baseline disorganised dictation. The plan is spoken FIRST and explicitly flagged as such ('plan first because i need to remember it'), the reason for the visit comes third, the history fourth. Nothing is retracted and nothing is inaudible: this case measures sorting by content alone, so a failure here is not confounded with the harder axes below. Two drugs with two doses, and a trailing negation run that belongs nowhere.",
+      "fields": [
+        { "field": "presenting_complaint", "expect": { "kind": "present", "match": [["tingling"], ["feet", "tingling"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["type 2 diabetes"], ["diabetes"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["hypertension"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["hba1c"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["diabetic eye clinic"], ["eye clinic"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["metformin"]], "dose": [["1 g twice daily"], ["1 g"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["ramipril"]], "dose": [["5 mg"]] } },
+        { "field": "history", "expect": { "kind": "absent", "match": [["chest pain"], ["palpitations"]] } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["metformin", "ramipril"]] } }
+      ]
+    },
+    {
+      "name": "tr-en-02-self-correction",
+      "class": "self-correction",
+      "difficulty": 5,
+      "note": "The case the task exists for. Three retractions in one dictation, of three different kinds: a MEASUREMENT corrected ('152 over 94 sorry that's wrong 158 over 94'), a DOSE corrected ('amlodipine 5 mg once daily no actually make that 10 mg'), and a DRUG withdrawn entirely ('add ramipril actually no scratch the ramipril'). The superseded dose is the trap with teeth - 5 mg is in the transcript, quotable, and the speaker even mentions it again afterwards ('she's had 5 before'), so a model that takes the first number gets a citation that verifies perfectly for a prescription that is wrong.",
+      "fields": [
+        { "field": "history", "expect": { "kind": "present", "match": [["atrial fibrillation"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["osteoarthritis"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["amlodipine"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["six weeks"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["amlodipine"]], "dose": [["10 mg"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["apixaban"]], "dose": [["5 mg twice daily"], ["5 mg"]] } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["ramipril"]] } },
+        { "field": "plan", "expect": { "kind": "absent", "match": [["ramipril"]] } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["amlodipine", "apixaban"]] } }
+      ]
+    },
+    {
+      "name": "tr-en-03-dictated-punctuation",
+      "class": "dictated-markup",
+      "difficulty": 4,
+      "note": "The speaker dictates every punctuation mark and every paragraph break aloud, and dictates the section headings too. The whole transcript is one run-on stream of words in which 'comma' and 'period' outnumber some of the clinical terms. Two things are measured: that the content survives the markup, and that the markup does not survive into the items. The `absent` expectations on 'comma' and 'period' are the only place in this pack where an expectation names a word that is not clinical at all.",
+      "fields": [
+        { "field": "presenting_complaint", "expect": { "kind": "present", "match": [["review", "asthma"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["asthma", "childhood"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["rhinitis"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["beclometasone"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["spacer"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["eight weeks"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["beclometasone"]], "dose": [["200 micrograms twice daily"], ["200 micrograms"]] } },
+        { "field": "history", "expect": { "kind": "absent", "match": [["comma"], ["period"]] } },
+        { "field": "plan", "expect": { "kind": "absent", "match": [["comma"], ["period"]] } }
+      ]
+    },
+    {
+      "name": "tr-en-04-asides",
+      "class": "aside",
+      "difficulty": 4,
+      "note": "Three interruptions that are not about the patient: the speaker looking for the chart, an instruction to the person typing ('sandra can you fax a copy to the practice'), and someone at the door. The fax instruction is the dangerous one and it is why this case is here - it is an imperative, it names an action, it names a recipient, and it is exactly the grammar of a plan item. A model sorting by sentence shape rather than by subject puts it in the plan.",
+      "fields": [
+        { "field": "presenting_complaint", "expect": { "kind": "present", "match": [["lower back pain"], ["back pain"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["laminectomy"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["hypothyroidism"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["physiotherapy"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["analgesia"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["levothyroxine"]], "dose": [["100 micrograms"]] } },
+        { "field": "plan", "expect": { "kind": "absent", "match": [["fax"]] } },
+        { "field": "history", "expect": { "kind": "absent", "match": [["chart"], ["door"]] } }
+      ]
+    },
+    {
+      "name": "tr-en-05-inaudible",
+      "class": "inaudible",
+      "difficulty": 5,
+      "note": "Two '[inaudible]' markers, in two places where they mean different things. In the duration ('present now for [inaudible] weeks') it costs a detail nobody grades. In the dose ('furosemide [inaudible] milligrams') it is the whole value, and the expectation is a NULL dose: a model that writes 40 mg has written a plausible number that nobody said, and it will cite a span that verifies. The lay name in the same dictation ('her water tablet sorry that is the furosemide') is the second trap - the speaker names the drug themselves, so there is one furosemide item and no water tablet.",
+      "fields": [
+        { "field": "presenting_complaint", "expect": { "kind": "present", "match": [["leg ulcer"], ["ulcer"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["diabet"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["dvt"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["compression"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["doppler"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["furosemide"]], "doseNull": true } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["water tablet"]] } }
+      ]
+    },
+    {
+      "name": "tr-en-06-cut-off",
+      "class": "empty-section",
+      "difficulty": 3,
+      "note": "A dictation that stops. The patient is called away before anything is decided and the speaker says so, then says they will finish later. TWO sections must be empty for two unrelated reasons: current_medication because he takes nothing ('not even paracetamol', which is a negation naming a real drug), and plan because nothing was decided. The plan is the harder of the two - every other case in this corpus has one, and an empty plan on a full clinical encounter is the answer a model is least willing to give.",
+      "fields": [
+        { "field": "presenting_complaint", "expect": { "kind": "present", "match": [["hernia repair"], ["pre operative"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["copd"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["prostatic hyperplasia"]] } },
+        { "field": "current_medication", "expect": { "kind": "empty" } },
+        { "field": "plan", "expect": { "kind": "empty" } }
+      ]
+    },
+    {
+      "name": "tr-en-07-third-party",
+      "class": "third-party",
+      "difficulty": 4,
+      "note": "A home visit with the daughter present, and the daughter has her own problem and her own answer to it. Neither belongs to this record. The second discriminator is a dose that is CONDITIONAL: furosemide is 40 mg now and goes to 60 mg 'if the weight is still up', so the medication list says 40 and the plan says 60 - the same shape as a self-correction and arrived at a different way, which is why it sits in a different case.",
+      "fields": [
+        { "field": "presenting_complaint", "expect": { "kind": "present", "match": [["breathless"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["heart failure"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["kidney disease"], ["chronic kidney"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["u and es"], ["next week"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["furosemide", "60"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["bisoprolol"]], "dose": [["2.5 mg"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["furosemide"]], "dose": [["40 mg"]] } },
+        { "field": "history", "expect": { "kind": "absent", "match": [["migraine"]] } },
+        { "field": "plan", "expect": { "kind": "absent", "match": [["own gp"]] } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["bisoprolol", "furosemide"]] } }
+      ]
+    },
+    {
+      "name": "tr-en-08-discharge",
+      "class": "discharge",
+      "difficulty": 5,
+      "note": "The longest dictation in the corpus and the one with the most to sort: an antibiotic SWITCH (intravenous co-amoxiclav to oral amoxicillin) that produces one medication item and not two, three oxygen flow rates that produce none, and a follow-up split between the end of the dictation and an afterthought ('oh and one more thing') that arrives after the speaker has already signed off. The afterthought is the axis this case adds to the note corpus's discharge letter: in writing, a plan item at the end of the document is at the end of the plan; in speech it is after the end.",
+      "fields": [
+        { "field": "presenting_complaint", "expect": { "kind": "present", "match": [["pneumonia"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["diabet"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["tia"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["chest x-ray"], ["x-ray"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["blood pressure"], ["gp", "review"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["amoxicillin"]], "dose": [["500 mg"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["paracetamol"]], "dose": [["1 g"]] } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["oxygen"]] } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["co-amoxiclav"]] } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["amoxicillin", "paracetamol"]] } }
+      ]
+    },
+    {
+      "name": "tr-en-09-negation-run",
+      "class": "negation",
+      "difficulty": 3,
+      "note": "A telephone consultation dictated as one unpunctuated run of negatives - five of them in two sentences, with no comma anywhere to break the clause. History is expected EMPTY, which is the only expectation kind that catches this: an `absent` list cannot, because the matcher refuses a match when a negator opens the clause, so a model that emits 'no fever' as a history item would score as though it emitted nothing. The medication is named rather than described ('microgynon'), with no dose stated.",
+      "fields": [
+        { "field": "presenting_complaint", "expect": { "kind": "present", "match": [["sore throat"]] } },
+        { "field": "history", "expect": { "kind": "empty" } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["analgesia"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["call back"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["microgynon"]], "doseNull": true } }
+      ]
+    },
+    {
+      "name": "tr-es-10-consulta",
+      "class": "language",
+      "difficulty": 4,
+      "note": "A Spanish dictation with Spanish fillers ('eh', 'o sea'), which are not the English ones and are not removable by a list a model memorised in English. The sections carry English keys over Spanish speech, exactly as the other tasks do. The decimal comma in '2,5 mg' is the second point: it is how the dose is said and written in this language, and a dose normalised to '2.5' is no longer a deletion of its quote.",
+      "fields": [
+        { "field": "presenting_complaint", "expect": { "kind": "present", "match": [["cansancio"], ["falta de aire"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["fibrilacion"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["artrosis"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["analitica"], ["hemograma"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["un mes"], ["citamos"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["apixaban"]], "dose": [["5 mg"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["bisoprolol"]], "dose": [["2,5 mg"], ["2,5"]] } },
+        { "field": "history", "expect": { "kind": "absent", "match": [["dolor toracico"], ["palpitaciones"]] } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["apixaban", "bisoprolol"]] } }
+      ]
+    },
+    {
+      "name": "tr-es-11-correccion",
+      "class": "self-correction",
+      "difficulty": 5,
+      "note": "The Spanish half of the correction axis, and the one that retracts a whole PATIENT. The speaker starts dictating an appendicectomy, realises it belongs to somebody else ('no perdón eso es otro paciente'), and states that this patient has no surgical history at all. The drug correction beside it is a substitution with a stated reason - metamizol replaced by paracetamol because the patient is allergic - so a model that keeps the first drug has put an allergen on the medication list of a patient the transcript says is allergic to it.",
+      "fields": [
+        { "field": "presenting_complaint", "expect": { "kind": "present", "match": [["dolor abdominal"], ["fosa iliaca"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["hipertension"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["ecografia"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["cirugia"], ["valoracion"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["paracetamol"]], "dose": [["1 g"]] } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["metamizol"]] } },
+        { "field": "history", "expect": { "kind": "absent", "match": [["apendicectomia"]] } }
+      ]
+    },
+    {
+      "name": "tr-en-12-structured-dictation",
+      "class": "structured",
+      "difficulty": 2,
+      "note": "The disciplined dictator: headings spoken aloud in order, no retraction, no aside, no filler. The easiest case in the corpus and it is here on purpose - without it every transcript is hard, the tier distribution collapses to 3-5, and a prompt change that helps only the well-behaved dictation would be invisible. Three drugs on three different weekly schedules, and one examination finding ('mild swelling of the left wrist') stated positively so that a history section which absorbs today's examination can actually be caught, which a negated finding could not be.",
+      "fields": [
+        { "field": "presenting_complaint", "expect": { "kind": "present", "match": [["annual review"], ["rheumatoid"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["rheumatoid"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["osteoporosis"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["full blood count"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["six weeks"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["methotrexate"]], "dose": [["15 mg"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["folic acid"]], "dose": [["5 mg"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["alendronic acid"]], "dose": [["70 mg"]] } },
+        { "field": "history", "expect": { "kind": "absent", "match": [["swelling"], ["wrist"]] } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["methotrexate", "folic"], ["methotrexate", "alendronic"], ["folic", "alendronic"]] } }
+      ]
+    }
+  ]
+}

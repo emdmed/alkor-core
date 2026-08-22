@@ -2,7 +2,7 @@
   "name": "medextract",
   "version": "0.1.0",
   "license": "Apache-2.0",
-  "description": "A harness for validating local-model extraction from clinical notes, against contract packs.",
+  "description": "Extract structured medical data from clinical notes with a small local model, against contract packs you own — with the gate that says whether it is good enough attached.",
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
@@ -22,6 +22,8 @@
   },
   "scripts": {
     "test": "node --test 'test/*.test.ts'",
+    "typecheck": "tsc --noEmit",
+    "check": "npm test && npm run typecheck",
     "profiles": "node src/cli.ts profiles",
     "eval": "node src/cli.ts eval",
     "agent": "node src/cli.ts agent"
@@ -31,6 +33,7 @@
     "undici": "^8.10.0"
   },
   "devDependencies": {
-    "@types/node": "^26.2.0"
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2"
   }
 }

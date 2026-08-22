@@ -75,10 +75,31 @@ export interface ProfileModule {
    * be reachable from somewhere: a trace holds the raw prompt and the raw completion, so
    * for a profile over real records it holds patient data. Absent means identity, which is
    * a statement about a synthetic corpus rather than a safe default.
+   *
+   * Use `redactFor` instead when the answer depends on the pack, which for a corpus-handling
+   * profile it usually does. Resolved through `redactor()` below, never read directly.
    */
   redact?: Redactor
-  /** Extract profiles only: documents in the pack that `review` will accept by name. */
-  documentNames?(pack: Pack): string[]
+  /**
+   * Redaction chosen once the pack is known, and preferred over `redact` when both are set.
+   *
+   * Separate from `redact` rather than a union with it, deliberately. A `Redactor` and a
+   * `(pack) => Redactor` are both functions of one argument and cannot be told apart at
+   * runtime, so a union would be resolved by guessing — and the guess that fails hands the
+   * factory itself to `openTrace`, which then writes every line unredacted while the profile
+   * appears to have redaction configured. Two fields cannot be guessed wrong.
+   */
+  redactFor?(pack?: Pack): Redactor
+  /**
+   * Extract profiles only: documents in the pack that `review` will accept by name.
+   *
+   * `options` is what the CLI collected, and it is here because a profile may read more than
+   * one corpus. The clinical pack holds written notes for three tasks and dictated
+   * transcripts for a fourth, filed apart on purpose; `--case tr-en-02-self-correction`
+   * names a document that exists only under `--task transcript`, and a name list that
+   * ignored the task would refuse it while claiming the pack does not hold it.
+   */
+  documentNames?(pack: Pack, options?: Record<string, unknown>): string[]
   /** Extract profiles only: one interactive document review. */
   review?(ctx: ReviewContext): Promise<ReviewResult>
   runEval(ctx: EvalContext): Promise<EvalVerdict>
@@ -101,8 +122,14 @@ export interface ReviewContext {
   pack?: Pack
   baseUrl?: string
   trace: Trace
-  /** A named document from the pack, or text the user supplied directly. */
-  input: { kind: 'case'; name: string } | { kind: 'text'; text: string }
+  /**
+   * A named document from the pack, or text the user supplied directly.
+   *
+   * Supplied text carries an optional `label` — the file it was read from, or `stdin`.
+   * Only the host knows that, and a report headed "supplied document" is one nobody can
+   * match back to the note it was about once two of them are on screen.
+   */
+  input: { kind: 'case'; name: string } | { kind: 'text'; text: string; label?: string }
   options: Record<string, unknown>
 }
 
@@ -116,6 +143,16 @@ export interface ReviewResult {
   /** False when the extraction never produced a usable structure. */
   ok: boolean
   /**
+   * The model's completion, unaltered — what a consuming application's parser receives.
+   *
+   * Passed through rather than re-serialized from the profile's parsed shape, and the
+   * difference matters: a parser normally keeps the fields it grades and drops the rest, so
+   * re-serializing would hand a caller a tidied document that no model ever emitted. Present
+   * even when `ok` is false, because a reply that would not parse is exactly the one worth
+   * looking at.
+   */
+  raw?: string
+  /**
    * The document that was actually reviewed, and what to call it.
    *
    * Returned so a host that also runs a CONVERSATION can put the document into it. Only
@@ -124,6 +161,21 @@ export interface ReviewResult {
    */
   document?: string
   label?: string
+  /**
+   * The same reading as data, when the profile has one to give.
+   *
+   * Optional because it is a stronger promise than `raw`: a completion is whatever the model
+   * said, and this is what the profile CONCLUDED — the parsed structure together with every
+   * verdict it computed about it. That is the object a second implementation of the same
+   * contract is compared against, and the comparison needs the verdicts: two runtimes that
+   * emit identical bytes and disagree about which quotes verify are not the same runtime, and
+   * nothing in the completion shows the difference.
+   *
+   * A profile without one is not deficient. Vital signs has none because its `--json` is a
+   * pipe into an application that parses the completion itself, and changing that shape would
+   * break the caller to serve a fixture it never asked for.
+   */
+  report?: unknown
 }
 
 /**
@@ -136,7 +188,44 @@ export const chatPrompt = (profile: ProfileModule, pack?: Pack): string | undefi
   return typeof p === 'function' ? p(pack) : p
 }
 
+/**
+ * The profile's trace redactor, resolved against the pack it will be tracing.
+ *
+ * Resolved in one place for the same reason `chatPrompt` above is: a host should not have to
+ * know which of the two forms a profile chose, and this is the one hook where getting it
+ * wrong writes patient data to disk rather than printing the wrong string.
+ */
+export const redactor = (profile: ProfileModule, pack?: Pack): Redactor | undefined =>
+  profile.redactFor ? profile.redactFor(pack) : profile.redact
+
 export class ProfileError extends Error {}
+
+/**
+ * Check a `--case` name against the documents the profile says its pack holds.
+ *
+ * The failure is worth its own message. A pack's documents are named by a TEMPLATE rather
+ * than by a manifest key, so a mistyped name reaches the filesystem and comes back as
+ * ENOENT on a path the user never typed — technically accurate and useless. Listing what
+ * the pack actually offers turns that into a one-glance fix, and a profile with no named
+ * documents at all is a different mistake that deserves saying so.
+ */
+export const requireDocumentName = (
+  profile: ProfileModule,
+  pack: Pack,
+  name: string,
+  options: Record<string, unknown> = {},
+): string => {
+  const names = profile.documentNames?.(pack, options) ?? []
+  if (!names.length) {
+    throw new ProfileError(
+      `profile '${profile.name}' exposes no named documents, so --case has nothing to select — pass --note FILE instead`,
+    )
+  }
+  if (!names.includes(name)) {
+    throw new ProfileError(`pack '${pack.name}' has no document '${name}' — it holds: ${names.join(', ')}`)
+  }
+  return name
+}
 
 /**
  * Where a profile's module lives, or undefined for the built-in `src/profiles/<name>/`.

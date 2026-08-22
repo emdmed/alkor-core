@@ -1,0 +1,184 @@
+{
+  "_comment": "Expected patient-summary content per case. The notes are synthetic and were written for this corpus: they contain no patient data, no identifiers and nothing derived from a real record. Anything added here must meet the same standard - a public clinical corpus is the single most likely place for patient data to enter a repository, and there the mistake is unrecoverable.",
+  "_input": "A summary case names SEVERAL notes, in order, because that is the shape of the call: a whole record assembled into ONE user message. The profile assembles them under [clinical.summaryAssembly] in pack.toml - per-note cap, running total, line format, note type - so any second runtime reading this pack builds byte-identical input. Grading a single note here would measure a call no application makes. THE TRUNCATION PATH IS NOW GRADED. It was a stated gap here for as long as the corpus was three short records: none of them reached `totalChars`, so no graded case ever handed a model a PREFIX of a record, and the assembler's truncation branch was covered by a unit test and by nothing that produced a number. sum-en-09-long-admission is six ward-round notes of a real-length admission; the assembler uses five of them and drops the sixth, and the case's answer key is written against what the model was actually GIVEN rather than against the complete record - which is the whole point, and is why `assembled.truncated` is recorded per case in the trace.",
+  "_matching": "This task grades SET EXTRACTION over free text, so an expectation is a set of terms rather than a literal string: there is no single correct wording for 'type 2 diabetes diagnosed six years ago'. `match` is a list of ALTERNATIVES; each alternative is a list of terms that must ALL appear (case- and accent-insensitive substring) in SOME element of the model's array for that field. An item matches if ANY alternative matches. Both levels are load-bearing. The AND level: ['metformin','850'] matches 'metformin 850 mg twice daily' but not a bare 'metformin' the model guessed - and crucially a bare term would also match 'metformin stopped', the opposite fact. The OR level: a fact has more than one correct spelling, and scoring 'essential hypertension' as a MISS because the key said 'high blood pressure' is a scorer defect wearing a model result's clothing.",
+  "_expectKinds": {
+    "present": "Must appear in the named field. Counted in the gated recall denominator.",
+    "absent": "Must NOT appear in the named field. Catches the two failures worth catching: a fact filed in the wrong list (a completed study still listed as pending), and a fact invented outright. Each `absent` here names a specific trap the notes lay.",
+    "empty": "The whole field must be `[]`. Stronger than listing absents one by one, and it is what makes the thin-record case measurable: any content at all is an invention."
+  },
+  "_floor": "itemRecallFloor gates the eval: of `present` expectations, the share the model produced. Same asymmetry as the vital-signs task - a missed problem is invisible to the clinician while a spurious one is deleted in a click. It is set LOWER than the vital-signs floor (0.80 against 0.90) and that is a statement about the task rather than a concession to a model: keyword matching over paraphrase cannot be as sharp as comparing a transcribed number, so the same true performance scores lower here. A floor tuned until a particular model passed would be worthless; this one was chosen from what the task can resolve.",
+  "itemRecallFloor": 0.8,
+  "cases": [
+    {
+      "name": "sum-en-01-diabetes",
+      "class": "longitudinal",
+      "difficulty": 4,
+      "notes": ["sum-en-01-a", "sum-en-01-b", "sum-en-01-c"],
+      "note": "Three notes over a year, arranged so that reading only the first is wrong on three counts. Amlodipine is prescribed in note A, continued in note B and STOPPED in note C, so it belongs in no list; empagliflozin appears only in note B; the HbA1c requested in A is reported in B and therefore not pending, while a NEW HbA1c is requested in C and is. The father's bowel cancer in note C is family history and belongs nowhere. Discriminator: the record is read as a whole and the later notes correct the earlier ones.",
+      "fields": [
+        { "field": "history", "expect": { "kind": "present", "match": [["type 2 diabetes"], ["diabetes"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["hypertension"], ["high blood pressure"]] } },
+        { "field": "history", "expect": { "kind": "absent", "match": [["bowel cancer"], ["colon cancer"]] } },
+        { "field": "usual_medication", "expect": { "kind": "present", "match": [["metformin", "850"], ["metformin"]] } },
+        { "field": "usual_medication", "expect": { "kind": "present", "match": [["empagliflozin", "10"], ["empagliflozin"]] } },
+        { "field": "usual_medication", "expect": { "kind": "absent", "match": [["amlodipine"]] } },
+        { "field": "pending", "expect": { "kind": "present", "match": [["ophthalmology"], ["retinal"], ["eye"]] } },
+        { "field": "pending", "expect": { "kind": "present", "match": [["hba1c"]] } },
+        { "field": "pending", "expect": { "kind": "absent", "match": [["renal function"], ["kidney function"]] } }
+      ]
+    },
+    {
+      "name": "sum-es-02-epoc",
+      "class": "language",
+      "difficulty": 4,
+      "notes": ["sum-es-02-a", "sum-es-02-b", "sum-es-02-c"],
+      "note": "The same longitudinal shape in Spanish, with the drug traps that only an acute encounter produces. Metilprednisolona is ONE intravenous dose given in the emergency department and prednisona is a five-day course - neither is usual medication - while oxygen at 2 L/min is not a drug at all. The spirometry requested in note A is performed and reported in note C, so it is no longer pending; the cardiology assessment introduced in C is. Tiotropio appears only in the last note.",
+      "fields": [
+        { "field": "history", "expect": { "kind": "present", "match": [["epoc"], ["copd"], ["obstructiva"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["fibrilacion"], ["fibrillation"]] } },
+        { "field": "usual_medication", "expect": { "kind": "present", "match": [["apixaban", "5"], ["apixaban"]] } },
+        { "field": "usual_medication", "expect": { "kind": "present", "match": [["salbutamol"]] } },
+        { "field": "usual_medication", "expect": { "kind": "present", "match": [["tiotropio"], ["tiotropium"]] } },
+        { "field": "usual_medication", "expect": { "kind": "absent", "match": [["metilprednisolona"]] } },
+        { "field": "usual_medication", "expect": { "kind": "absent", "match": [["oxigeno"], ["oxygen"]] } },
+        { "field": "pending", "expect": { "kind": "present", "match": [["cardiologia"], ["cardiology"]] } },
+        { "field": "pending", "expect": { "kind": "absent", "match": [["espirometria"], ["spirometry"]] } }
+      ]
+    },
+    {
+      "name": "sum-en-03-thin",
+      "class": "thin-record",
+      "difficulty": 5,
+      "notes": ["sum-en-03-a", "sum-en-03-b"],
+      "note": "A healthy patient with a sprained ankle and nothing else: no regular medication, and by the second note nothing outstanding at all. This case grades one item and can otherwise only lose points - it is the summary task's equivalent of the note with no vital signs, and it measures whether a model handed a thin record fills the lists with the comorbidities and follow-ups such a record USUALLY carries. The paracetamol is the trap: bought over the counter, taken as required, and stopped after a week, in a record that twice states there is no regular medication.",
+      "fields": [
+        { "field": "history", "expect": { "kind": "present", "match": [["sprain"], ["ankle", "ligament"]] } },
+        { "field": "usual_medication", "expect": { "kind": "empty" } },
+        { "field": "pending", "expect": { "kind": "empty" } }
+      ]
+    },
+    {
+      "name": "sum-en-04-heart-failure",
+      "class": "longitudinal",
+      "difficulty": 5,
+      "notes": ["sum-en-04-a", "sum-en-04-b", "sum-en-04-c"],
+      "note": "Three cardiology visits in which one drug is REPLACED rather than stopped: ramipril goes and sacubitril valsartan arrives in the same sentence of note B, so a model reading only for stop words keeps the wrong one. Furosemide is started in A and never mentioned as changed, which means it survives. The echocardiogram is requested in A and reported in B, and the cardiac rehabilitation is referred in B and completed in C, so both leave the pending list by the end - while the device assessment introduced in C is the only thing still outstanding. The father's myocardial infarction in C is family history and the note says so.",
+      "fields": [
+        { "field": "history", "expect": { "kind": "present", "match": [["heart failure"], ["ejection fraction"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["hypertension"], ["high blood pressure"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["atrial fibrillation"], ["fibrillation"]] } },
+        { "field": "history", "expect": { "kind": "absent", "match": [["father"], ["family history"]] } },
+        { "field": "usual_medication", "expect": { "kind": "present", "match": [["bisoprolol", "5"], ["bisoprolol"]] } },
+        { "field": "usual_medication", "expect": { "kind": "present", "match": [["apixaban", "5"], ["apixaban"]] } },
+        { "field": "usual_medication", "expect": { "kind": "present", "match": [["furosemide", "40"], ["furosemide"]] } },
+        { "field": "usual_medication", "expect": { "kind": "present", "match": [["sacubitril"], ["valsartan"]] } },
+        { "field": "usual_medication", "expect": { "kind": "absent", "match": [["ramipril"]] } },
+        { "field": "pending", "expect": { "kind": "present", "match": [["defibrillator"], ["device"]] } },
+        { "field": "pending", "expect": { "kind": "absent", "match": [["echocardiogram"], ["echo"]] } },
+        { "field": "pending", "expect": { "kind": "absent", "match": [["rehabilitation"], ["rehab"]] } }
+      ]
+    },
+    {
+      "name": "sum-es-05-nefrologia",
+      "class": "language",
+      "difficulty": 4,
+      "notes": ["sum-es-05-a", "sum-es-05-b"],
+      "note": "Two nephrology visits in Spanish. The trap is a five-day course of prednisona given during a brief admission for gout, which is a finished course and not habitual medication - the same shape as the metilprednisolona trap in sum-es-02, in a different specialty and with a different drug, because one instance of a failure mode is an anecdote. Alopurinol's DOSE changes between the notes and the later one is the answer. The renal ultrasound is requested in A and reported in B, so it is no longer pending; the dialysis assessment requested in B is.",
+      "fields": [
+        { "field": "history", "expect": { "kind": "present", "match": [["renal"], ["rinon"], ["kidney"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["gota"], ["gotosa"], ["gout"]] } },
+        { "field": "usual_medication", "expect": { "kind": "present", "match": [["enalapril", "20"], ["enalapril"]] } },
+        { "field": "usual_medication", "expect": { "kind": "present", "match": [["alopurinol", "200"], ["alopurinol"]] } },
+        { "field": "usual_medication", "expect": { "kind": "absent", "match": [["prednisona"], ["prednisone"]] } },
+        { "field": "pending", "expect": { "kind": "present", "match": [["dialisis"], ["dialysis"]] } },
+        { "field": "pending", "expect": { "kind": "absent", "match": [["ecografia"], ["ultrasound"]] } }
+      ]
+    },
+    {
+      "name": "sum-en-06-anticoagulation",
+      "class": "thin-record",
+      "difficulty": 5,
+      "notes": ["sum-en-06-a", "sum-en-06-b", "sum-en-06-c"],
+      "note": "A record that ENDS EMPTY. Warfarin is stopped and edoxaban started in note B - a switch, not an addition - and the thyroid function requested in B is reported normal in C, after which the note says in words that nothing is outstanding and the patient is discharged. So `pending` must be [], on a record whose first two notes both contain pending items. It is the hardest shape in this task: a model that carries an earlier note's outstanding item forward is doing exactly what a summary is for, and here it is wrong.",
+      "fields": [
+        { "field": "history", "expect": { "kind": "present", "match": [["atrial fibrillation"], ["fibrillation"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["hypothyroid"], ["thyroid"]] } },
+        { "field": "usual_medication", "expect": { "kind": "present", "match": [["edoxaban", "60"], ["edoxaban"]] } },
+        { "field": "usual_medication", "expect": { "kind": "present", "match": [["levothyroxine"]] } },
+        { "field": "usual_medication", "expect": { "kind": "absent", "match": [["warfarin"]] } },
+        { "field": "pending", "expect": { "kind": "empty" } }
+      ]
+    },
+    {
+      "name": "sum-en-07-oncology",
+      "class": "longitudinal",
+      "difficulty": 4,
+      "notes": ["sum-en-07-a", "sum-en-07-b"],
+      "note": "Surveillance after cancer surgery, where the pending list is the whole point of the record. Two investigations are requested in note A; one is performed and reported in note B and one is still not booked, and the note says which is which in plain words. Nothing about the medication changes, which is deliberate: this case tests one axis and is quiet on the others, so a failure here is unambiguous.",
+      "fields": [
+        { "field": "history", "expect": { "kind": "present", "match": [["colonic carcinoma"], ["hemicolectomy"], ["carcinoma"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["type 2 diabetes"], ["diabet"]] } },
+        { "field": "usual_medication", "expect": { "kind": "present", "match": [["metformin", "1 g"], ["metformin"]] } },
+        { "field": "usual_medication", "expect": { "kind": "present", "match": [["atorvastatin", "20"], ["atorvastatin"]] } },
+        { "field": "pending", "expect": { "kind": "present", "match": [["colonoscopy"]] } },
+        { "field": "pending", "expect": { "kind": "absent", "match": [["ct"], ["carcinoembryonic"]] } }
+      ]
+    },
+    {
+      "name": "sum-en-08-asthma",
+      "class": "longitudinal",
+      "difficulty": 4,
+      "notes": ["sum-en-08-a", "sum-en-08-b"],
+      "note": "An asthma review where the same drug appears in both notes at two DOSES and the later one is right, which is the dose analogue of the drug-stopped trap. Two courses of oral steroids are described as finished in A and again in B, so prednisolone belongs in no list. The spirometry requested in A is reported in B; the nitric oxide test introduced in B is the outstanding one.",
+      "fields": [
+        { "field": "history", "expect": { "kind": "present", "match": [["asthma"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["rhinitis"], ["allergic"]] } },
+        { "field": "usual_medication", "expect": { "kind": "present", "match": [["beclometasone", "400"], ["beclometasone"]] } },
+        { "field": "usual_medication", "expect": { "kind": "present", "match": [["salbutamol"]] } },
+        { "field": "usual_medication", "expect": { "kind": "absent", "match": [["prednisolone"], ["oral steroid"]] } },
+        { "field": "pending", "expect": { "kind": "present", "match": [["nitric oxide"], ["feno"]] } },
+        { "field": "pending", "expect": { "kind": "absent", "match": [["spirometry"]] } }
+      ]
+    },
+    {
+      "name": "sum-en-09-long-admission",
+      "class": "truncation",
+      "difficulty": 5,
+      "notes": ["sum-en-09-a", "sum-en-09-b", "sum-en-09-c", "sum-en-09-d", "sum-en-09-e", "sum-en-09-f"],
+      "note": "THE TRUNCATION CASE, and it was named as a gap in this file before it was written: the other records run to about 1.5 kB, none of them reaches [clinical.summaryAssembly].totalChars, and no graded case exercised the path where a model is handed a PREFIX of a record. A six-note admission does. The sixth note is dropped by the assembler and the marker says so, which makes the answer key deliberately different from the one a complete record would produce: the pneumococcal vaccination is still outstanding at the end of note E and is given in note F, so `pending` must contain it. A model that somehow answered as though it had read note F would be scored WRONG, which is correct - it is being asked about the input it was given. The trace records `assembled.truncated` for exactly this reason, and this case is what makes that field mean something.",
+      "fields": [
+        { "field": "history", "expect": { "kind": "present", "match": [["chronic obstructive"], ["copd"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["osteoporosis"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["reflux"]] } },
+        { "field": "history", "expect": { "kind": "absent", "match": [["daughter"]] } },
+        { "field": "usual_medication", "expect": { "kind": "present", "match": [["tiotropium"]] } },
+        { "field": "usual_medication", "expect": { "kind": "present", "match": [["beclometasone"], ["formoterol"]] } },
+        { "field": "usual_medication", "expect": { "kind": "present", "match": [["alendronic"]] } },
+        { "field": "usual_medication", "expect": { "kind": "present", "match": [["omeprazole", "20"], ["omeprazole"]] } },
+        { "field": "usual_medication", "expect": { "kind": "absent", "match": [["prednisolone"]] } },
+        { "field": "pending", "expect": { "kind": "present", "match": [["pneumococcal"], ["vaccination"]] } },
+        { "field": "pending", "expect": { "kind": "present", "match": [["respiratory clinic"], ["chest radiograph"], ["radiograph"]] } }
+      ]
+    },
+    {
+      "name": "sum-es-10-geriatria",
+      "class": "longitudinal",
+      "difficulty": 5,
+      "notes": ["sum-es-10-a", "sum-es-10-b", "sum-es-10-c"],
+      "note": "A polymedicated elderly record in Spanish with a withdrawal in the last note: donepezilo is stopped for intolerance and NOT replaced, so it belongs in no list, while hierro added in note B does. The social-work assessment requested in A is completed in B and the falls-unit referral requested in C is not, so the pending list turns over completely across three notes. The husband who attends the same clinic and has diabetes is the third-party trap - the note names him precisely so that a record built from this one cannot quietly acquire his diagnosis.",
+      "fields": [
+        { "field": "history", "expect": { "kind": "present", "match": [["fibrilacion"], ["fibrillation"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["artrosis"], ["osteoarthritis"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["deterioro cognitivo"], ["cognitive"]] } },
+        { "field": "history", "expect": { "kind": "absent", "match": [["marido"], ["husband"]] } },
+        { "field": "usual_medication", "expect": { "kind": "present", "match": [["apixaban", "2,5"], ["apixaban"]] } },
+        { "field": "usual_medication", "expect": { "kind": "present", "match": [["paracetamol", "1 g"], ["paracetamol"]] } },
+        { "field": "usual_medication", "expect": { "kind": "present", "match": [["hierro"], ["iron"]] } },
+        { "field": "usual_medication", "expect": { "kind": "absent", "match": [["donepezilo"], ["donepezil"]] } },
+        { "field": "pending", "expect": { "kind": "present", "match": [["caidas"], ["falls"]] } },
+        { "field": "pending", "expect": { "kind": "absent", "match": [["trabajo social"], ["social work"]] } }
+      ]
+    }
+  ]
+}

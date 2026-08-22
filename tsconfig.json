@@ -1,0 +1,36 @@
+{
+  "// why": [
+    "Node runs this repository by STRIPPING types, which means it checks none of them. Three",
+    "signature changes in one afternoon — scoreCase, renderReading, checkQuote — surfaced as",
+    "test failures rather than as type errors, and would have surfaced as runtime errors in any",
+    "path a test does not cover. This file is what makes `tsc --noEmit` possible; nothing is",
+    "ever emitted from it, and the runtime remains node's own stripping.",
+    "",
+    "`erasableSyntaxOnly` is the load-bearing setting: it refuses enums, parameter properties",
+    "and namespaces — the constructs node cannot strip — so the typechecker and the runtime",
+    "agree about what this repository is allowed to contain. Without it, tsc would happily pass",
+    "code node refuses to start."
+  ],
+  "compilerOptions": {
+    "lib": ["ES2024"],
+    "target": "ES2024",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "types": ["node"],
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "exactOptionalPropertyTypes": false,
+
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

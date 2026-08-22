@@ -116,7 +116,7 @@ export const gutterLines = (content: string): { hit: number; total: number; run:
     sample ??= l
   }
   // Ascending, not merely present: a file of unrelated integers is not a gutter.
-  const ascending = numbers.every((n, i) => i === 0 || n > numbers[i - 1])
+  const ascending = numbers.every((n, i) => i === 0 || n > numbers[i - 1]!)
   // The longest run counting up by exactly one — `1,2,3,4,5`. This is the true signature,
   // and it is what makes the guard hold on a PARTIALLY mangled file. The real observed
   // corruption ran 14 gutter lines out of 23, which density alone catches only barely;
@@ -124,7 +124,7 @@ export const gutterLines = (content: string): { hit: number; total: number; run:
   let run = 0
   let best = 0
   for (const [i, n] of numbers.entries()) {
-    run = i > 0 && n === numbers[i - 1] + 1 ? run + 1 : 1
+    run = i > 0 && n === numbers[i - 1]! + 1 ? run + 1 : 1
     best = Math.max(best, run)
   }
   return { hit: ascending ? numbers.length : 0, total: lines.length, run: ascending ? best : 0, sample }
@@ -406,7 +406,8 @@ export const TOOLS: ToolDef[] = [
       if (SHELL_METACHARACTERS.test(cmd)) {
         return fail('pipes, redirects and chained commands are not allowed. Run one program at a time.')
       }
-      const [verb, ...args] = cmd.split(/\s+/)
+      // `cmd` is non-empty and trimmed, so the split always yields a first element.
+      const [verb = '', ...args] = cmd.split(/\s+/)
       if (!ALLOWED_COMMANDS.has(verb)) {
         return fail(`'${verb}' is not an allowed program. Allowed: ${[...ALLOWED_COMMANDS].join(', ')}`)
       }

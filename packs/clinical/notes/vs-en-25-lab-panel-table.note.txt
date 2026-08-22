@@ -1,0 +1,20 @@
+DAY UNIT - INFUSION VISIT
+
+Bloods taken before the infusion. Results reported as below.
+
+Test                 Result   Reference
+Haemoglobin          118      115-165
+White cells          10.4     4.0-11.0
+Platelets            286      150-400
+Sodium               139      133-146
+Potassium            4.1      3.5-5.3
+Creatinine           92       59-104
+CRP                  38       below 5
+
+Observations before the line was sited: BP 124/76 mmHg, temperature 36.8 C.
+Nothing further was recorded once the infusion started.
+
+None of the figures in the table above is a vital sign; they are laboratory
+results and the reference intervals that go with them.
+
+Infusion given over two hours without reaction. Next visit in four weeks.

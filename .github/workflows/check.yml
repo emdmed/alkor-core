@@ -1,0 +1,35 @@
+# Tests, and the typecheck the tests cannot stand in for.
+#
+# Node runs this repository by STRIPPING types, which means it checks none of them. Three
+# signature changes in one afternoon — `scoreCase`, `renderReading`, `checkQuote` — surfaced
+# as test failures rather than as type errors, and would have surfaced as runtime errors in
+# any path a test does not cover. `tsc --noEmit` is the check that does not depend on a test
+# happening to walk the line.
+#
+# Nothing here starts a model. Every test in this repository is a statement about the pack
+# agreeing with itself or about the harness's own behaviour over a throwaway HTTP server;
+# the numbers that need weights belong to a machine with weights on it, and are quoted in
+# RESULTS.md where they were measured rather than re-derived in CI.
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # The engines floor in package.json. Type stripping is what runs `.ts` sources
+          # directly, so an older Node does not run this project at all.
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      # After the tests, deliberately. A type error and a failing test are both worth
+      # knowing, and a run that stops at the first one still tells you which half broke.
+      - run: npm run typecheck

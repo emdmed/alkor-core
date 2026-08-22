@@ -1,0 +1,17 @@
+ACUTE MEDICAL UNIT - NURSING OBSERVATIONS (transcribed from the chart)
+
+Obs        08:00   12:00   16:00   20:00
+BP         96/58   102/64  108/68  114/72
+Pulse      126     118     108     102
+Resp       28      26      22      20
+Sats       89      92      94      96
+Temp       39.1    38.6    38.0    37.4
+NEWS       9       7       4       2
+Pain       6       5       3       2
+
+NEWS is the early warning score and Pain is the visual analogue score; neither
+is an observation of the patient's physiology in the sense used above.
+
+Fluids running at 125 mL/hour. Oxygen 6 L/min at 08:00, air from 16:00.
+
+Reviewed at 20:30. For step-down to the ward in the morning if the trend holds.

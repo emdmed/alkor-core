@@ -4,8 +4,18 @@
  * The sampler settings here are fixed rather than configurable, and that is the point.
  * When a second runtime evaluates the same model against the same contract pack, any
  * difference in the request body — a sampler default, a missing cache_prompt — shows up
- * as an eval delta that looks like a model difference. A profile chooses its prompts and
- * its schema; it does not get to choose its temperature.
+ * as an eval delta that looks like a model difference.
+ *
+ * The ONE exception is a value the pack itself declares. A profile may pass the temperature,
+ * the cap and the deadline its `models` file states, and nothing else — the same argument
+ * that already applies to `max_tokens`: a pack whose application runs a different sampler
+ * must be measured at the sampler it runs, or the eval measures something adjacent to the
+ * product. Every one of those three has a harness default here, so a profile that passes
+ * nothing sends exactly the bytes it always did.
+ *
+ * A declared setting that is REPORTED and not SENT is worse than either choice: the header,
+ * the trace `run` event and any result copied out of them would all name a sampling that
+ * never reached the wire. That is what these parameters exist to prevent.
  */
 
 // `fetch` comes from undici too, deliberately. Node's built-in fetch has its own bundled
@@ -13,6 +23,7 @@
 // surfaces as the same opaque `fetch failed` the timeout produced, so the two failures are
 // indistinguishable from the outside. Taking both from one module keeps them compatible.
 import { Agent, fetch } from 'undici'
+import type { BenchConditions, Timings } from './bench.ts'
 
 export const LLAMA_DEFAULT_URL = 'http://127.0.0.1:8080'
 
@@ -97,10 +108,58 @@ export interface ChatOptions {
    * the pack's number; nothing else may pass one.
    */
   maxTokens?: number
+  /**
+   * Sampler temperature. Defaults to 0, which is what a graded task must run at: the pass
+   * emits a JSON contract, and two runs over one note that disagree are measuring dice.
+   *
+   * A parity field like `maxTokens`, and passed for the same reason — a pack that declares
+   * a non-zero temperature must be MEASURED at it rather than described as running it. See
+   * `seed` in the body below, which is what keeps a non-zero temperature reproducible.
+   */
+  temperature?: number
+  /**
+   * Per-request deadline in milliseconds. Defaults to TIMEOUT_MS, the harness backstop.
+   *
+   * Declared per task because the tasks are not alike: a pass whose user message is a whole
+   * assembled record spends several times another's on prefill alone, and one deadline
+   * covering both is either too tight for the long task or no bound at all on the short one.
+   */
+  timeoutMs?: number
+  /**
+   * Let the server reuse the KV cache of a shared prefix. Defaults to true.
+   *
+   * A parity field again, and the one whose default is a trade rather than a convention. It
+   * is worth 60-88% of prefill on a corpus of notes behind one large system prompt, and it is
+   * also the reason two runs of the same bytes can disagree: a different set of preceding
+   * requests leaves a different KV prefix, which changes how the batch is split, which changes
+   * the last bits of the logits, which flips a near-tied argmax. Measured on this harness —
+   * `"weight 61.4 kg"` in a 21-note run, `"Weight 61.4 kg"` in a five-note one, same model,
+   * same note, same bytes.
+   *
+   * So a caller that needs a run comparable with somebody else's passes false and pays the
+   * prefill. Nothing about turning it off makes decoding deterministic in general; it removes
+   * the one source of variation this harness has actually caught in the act.
+   */
+  cachePrompt?: boolean
   signal?: AbortSignal
+  /**
+   * Sink for what the completion cost. Called once, on success only.
+   *
+   * A sink rather than a changed return type: `llamaChat` returns the completion string
+   * and is exported to out-of-tree profiles, so widening it would break every caller to
+   * serve the ones that care. Nothing in the REQUEST changes when this is passed — the
+   * server returns `timings` unasked on the non-streamed path, so a measured run and an
+   * unmeasured one send identical bytes, which is the property the pins exist to protect.
+   */
+  onMetrics?(m: { timings?: Timings; usage?: Usage; wallMs: number; finishReason?: string }): void
 }
 
 export class LlamaError extends Error {}
+
+// Re-exported through this module's own surface: a caller reading timings off a completion
+// is already importing the transport, and a second import path for the shape it gets back
+// is one more thing to keep in step.
+export type { BenchConditions, Timings } from './bench.ts'
 
 /**
  * What a completion actually cost, counted by the server with the MODEL'S OWN tokeniser.
@@ -131,6 +190,28 @@ const readUsage = (u: any): Usage | undefined => {
     cachedTokens: typeof u.prompt_tokens_details?.cached_tokens === 'number'
       ? u.prompt_tokens_details.cached_tokens
       : undefined,
+  }
+}
+
+/**
+ * llama-server's own `timings`, normalised.
+ *
+ * Non-standard — an OpenAI envelope has no such field — so it is read defensively and a
+ * server that omits it yields undefined rather than zeros. Zeros would be worse than a gap:
+ * they aggregate into a throughput figure that looks measured and is not.
+ *
+ * `prompt_n` counts the tokens actually EVALUATED; `cache_n` counts the ones the KV cache
+ * already held. They are kept apart here because their sum is the prompt and their ratio is
+ * the whole argument for running the corpus sequentially.
+ */
+const readTimings = (t: any): Timings | undefined => {
+  if (!t || typeof t.predicted_ms !== 'number') return undefined
+  return {
+    promptTokens: Number(t.prompt_n) || 0,
+    promptMs: Number(t.prompt_ms) || 0,
+    predictedTokens: Number(t.predicted_n) || 0,
+    predictedMs: Number(t.predicted_ms) || 0,
+    cachedTokens: Number(t.cache_n) || 0,
   }
 }
 
@@ -454,18 +535,123 @@ export const serverModel = async (baseUrl: string = LLAMA_DEFAULT_URL): Promise<
   }
 }
 
-export const llamaChat = async (o: ChatOptions): Promise<string> => {
-  const baseUrl = (o.baseUrl ?? process.env.LLAMA_URL ?? LLAMA_DEFAULT_URL).replace(/\/+$/, '')
-  const url = `${baseUrl}/v1/chat/completions`
+/**
+ * The conditions a SPEED is only valid under, read from the server that will produce it.
+ *
+ * Same argument as `serverModel` one function up, applied to the other half of a result: a
+ * pack can declare a context size and a slot count, but the process actually serving the
+ * request is whatever someone launched, and a timing recorded against the declaration is
+ * wrong the first time those differ. Best effort — an older server, or a build with
+ * `--no-props`, yields undefined rather than failing a run over a label.
+ */
+export const serverProps = async (baseUrl: string = LLAMA_DEFAULT_URL): Promise<BenchConditions | undefined> => {
+  try {
+    const res = await fetch(`${baseUrl.replace(/\/$/, '')}/props`, { dispatcher })
+    if (!res.ok) return undefined
+    const body = (await res.json()) as any
+    return {
+      modelPath: typeof body.model_path === 'string' ? body.model_path : undefined,
+      quant: typeof body.model_ftype === 'string' ? body.model_ftype : undefined,
+      ctx: Number(body.default_generation_settings?.n_ctx) || undefined,
+      slots: Number(body.total_slots) || undefined,
+    }
+  } catch {
+    return undefined
+  }
+}
 
+/**
+ * What produced this run, resolved ONCE, and whether it can be named at all.
+ *
+ * The two functions above are best effort by design — failing an eval over a label would be
+ * the wrong trade — but "best effort" was where it stopped, and that left a real hole: a run
+ * against a server too old to expose `/v1/models` recorded `(server did not say)` and then
+ * printed a number in exactly the format of a number that names its model. A result nobody
+ * can attribute is not reproducible, and nothing in the output treated it as a problem.
+ *
+ * So the gap is now a value rather than a string. `identified` is false when the server would
+ * not say what it is serving; `warning` is the sentence to print. A consumer reading the trace
+ * can refuse to quote a number whose `run` event says `identified: false`, which is the point
+ * of recording it: the harness cannot know whether a given number is about to be pasted into a
+ * README, and the file it wrote is the only thing that can say "not this one".
+ *
+ * Resolved once per RUN rather than once per task. Three tasks asking the same server the same
+ * two questions is three round-trips for one answer, and — worse — three chances for the tasks
+ * to disagree about what they were run against.
+ */
+export interface ServerIdentity {
+  /** What the server said it is serving, or undefined when it would not say. */
+  model?: string
+  /** The flags a SPEED is valid under, or undefined when `/props` was unavailable. */
+  props?: BenchConditions
+  /** False when the model could not be resolved. A result recorded this way is unreproducible. */
+  identified: boolean
+  /** One line, printed at the top of a run and recorded in the trace. Absent when all is well. */
+  warning?: string
+}
+
+/** The label to print when the server would not name itself. One spelling, in one place. */
+export const UNIDENTIFIED = '(server did not say)'
+
+export const identifyServer = async (baseUrl?: string): Promise<ServerIdentity> => {
+  const [model, props] = await Promise.all([serverModel(baseUrl), serverProps(baseUrl)])
+  const missing = [!model && 'which model it is serving', !props && 'the flags it was started with'].filter(
+    Boolean,
+  ) as string[]
+  return {
+    model,
+    props,
+    identified: Boolean(model),
+    warning: missing.length
+      ? `the server at ${baseUrl ?? LLAMA_DEFAULT_URL} would not say ${missing.join(' or ')} — ` +
+        (model
+          ? 'the correctness numbers below stand, but any SPEED quoted from this run names no conditions'
+          : 'a number from this run cannot be attributed to a model and should not be quoted as one')
+      : undefined,
+  }
+}
+
+/**
+ * The request body, built and not sent.
+ *
+ * Extracted from `llamaChat` so the pinned body can be INSPECTED without running a model. The
+ * body is pinned precisely so a second runtime can be compared against it field for field, and
+ * a pin whose only witness is a live server is a pin nobody checks: the comparison would cost a
+ * 2.5 GB download and a warm GPU, so it would be run once and then trusted.
+ *
+ * `scripts/pin-body.ts` prints this, and the Rust runtime in the desktop app asserts byte
+ * equality against what it prints. Nothing about the request changed when this was lifted out —
+ * `llamaChat` calls it, so there is one body rather than a body and a description of one.
+ */
+export const chatBody = (o: ChatOptions): Record<string, unknown> => {
   const body: Record<string, unknown> = {
     model: o.model ?? process.env.LLAMA_MODEL ?? 'local',
     // Every pass asks for a JSON contract rather than prose, and two local runs must be
-    // comparable (REQ-LOCAL-3).
-    temperature: 0,
+    // comparable (REQ-LOCAL-3). The pack may declare this; 0 is the default and the only
+    // value a graded task should be running at.
+    temperature: o.temperature ?? 0,
+    /**
+     * Pinned, and NOT redundant at temperature 0.
+     *
+     * Greedy decoding makes the seed inert for the sampler, so this changes nothing about
+     * the runs measured before it was added. It is here for the case the parameter above now
+     * makes possible: a pack that declares a non-zero temperature would otherwise produce a
+     * different corpus reading on every run, with nothing in the request saying so.
+     *
+     * It does NOT make a run bit-reproducible, and nothing here should be read as claiming
+     * that. Measured on this harness: the same note, the same model, the same bytes, scored
+     * twice — once inside a 21-note run and once inside a 5-note `--difficulty 5` run —
+     * returned `"weight 61.4 kg"` and `"Weight 61.4 kg"`. `cache_prompt` below is why. A
+     * different set of preceding notes leaves a different KV prefix, which changes how the
+     * batch is split, which changes the last bits of the logits, which flips a near-tied
+     * argmax. One capital letter, and under a case-sensitive quote rule that is the
+     * difference between a verified span and a fabricated one. A scoped run is therefore not
+     * interchangeable with the same cases inside a full one.
+     */
+    seed: 0,
     stream: false,
     // Lets the server reuse the KV cache across the large shared system prompts.
-    cache_prompt: true,
+    cache_prompt: o.cachePrompt ?? true,
     // Sized for a grammar that cannot stop mid-array — see MAX_TOKENS_EXTRACTION. A
     // profile may substitute the cap its pack owner actually runs; see ChatOptions.
     max_tokens: o.maxTokens ?? MAX_TOKENS_EXTRACTION,
@@ -481,9 +667,21 @@ export const llamaChat = async (o: ChatOptions): Promise<string> => {
       json_schema: { name: o.schemaName ?? 'extraction', strict: true, schema: o.schema },
     }
   }
+  return body
+}
 
-  const timeout = AbortSignal.timeout(TIMEOUT_MS)
+export const llamaChat = async (o: ChatOptions): Promise<string> => {
+  const baseUrl = (o.baseUrl ?? process.env.LLAMA_URL ?? LLAMA_DEFAULT_URL).replace(/\/+$/, '')
+  const url = `${baseUrl}/v1/chat/completions`
+  const body = chatBody(o)
+
+  const timeout = AbortSignal.timeout(o.timeoutMs ?? TIMEOUT_MS)
   const signal = o.signal ? AbortSignal.any([o.signal, timeout]) : timeout
+
+  // Around the fetch AND the body read, because an application waits for both. The server
+  // never sees this clock, which is exactly why it is worth keeping: the difference between
+  // it and the server's own milliseconds is the transport nobody budgets for.
+  const startedAt = performance.now()
 
   let res: Response
   try {
@@ -518,5 +716,17 @@ export const llamaChat = async (o: ChatOptions): Promise<string> => {
   if (typeof content !== 'string') {
     throw new LlamaError(`${o.label} envelope missing .choices[0].message.content`)
   }
+  // After the content check, so a failed call contributes no sample. A completion that
+  // could not be read is a correctness event; averaging its latency into a throughput
+  // figure would let a model that fails fast look quick.
+  o.onMetrics?.({
+    timings: readTimings(envelope?.timings),
+    usage: readUsage(envelope?.usage),
+    wallMs: performance.now() - startedAt,
+    // Carried back so a caller whose parse fails can say WHY. `length` means the cap cut the
+    // completion off mid-JSON, which is a budget the pack set rather than a model that
+    // cannot write JSON — and those two have different fixes.
+    finishReason: typeof envelope?.choices?.[0]?.finish_reason === 'string' ? envelope.choices[0].finish_reason : undefined,
+  })
   return content
 }

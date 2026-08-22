@@ -1,0 +1,18 @@
+WARD ROUND - DAY 3 POST-OPERATIVE
+
+Observation          Today       Target
+-------------------  ----------  ----------
+Blood pressure       132/78      below 140/90
+Heart rate           88          60-100
+Respiratory rate     16          12-20
+Oxygen saturation    97          above 94
+Temperature          36.9        36.0-37.5
+Urine output         1450        above 1200
+
+The Target column is the parameter the team is aiming for and is not a
+measurement of this patient. Urine output is in millilitres over 24 hours and
+is not one of the observations collected here.
+
+Wound clean and dry. Mobilising with one assistant. Diet resumed.
+
+Plan: remove the drain tomorrow, discharge planning to begin.

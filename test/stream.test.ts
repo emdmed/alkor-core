@@ -61,9 +61,9 @@ test('tool call arguments reassemble across frames', async () => {
   ])
   const res = await call()
   assert.equal(res.toolCalls.length, 1)
-  assert.equal(res.toolCalls[0].function.name, 'read_file')
-  assert.deepEqual(JSON.parse(res.toolCalls[0].function.arguments), { path: 'a.ts' })
-  assert.equal(res.toolCalls[0].id, 'c1')
+  assert.equal(res.toolCalls[0]!.function.name, 'read_file')
+  assert.deepEqual(JSON.parse(res.toolCalls[0]!.function.arguments), { path: 'a.ts' })
+  assert.equal(res.toolCalls[0]!.id, 'c1')
 })
 
 test('parallel tool calls stay separate and keep their index order', async () => {
@@ -81,7 +81,7 @@ test('parallel tool calls stay separate and keep their index order', async () =>
 
 test('a streamed call with no id still gets one, since the tool result must cite it', async () => {
   serve([frame({ tool_calls: [{ index: 0, function: { name: 'done', arguments: '{}' } }] }), 'data: [DONE]\n\n'])
-  assert.ok((await call()).toolCalls[0].id)
+  assert.ok((await call()).toolCalls[0]!.id)
 })
 
 test('reasoning is separated from content rather than mixed into it', async () => {

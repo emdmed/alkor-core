@@ -24,7 +24,7 @@ export const diffLines = (before: string[], after: string[]): DiffLine[] => {
   const lcs: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0))
   for (let i = n - 1; i >= 0; i--) {
     for (let j = m - 1; j >= 0; j--) {
-      lcs[i][j] = before[i] === after[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1])
+      lcs[i]![j] = before[i] === after[j] ? lcs[i + 1]![j + 1]! + 1 : Math.max(lcs[i + 1]![j]!, lcs[i]![j + 1]!)
     }
   }
 
@@ -33,19 +33,19 @@ export const diffLines = (before: string[], after: string[]): DiffLine[] => {
   let j = 0
   while (i < n && j < m) {
     if (before[i] === after[j]) {
-      out.push({ op: ' ', text: before[i] })
+      out.push({ op: ' ', text: before[i]! })
       i++
       j++
-    } else if (lcs[i + 1][j] >= lcs[i][j + 1]) {
+    } else if (lcs[i + 1]![j]! >= lcs[i]![j + 1]!) {
       // Deletions before insertions on a tie, so a replaced line reads as `-` then `+`
       // rather than the other way round.
-      out.push({ op: '-', text: before[i++] })
+      out.push({ op: '-', text: before[i++]! })
     } else {
-      out.push({ op: '+', text: after[j++] })
+      out.push({ op: '+', text: after[j++]! })
     }
   }
-  while (i < n) out.push({ op: '-', text: before[i++] })
-  while (j < m) out.push({ op: '+', text: after[j++] })
+  while (i < n) out.push({ op: '-', text: before[i++]! })
+  while (j < m) out.push({ op: '+', text: after[j++]! })
   return out
 }
 

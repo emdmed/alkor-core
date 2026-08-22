@@ -55,3 +55,36 @@ temperature = 0.0
 # letting a runaway generation hold the run open until the timeout.
 max_tokens = 1024
 timeout_secs = 300
+
+# Three bounded arrays over a whole record. The cap must sit ABOVE 3 arrays × 20 items × a
+# line's worth of tokens, or a legal maximal response truncates mid-array and every long
+# summary becomes a parse failure — a cap that turns a good answer into a broken one is
+# measuring the budget rather than the model. See patient-summary.schema.json.
+#
+# The timeout is longer than the others because the INPUT is longer: this task's user message
+# is a whole record assembled from several notes, so the prefill alone is several times a
+# single note's.
+[sampling.patient_summary]
+temperature = 0.0
+max_tokens = 2048
+timeout_secs = 600
+
+# One note in, four sections out, every item carrying a quote AND a derived text. The ceiling
+# that matters is 3 arrays × 15 items × two strings each, and quotes are whole sentences
+# rather than short values — so this is capped like the summary and not like vital signs,
+# even though its input is a single note.
+[sampling.note_format]
+temperature = 0.0
+max_tokens = 2048
+timeout_secs = 300
+
+# The same output contract as note_format, so the same ceiling on the answer — but the INPUT
+# is speech, which is roughly twice the words of the written note carrying the same facts:
+# fillers, retracted spans that stay in the transcript, and dictated punctuation all occupy
+# prefill. The quotes are longer for the same reason, since a span containing a correction has
+# to be quoted whole to be quotable at all, so the cap stays at the summary's rather than
+# dropping to what the sections alone would need.
+[sampling.transcript]
+temperature = 0.0
+max_tokens = 2048
+timeout_secs = 300

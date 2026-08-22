@@ -1,0 +1,18 @@
+PLANTA DE MEDICINA INTERNA - GRAFICA DE CONSTANTES
+
+Hora         07:00   13:00   19:00
+TA (mmHg)    142/88  138/86  134/82
+FC (lpm)     94      88      82
+FR (rpm)     22      20      18
+SatO2 (%)    93      95      96
+T (C)        38,2    37,7    37,1
+Glucemia     186     162     148
+
+La glucemia capilar se expresa en mg/dL.
+
+Diuresis de 24 horas: 1.850 mL. Balance hidrico negativo de 300 mL.
+
+Oxigenoterapia con gafas nasales a 2 L/min hasta las 13:00, despues aire
+ambiente.
+
+Revisado por la doctora de guardia a las 19:30. Continua la pauta actual.

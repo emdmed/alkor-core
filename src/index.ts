@@ -37,9 +37,11 @@ export {
 export {
   MANIFEST_NAME,
   PackError,
+  SPEC_CHANGES,
   SPEC_VERSION,
   loadPack,
   resolvePackRoot,
+  specGap,
   type Pack,
   type PackManifest,
 } from './core/pack.ts'
@@ -49,6 +51,8 @@ export {
   ProfileError,
   chatPrompt,
   loadProfileModule,
+  redactor,
+  requireDocumentName,
   resolveProfileModule,
   type EvalContext,
   type EvalVerdict,
@@ -63,21 +67,70 @@ export { dispatchCall, toolSpecs, type Dispatch, type ToolDef } from './core/too
 // --- What produced a result ---------------------------------------------------------
 export { HARNESS_VERSION } from './core/version.ts'
 
+// --- What a result COST. Server-counted, on the graded pass itself. -------------------
+export {
+  formatBench,
+  median,
+  percentile,
+  summarizeBench,
+  type BenchConditions,
+  type BenchSample,
+  type BenchSummary,
+  type Timings,
+} from './core/bench.ts'
+
+// --- Provenance: the check a schema cannot do ----------------------------------------
+export {
+  collapse,
+  verifyDerivation,
+  verifyQuote,
+  type DerivationRule,
+  type DerivationVerdict,
+  type QuoteDrift,
+  type QuoteRule,
+  type QuoteVerdict,
+} from './core/verify.ts'
+
+// --- What a repeated run bought, as opposed to what it averaged to --------------------
+export {
+  formatStability,
+  summarizeStability,
+  type CaseStability,
+  type Observation,
+  type StabilitySummary,
+} from './core/stability.ts'
+
+// --- Many documents into the one message a task sends ---------------------------------
+export { assembleDocument, truncateOnCharBoundary, type AssemblyRule } from './core/assemble.ts'
+
 // --- Tracing, with a per-profile redaction hook -------------------------------------
-export { openTrace, stateRoot, type Redactor, type Trace } from './core/trace.ts'
+export { nullTrace, openTrace, stateRoot, TRACE_SPEC, type Redactor, type Trace } from './core/trace.ts'
+export {
+  eventOf,
+  eventsOf,
+  isRedacted,
+  readTrace,
+  TraceError,
+  type TraceEvent,
+  type TraceFile,
+} from './core/trace-read.ts'
 
 // --- The transport to llama-server --------------------------------------------------
 export {
   LLAMA_DEFAULT_URL,
   LlamaError,
+  UNIDENTIFIED,
+  identifyServer,
   llamaChat,
   serverModel,
+  serverProps,
   streamChat,
   toolChat,
   type ChatOptions,
   type StreamChatOptions,
   type StreamResult,
   type ToolCall,
+  type ServerIdentity,
   type ToolChatOptions,
   type Usage,
 } from './core/client.ts'

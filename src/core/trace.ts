@@ -18,6 +18,26 @@ import { homedir } from 'node:os'
 
 export type Redactor = (event: Record<string, unknown>) => Record<string, unknown>
 
+/**
+ * The trace format a reader is looking at.
+ *
+ * Consumers parse `run` / `case` / `bench` / `record` events BY SHAPE, which works exactly
+ * until the shape changes: a field renamed here becomes a field silently absent there, and the
+ * consumer goes on producing a number from the half of the event it still recognises. A pack
+ * carries `spec` for the same reason and refuses a version it does not read; a trace is the
+ * other half of the same claim — that nothing has to be taken on faith — and it had no way to
+ * say what it was.
+ *
+ * Written on EVERY line rather than in a header, because the unit of a JSONL file is the line.
+ * One `grep` pulls a single event out of a trace and hands it to something that never saw the
+ * top of the file, and a self-describing line survives that where a header does not.
+ *
+ * Bump this when an event's fields change meaning or disappear. Adding a field is not a bump:
+ * a reader that ignores what it does not know is unharmed, which is the same rule the pack
+ * format states for itself.
+ */
+export const TRACE_SPEC = 1
+
 export interface Trace {
   path: string
   write(event: Record<string, unknown>): void
@@ -39,6 +59,17 @@ const defaultTraceRoot = () =>
 /** Deterministic, filesystem-safe stamp. Callers pass one in to keep runs comparable. */
 const stamp = () => new Date().toISOString().replace(/[:.]/g, '-')
 
+/**
+ * A trace that records nothing, for a verb that produces no run.
+ *
+ * `eval --from-trace` READS a recording and contacts no server, so opening a second file to
+ * write nothing into would leave a dated empty trace on disk for every re-score — and a
+ * directory of empty traces is a directory in which the real ones are harder to find. It is a
+ * value rather than an optional parameter because every consumer of `Trace` should be able to
+ * assume there is one.
+ */
+export const nullTrace = (): Trace => ({ path: '(not recorded)', write: () => {}, close: () => {} })
+
 export const openTrace = (profile: string, redact: Redactor = (e) => e): Trace => {
   const dir = join(defaultTraceRoot(), profile)
   mkdirSync(dir, { recursive: true })
@@ -48,10 +79,20 @@ export const openTrace = (profile: string, redact: Redactor = (e) => e): Trace =
   return {
     path,
     write(event) {
-      appendFileSync(path, `${JSON.stringify({ ts: new Date().toISOString(), ...redact(event) })}\n`)
+      // `traceSpec` and `ts` lead the line, and neither an event nor a redactor can displace
+      // them — the reassignment after the spread keeps their values while leaving them in
+      // their original positions. A redactor is a profile's judgement about CONTENT, and a
+      // line that could lose its own version number to one is a line no reader can refuse.
+      const line = { traceSpec: TRACE_SPEC, ts: new Date().toISOString(), ...redact(event) }
+      line.traceSpec = TRACE_SPEC
+      appendFileSync(path, `${JSON.stringify(line)}\n`)
     },
     close() {
-      console.log(`trace: ${path}`)
+      // stderr, not stdout. Where the trace went is a diagnostic about the run; stdout is
+      // the run's RESULT, and `extract --json` is meant to be piped into the application
+      // that would consume the reading. A path printed into that stream is a parse error
+      // in somebody else's program.
+      console.error(`trace: ${path}`)
     },
   }
 }

@@ -1,15 +1,18 @@
 # medextract
 
-A harness for validating local-model extraction from clinical notes.
+Pull structured medical data out of clinical notes with a small local model — and know
+what it is worth before you ship it.
 
 You write a **contract pack** — the prompts, JSON schemas and eval cases your application
-actually uses — and `medextract` scores a model you run yourself against it, with a gate,
-a trace and a reproducible number. The pack is data, so the same files can be read by your
-application's own runtime: the number then describes the product rather than a rehearsal
-of it.
+actually uses. `extract` runs that contract over a note and gives you the JSON. `eval` runs
+the same contract over a corpus and gives you a gate, a trace and a reproducible number.
+One assembly feeds both, so what was measured is what runs. The pack is data, so your own
+application's runtime reads the same files: the number describes the product rather than a
+rehearsal of it.
 
 ```bash
-node src/cli.ts eval --profile clinical --constrain
+node src/cli.ts extract --profile clinical --note ward-round.txt --constrain   # the job
+node src/cli.ts eval    --profile clinical --constrain                         # what it is worth
 ```
 
 > **Status: pre-release.** The harness, the pack format, the reference clinical pack and
@@ -19,12 +22,13 @@ node src/cli.ts eval --profile clinical --constrain
 
 ## What this is, and what it is not
 
-**It is** a measuring instrument for one specific job: *does this local model extract this
-contract from these notes well enough to ship?*
+**It is** an extractor for one specific job — *this contract, out of these notes, with a
+model small enough to run where the notes are* — with the gate that says whether it is good
+enough to ship attached to it rather than sold separately.
 
 **It is not a generic eval framework.** promptfoo, Inspect and lm-eval measure prompts
-against models across many tasks. This measures one contract against one runtime, and the
-contract is the artifact production reads. Narrower on purpose.
+against models across many tasks. The evals here exist to keep one contract honest, and
+that contract is the artifact production reads. Narrower on purpose.
 
 **It is not an inference server.** It talks to a `llama-server` you started. A server's
 flags are part of a measurement and outlive many runs, so the harness will not start one
@@ -33,10 +37,11 @@ behind your back.
 **It is not a medical device**, not clinical decision support, and not validation evidence
 for any regulator. What it measures is up to whoever points it.
 
-## Why a harness rather than a script
+## What makes a small model produce a usable contract
 
 Three things about constrained extraction from clinical text are counter-intuitive enough
-that everyone rediscovers them the expensive way. They are why this is a harness:
+that everyone rediscovers them the expensive way. They are most of the difference between a
+4B model that fills a schema and one that pads, stalls or returns `{}`:
 
 **JSON Schema property order is load-bearing.** llama.cpp compiles object properties into
 the grammar in the order given, so the model must emit them in that order. On one
@@ -64,17 +69,24 @@ repository exists to make visible.
 src/core/     config.ts    profiles.toml — which profiles exist, and what each reads
               pack.ts      contract packs: a manifest-described directory of contracts
               profile.ts   what a profile must expose; resolved by dynamic import
-              client.ts    llama-server transport (temperature 0, cache_prompt)
+              client.ts    llama-server transport (pinned body: seed, cache_prompt,
+                           temperature 0 unless the pack declares another)
               tools.ts     the tool CONTRACT — core defines no tools
               trace.ts     JSONL tracing with a per-profile redaction hook
-src/modes/    extract.ts   single-shot constrained extraction, one retry
+              bench.ts     what a run cost, from the graded pass itself
+              verify.ts    is this span in the document, is this text an edit of it
+              assemble.ts  many documents into the one message a task actually sends
+src/modes/    extract.ts   single-shot constrained extraction; one retry, transport only
               agentic.ts   the tool loop, for one task run to completion
               session.ts   the same loop, multi-turn, with a consent gate
-src/profiles/ clinical/    the reference profile: reads the pack below, names no vital sign
+src/profiles/ clinical/    the reference profile: four tasks, names no vital sign
+                           review.ts    one note in, one reading out, provenance checked
+                           eval.ts      vital signs over the corpus, scored and gated
+                           set-eval.ts  summary, note-format, transcript: set extraction, cited
               coding/      the agentic worked example: six tools, no pack
-packs/        clinical/    the reference pack — prompt, schema + golden, cases, 12 notes
+packs/        clinical/    the reference pack — 3 prompts, 3 schemas + goldens, 29 notes
 src/index.ts  the public API — what a profile is written against
-src/cli.ts    eval, agent, profiles
+src/cli.ts    extract, eval, agent, profiles
 profiles.toml the only file that may name a project outside this repository
 ```
 
@@ -94,7 +106,7 @@ harness reads files by manifest **key** — never by path.
 
 ```toml
 # your-project/contracts/pack.toml
-spec = 1
+spec = 2
 name = "vitals"
 documents = "notes/{case}.note.txt"
 
@@ -186,6 +198,49 @@ node src/cli.ts eval  --profile coding
 node src/cli.ts agent --profile coding --task "fix the failing test" --workspace /tmp/wk
 ```
 
+### Extracting from one note
+
+```bash
+node src/cli.ts extract --profile clinical --note ward-round.txt --constrain
+node src/cli.ts extract --profile clinical --case vs-en-03-prose --constrain   # a note from the pack
+cat note.txt | node src/cli.ts extract --profile clinical --note - --json | jq .
+```
+
+```
+=== vital signs · ward-round.txt ===
+model 'Qwen3-4B-Q4_K_M' · pack 'clinical' spec 1 · constrained · temp 0 · max_tokens 1024
+
+blood_pressure       148/92 mmHg          quoted "BP 148/92 mmHg"
+heart_rate           78 bpm               quoted "HR 78"
+weight               —                    not in the note
+oxygen_saturation    97 %                 UNVERIFIED — not a fragment of this note: "sats were 97%"
+
+3 of 9 slots read · 2 quotes found in the document · 1 NOT verified — check it against the note
+```
+
+Three properties of that output are the point of the verb:
+
+**Every slot is listed, including the empty ones.** A report of what was found reads as an
+account of the note while being a list of the model's successes, and the slot a clinician
+needs is the one nobody printed.
+
+**Every reading is checked against the note it claims to come from.** The prompt's rule is
+evidence-or-null, so each reading carries a quote, and the quote is looked for in the
+document. This is the one check a grammar cannot perform — no JSON Schema keyword says
+"substring of the prompt", and GBNF has no back-reference to the context — and it is what
+catches a correct-looking number attached to a sentence nobody wrote. It runs without an
+answer key, so it works on your notes and not only on the corpus.
+
+**`UNVERIFIED` is not an error.** The run exits 0: the value may well be right, and what has
+not been established is the evidence for it. Only a reply that produced no reading at all
+exits nonzero.
+
+`--json` puts the model's completion on stdout and everything else on stderr, so the verb
+pipes into whatever would have consumed it. The completion is passed through unaltered
+rather than re-serialized from the parsed shape — a parser keeps the fields it grades and
+drops the rest, and handing you a tidied document no model emitted would defeat the purpose
+of looking.
+
 `--constrain` turns on grammar-constrained decoding for an `extract` profile. Run without
 it to measure what the same prompt does unconstrained; the difference is usually the whole
 argument for the schema.
@@ -213,63 +268,246 @@ Every run writes JSONL to `${XDG_STATE_HOME:-~/.local/state}/medextract/traces/<
 raw completion, which for a clinical profile means the note. A profile that handles patient
 data supplies a `redact` hook and must set one before tracing anything real.
 
+## Four tasks over two corpora
+
+The reference pack grades four contracts, and `--task` chooses:
+
+```bash
+node src/cli.ts eval --profile clinical --constrain                     # vital-signs, the default
+node src/cli.ts eval --profile clinical --constrain --task summary      # a whole record in, three lists out
+node src/cli.ts eval --profile clinical --constrain --task note-format  # one note, four sections, every item cited
+node src/cli.ts eval --profile clinical --constrain --task transcript   # a dictation, sorted into the same four
+node src/cli.ts eval --profile clinical --constrain --task all          # the four, each gated on its own floor
+```
+
+| task | input | what it returns | gate |
+|---|---|---|---|
+| `vital-signs` | one note | nine nullable readings, each with the fragment it came from | detection recall ≥ 90% |
+| `summary` | a **record**: several notes assembled into one message | three bounded sets — history, usual medication, pending | item recall ≥ 80% |
+| `note-format` | one note | four sections; every item carries a `quote` and a derived `text` | item recall ≥ 75%, **plus** provenance ≥ 90%, derivation ≥ 90% and *nothing invented* (100%) |
+| `transcript` | one **dictated transcript** — speech, out of order, correcting itself | the same four sections, same `quote` and `text` | item recall ≥ 65%, same three sub-gates at 85 / 85 / 100% — **provisional, unmeasured** |
+
+Three things about this arrangement are the reason it is worth having, and none of them are
+visible in a single-task pack:
+
+**One corpus, three readings — and a second corpus that is genuinely different.** The
+note-format cases name a case in the vital-signs corpus and read *that* note: 30 notes grade
+three tasks, and a note fixed once is fixed for all of them. The summary task brings its own
+documents because its unit of input is a patient rather than an encounter. The transcript task
+brings its own because a dictation is not a note — the pack declares a second `documents` kind
+for it (spec 3) rather than filing speech under a filename that calls it prose.
+
+**One structure, two inputs.** `transcript` sends the *note-format schema*, byte for byte,
+under its own `json_schema.name`. A clinician reads one structure, and a second schema for it
+would be a second thing free to drift in property order — which is what gets compiled into the
+grammar. What the task has of its own is the prompt, because speech has failure modes prose
+does not: the speaker retracts a dose out loud and the retracted one stays in the transcript,
+quotable; they dictate "comma" and "period"; they talk to whoever is typing; the transcriber
+writes `[inaudible]` where a number should be. The interesting property is that the harness
+needed almost nothing new to grade it — deletion-only derivation, which exists to stop a drug
+name drifting, is also exactly the rule that strips a filler.
+
+**The assembly rule is part of the contract.** A record is built into one message under
+`[clinical.summaryAssembly]` — per-note cap, running total, line format, marker — because two
+runtimes that assemble differently are grading different inputs while appearing to share a
+prompt. Same argument as pinning the schema bytes, applied to the input side.
+
+**Every task clears its own floor, and the two quoting tasks have sub-gates.** Averaging would
+let a ceiling on the mature task carry the new ones. And a run that finds every expected item while
+fabricating the spans it cites has not passed, which one averaged number could not say.
+
+## Quote, then tidy
+
+The note-format contract asks for two fields per item and checks both, because a schema can
+guarantee the shape of a citation and the truth of it not at all:
+
+- **`quote`** must be in the note by literal containment (`[clinical.quoteVerification]`).
+  Not a regex: a pattern built from the model's own output has to escape every `.`, `(`, `/`
+  and `°` it contains, and one unescaped character turns a failed verification into a passing
+  one — the single failure mode a verifier must not have.
+- **`text`** must be that quote with words **deleted** — every word already in the quote, in
+  the same order (`[clinical.textDerivation]`). This is the half that quote verification alone
+  does not give you. Measured on a sibling pack: a model emitted a quote reading *"antibiotic
+  cover with ceftriaxona 2 g every 24 hours"*, which verifies character for character, beside
+  the item *"ceptriaxona 2 g every 24 hours"*. Provenance was perfect and the line a clinician
+  reads named a drug that does not exist.
+
+Measured here on the first run of the new task, Qwen3-4B cited *"He takes two 500 mg tablets
+up to four times daily"* and labelled it `paracetamol` — a drug name that appears in the
+**previous sentence**, not in the span it cited. The quote verified; the derivation check is
+what caught it.
+
+## How hard the notes are
+
+Every case rates its **note** from 1 to 5 — how hard the base text is to read, not how many
+slots it grades and not how badly some model does on it. The rating is a property of the
+corpus, so it does not move when the weights do, and a per-tier score from two models is
+comparing the same texts.
+
+| | the text | notes |
+|---|---|---|
+| **1** | labelled and canonical: the sign is named, the figure follows it, one reading per sign | 2 |
+| **2** | one systematic transformation — foreign abbreviations, imperial units, a decimal comma, an implausible value | 4 |
+| **3** | a rule of the contract must be applied: prose, or two candidates for one sign (last, this encounter, stated not derived) | 5 |
+| **4** | rejection before transcription: targets, plans, lab panels, another person's readings, an infant's normals | 5 |
+| **5** | the text fights the reader: a chart instead of sentences, a figure retracted further down, a range around one true reading, a discharge summary made mostly of other numbers | 5 |
+
+Half the graded slots sit at 4 and 5. `eval` prints detection per tier beside the gate, and
+`--difficulty 4-5` grades only the hard end while iterating:
+
+```bash
+node src/cli.ts eval --profile clinical --constrain --difficulty 4-5
+```
+
+The tiers are **reported, never gated**. The floor is one number over the whole corpus,
+because a contract ships or does not ship as one thing.
+
+## What a run costs
+
+Every eval reports what it cost, counted on the graded pass itself:
+
+```
+what it cost:
+  generation  11.4 tok/s   (4833 tokens in 425.0s, server-counted)
+  prompt      80.9 tok/s   (5301 evaluated, 26660 from cache = 83% reuse)
+  latency     median 23.3s  p95 29.0s  min 9819ms  max 41.9s   over 21 case-runs
+  first case  41.9s   cold cache, counted in the total and named here
+  wall total  490.8s   of which 336ms is transport, not the model
+  conditions  Q4_K - Medium · ctx 32768 · 1 slot(s) · sequential, cache_prompt on
+```
+
+**There is no `bench` verb, deliberately.** A timing pass with its own prompts would measure
+something adjacent to the product — a different cap, a cold cache, a shorter note — and the
+cost number would drift from the contract exactly as a measured path drifts from a used one.
+llama-server returns a `timings` object unasked on the non-streamed path, so measuring costs
+one field in the trace and **no change to the request body**: a measured run and an
+unmeasured one send identical bytes.
+
+Everything above is server-counted except wall time, which is the client round-trip. The gap
+between them is transport and queueing — real cost an application pays that a server-side
+number never shows. `cache reuse` is the `cache_prompt` design claim as a number: the system
+prompt is identical across notes, so the sequential run re-evaluates almost none of it.
+
+Read a speed with more care than a score. **Correctness travels between machines; throughput
+does not.** A `tok/s` here belongs to an iGPU with every layer offloaded, one slot, this
+build, this quantisation and this context size — which is why the conditions line is read
+from the server rather than taken from the pack, and why nothing gates on it. `p95` over 30
+notes *is* the maximum, so it is printed with its sample count. `--runs N` no longer
+re-averages: it reports which cases returned a *different answer* and which of those flipped
+a grade, because averaging N identical replies at temperature 0 is arithmetic on a constant.
+
 ## Measured
 
-Temperature 0, `max_tokens` 1024, one run per note, 12 notes / 46 graded slots. Qwen3-4B is
-the local file whose sha256 `packs/clinical/models.default.toml` pins; the other two are
-whatever `llama-server -hf` resolved from `Qwen/Qwen3-1.7B-GGUF` and
-`ggml-org/gemma-3-4b-it-GGUF` on 2026-08-20.
+**These numbers are from a corpus that no longer exists.** They were measured on 21 notes / 88
+graded slots; the corpus is now 30 / 132, the summary task 10 records / 56 items, note
+formatting 15 notes / 47 items, and `value` and `unit` have become sub-gates at 95% — a floor
+the 81/88 unit row below fails. The table is kept because it is the evidence those changes
+were made from, not as a current result; `packs/clinical/RESULTS.md` says so at the top and a
+re-run on the current corpus has not been made. What follows describes the run as it was.
 
-| model | grammar | detection (gate) | value | unit | provenance | halluc | failed |
-|---|---|---|---|---|---|---|---|
-| Qwen3-4B-Q4_K_M | constrained | 46/46 | 46/46 | 46/46 | 46/46 | 0 | 0 |
-| Qwen3-4B-Q4_K_M | free | 46/46 | 46/46 | 46/46 | 46/46 | 0 | 0 |
-| Qwen3-1.7B | constrained | 46/46 | 45/46 | 46/46 | 40/46 | 1 | 0 |
-| Qwen3-1.7B | free | 44/46 | 44/44 | 44/44 | 38/44 | 2 | 0 |
-| gemma-3-4b-it | constrained | 46/46 | 45/46 | 42/46 | 46/46 | 3 | 0 |
-| gemma-3-4b-it | free | **0/46** | — | — | — | — | **12** |
+21 notes / 88 graded slots for `vital-signs`, 3 records / 13 items for `summary`, 6 notes /
+18 items for `note-format`. Temperature 0, `seed` 0, caps from the pack, one run per case, on
+an AMD Renoir iGPU. Qwen3-4B is the local file whose sha256 `packs/clinical/models.default.toml`
+pins, verified before the run; gemma-3-4b-it is `ggml-org/gemma-3-4b-it-GGUF`. Full
+conditions, per-tier detection and per-case failures: `packs/clinical/RESULTS.md`.
 
-Four things in that table are the reason this repository exists.
+| model | grammar | detection (gate) | value | unit | provenance | halluc | failed | tok/s | median/note |
+|---|---|---|---|---|---|---|---|---|---|
+| Qwen3-4B-Q4_K_M | constrained | 87/88 | 86/87 | 86/87 | 80/87 | 2 | 0 | 12.6 | 21.6s |
+| Qwen3-4B-Q4_K_M | free | 87/88 | 86/87 | 86/87 | 80/87 | 2 | 0 | 12.6 | 20.5s |
+| gemma-3-4b-it | constrained | 88/88 | 82/88 | 81/88 | 87/88 | 3 | 0 | 14.2 | 24.1s |
+| gemma-3-4b-it | free | **0/88** | — | — | — | 0 | 21 | 14.2 | 23.8s |
 
-**A saturated row is not a good result.** Qwen3-4B scores perfectly on every metric with and
-without a grammar. That is a statement about the corpus, not the model: on these notes it is
-a floor check rather than a discriminating benchmark. Quoting the 46/46 without this sentence
-would be a misleading number rather than an impressive one.
+The other two tasks, constrained: both models 13/13 summary items; both 15/18 note-format
+items. The sub-gates separate them — Qwen provenance 100% and derivation 97%, gemma provenance
+94% and derivation 100%. gemma's free arm scored 0 on all three tasks.
 
-**Models of the same size fail in different places.** gemma-3-4b matches Qwen3-4B on
-detection and provenance and loses four points on units — it writes `F` for `°F`, keeps
-`lpm` and `rpm` from the Spanish note, and spells BMI `kg/m2`. Qwen3-1.7B has the opposite
-profile: units perfect, provenance 40/46, because on the prose note it *paraphrases* the
-sentence it claims to be quoting. One number would have hidden both. This is why value,
-unit and provenance are counted apart.
+Five things in that table are the reason this repository exists.
 
-**The provenance check earns its place.** Every one of Qwen3-1.7B's six provenance failures
-carries a correct value attached to a sentence that is not in the note. No JSON Schema
-keyword can express "substring of the prompt" and GBNF has no back-reference to the context,
-so a grammar cannot catch this — only comparing the quote to the note can.
+**Detection is no longer where the interesting failures are.** Both models clear the floor on
+all 21 notes and gemma finds every slot; what separates them is *value* (82/88 against 86/87)
+and *unit* (81/88 against 86/87). A gate on detection alone would call these two contracts
+equivalent, and it would be wrong in the direction a clinician notices.
 
-**`0/46` is what an unconstrained contract looks like on the wrong day.** gemma-3-4b wrapped
-every single unconstrained reply in a ```json fence, so nothing parsed. Re-scoring those same
-traced completions with the fence stripped gives 45/45 detection — the model could read the
-notes perfectly well, it just would not answer in the format asked for, and one case also
-emitted `{"value": null}` where the contract allows exactly one spelling of absent. The
-grammar makes both impossible: it cannot emit a backtick outside the JSON, and it cannot
-take the null branch inside a measurement. The eval refuses to strip the fence for you,
-because an application that does not strip it gets nothing either — but it names the failure
-as a fence rather than as broken JSON, so nobody spends an afternoon on the wrong bug.
+**The same case fails both models in opposite directions.** On the flowsheet note, Qwen3-4B
+gets every value right and invents every citation — `'BP 121/74'`, `'HR 91'`, `'Temp 37.2'`,
+none of which are strings in the note, because the chart's labels and values sit in different
+columns. gemma quotes the note faithfully and reads the wrong row: 5/5 provenance, 0/5 values.
+One number combining the two axes would score them identically and describe neither.
+
+**A grammar buys shape, and only where shape is missing.** Qwen3-4B's two arms are *identical*
+— same tallies on all three tasks. gemma's free arm is `0/88`: every one of its 30 replies came
+back wrapped in a ```json fence and nothing parsed. A model that already emits clean JSON has
+no shape left to buy; a model that does not has nothing else that will save it.
+
+**`0/88` is a format failure, and the harness says so rather than leaving you to guess.**
+Re-scoring gemma's traced completions with the fence stripped and no model running gives 84/84
+detection and the same failures as its constrained arm. Two cases stay unparseable even then,
+because they emitted `{"value": null}` where the contract allows exactly one spelling of
+absent. The grammar makes both impossible. The eval refuses to strip the fence for you, because
+an application that does not strip it gets nothing either — but it names the failure as a fence
+rather than as broken JSON, so nobody spends an afternoon on the wrong bug.
+
+**Provenance catches what no schema can.** No JSON Schema keyword expresses "substring of the
+prompt" and GBNF has no back-reference to the context, so a grammar will happily emit a
+beautifully-formed citation of a sentence nobody wrote. Seven of Qwen's eight vital-signs
+failures are provenance, and two of them are only a lowercased capital — reported apart from
+the five fabrications, because a model being tidy and a model inventing a sentence are
+different accusations with different fixes.
 
 Reproduce any row:
 
 ```bash
-LLAMA_PORT=8081 LLAMA_MODEL=~/models/Qwen3-4B-Q4_K_M.gguf scripts/llama-server.sh \
+LLAMA_PORT=8081 LLAMA_MODEL=~/models/Qwen3-4B-Q4_K_M.official.gguf scripts/llama-server.sh \
   -ngl 99 --no-webui --parallel 1
 node src/cli.ts eval --profile clinical --constrain            # add --url for another port
 ```
 
+The `.official` suffix is load-bearing: it is the copy whose sha256 matches the one the pack
+declares. The trace's `run` event records which difficulty tiers a result covers and the
+server conditions a timing was taken under, so a row is never read against a corpus or a
+machine it did not run on.
+
 Every case's full completion goes into the trace, and a `run` event at the top of each trace
 records the model the server reported, the URL, whether a grammar was used and the sampling.
 So a suspiciously perfect score is checked by reading a file rather than by re-running the
-model — which is how the gemma re-scoring above was done, with no model running at all.
+model — which is how the gemma re-scoring above was done, with no model running at all. That
+re-scoring is a verb rather than a script somebody wrote twice:
+
+```bash
+node src/cli.ts eval --profile clinical --from-trace ~/.local/state/medextract/traces/clinical/…jsonl
+node src/cli.ts eval --profile clinical --from-trace …jsonl --strip-fences   # the same bytes, unwrapped
+```
+
+It contacts no server and it never produces a PASS: the floors belong to a run against a
+model, and a command that could turn a saved file green would be a way to pass CI without
+running anything. What it reports is agreement — the score today, the score the run recorded,
+and which cases moved. A trace whose completions were redacted is refused rather than graded
+as prose.
+
+The completion is written verbatim only when the pack states that its corpus is synthetic
+(`corpusSynthetic = true`). A pack that does not say is treated as holding real records, and
+the profile's redactor replaces the completion, the parse error that quotes it and the misses
+that quote the model's spans with a length and a sha256 — enough to tell two runs apart,
+without the text. The trace directory is outside any repository for the same reason.
+
+**A run is reproducible, not bit-identical, and the difference is measured.** The request body
+pins `seed`, `temperature` and `cache_prompt`, but prompt-cache reuse is what decides how a
+batch is split, and that decides the last bits of the logits. The same note, the same model
+and the same bytes, scored once inside a 21-note run and once inside a five-note
+`--difficulty 5` run, returned `"weight 61.4 kg"` and `"Weight 61.4 kg"`. One capital, and
+under a case-sensitive quote rule that is the difference between a verified span and a
+fabricated one. Treat a scoped run as its own measurement rather than as a slice of a full
+one — which is what the `difficulty` field in the trace's `run` event is there to say.
+
+Two things follow from that rather than only a warning. `--runs N` reports **which cases
+returned a different answer** and which of those flipped a grade, instead of averaging N
+replies that are usually identical. And `--no-cache-prompt` gives up the prefix reuse — 60 to
+88% of prefill on this corpus — to buy a run that two machines can compare byte for byte:
+
+```bash
+node src/cli.ts eval --profile clinical --constrain --runs 3 --no-cache-prompt
+```
 
 Each trace also closes with a **record**: the harness version, the model, whether a grammar
 was used, and a sha256 per contract file the run actually read — every prompt, schema, case
@@ -286,13 +524,21 @@ longer exists, so an entry there gets a new date rather than an edit.
 | | |
 |---|---|
 | harness core, modes, tracing | done, tested |
-| pack format (`spec = 1`) | done |
+| `extract` — one note in, JSON out, provenance checked | done, tested |
+| pack format (`spec = 2`) | done — with a changelog the loader quotes when a pack is older |
 | out-of-tree profiles and packs | done |
 | public API (`medextract` entry point) | done |
 | agentic worked example (`coding`) | done |
-| reference clinical pack + corpus | done — 12 notes, 46 graded slots, three models measured |
-| harder cases for that corpus | next — Qwen3-4B saturates it |
-| `validate` verb, run records, CI | planned |
+| reference clinical pack + corpus | done — 59 notes, 132 graded slots + 103 required items, rated 1-5 |
+| multi-task packs (`--task`, per-task floors, sub-gates) | done, tested |
+| provenance: quote verification + deletion-only derivation | done, tested |
+| harder cases for that corpus | done — nine more, written against the measured failure modes |
+| cost measured on the graded pass (tok/s, latency, cache reuse) | done, tested |
+| two models re-measured on the extended corpus | done — see `RESULTS.md` |
+| offline re-scoring (`eval --from-trace`) | done, tested — a claim about a past run is checkable |
+| typecheck and CI | done — `npm test && npm run typecheck` on every push |
+| both models re-measured on the grown corpus | next — the entry `RESULTS.md` is waiting for |
+| `validate` verb | planned |
 
 The reference pack is a synthetic, bilingual corpus with a per-case answer key that states
 what each case discriminates. It is synthetic from the first commit and will never be

@@ -1,0 +1,530 @@
+/**
+ * The three set-extraction evals: patient summary, note formatting, dictated transcripts.
+ *
+ * They live beside the vital-signs eval rather than inside it because they grade a different
+ * kind of answer — sets of free text rather than transcribed numbers — but everything around
+ * the grading is deliberately the same: the pack supplies prompt, schema, cap and floor, the
+ * harness supplies transport, mode and trace, the run is sequential so `cache_prompt` can
+ * reuse the system prompt, and every completion goes into the trace next to the tally it
+ * produced.
+ *
+ * The last two share a function rather than a family resemblance. Note formatting and
+ * transcript formatting emit the SAME contract and are measured on the same four numbers;
+ * only the prompt, the corpus and the kind of document differ. Written twice they would be
+ * free to count differently, and the whole reason to run both is that the difference between
+ * their scores is a claim about reading speech versus reading prose.
+ *
+ * All three report cost from the graded pass, through the same `core/bench.ts` the vital-signs
+ * eval uses. The summary task is the one place where that matters for a reason other than
+ * curiosity: its input is a whole record rather than one note, so it is the task whose prompt
+ * cost is not a rounding error.
+ */
+import type { Pack } from '../../core/pack.ts'
+import type { Trace } from '../../core/trace.ts'
+import { formatBench, summarizeBench, type BenchSample, type BenchSummary } from '../../core/bench.ts'
+import { assembleDocument } from '../../core/assemble.ts'
+import { extract, type ExtractOutcome } from '../../modes/extract.ts'
+import {
+  DIFFICULTY_MAX,
+  DIFFICULTY_MIN,
+  DOCUMENT_KIND,
+  formatRequest,
+  loadFormatCases,
+  loadSettings,
+  loadSummaryCases,
+  loadTranscriptCases,
+  parseDifficultyRange,
+  requiredSetExpectations,
+  setMatching,
+  summaryRequest,
+  transcriptRequest,
+  type FormatCase,
+  type QuotedSetCases,
+  type SetExpectation,
+  type SummaryCase,
+  type TaskRequest,
+  type TranscriptCase,
+} from './contracts.ts'
+import { ProfileError } from '../../core/profile.ts'
+import { UNIDENTIFIED, type ServerIdentity } from '../../core/client.ts'
+import { parseNoteFormat, parsePatientSummary } from './extraction.ts'
+import { pct, ratio } from './scorer.ts'
+import {
+  absorbFormat,
+  absorbSet,
+  emptyFormatTally,
+  emptySetTally,
+  scoreFailedFormat,
+  scoreFailedSet,
+  scoreFormatCase,
+  scoreSet,
+  summaryTexts,
+  type FormatTally,
+  type SetMiss,
+  type SetTally,
+} from './set-scorer.ts'
+
+export interface TaskEvalOptions {
+  pack: Pack
+  baseUrl?: string
+  trace: Trace
+  constrain: boolean
+  runs?: number
+  /** `N` or `N-M`: grade only the cases in that tier, exactly as the vital-signs eval does. */
+  difficulty?: string
+  /** Who is serving, resolved once for the whole run by the profile. See core/client.ts. */
+  identity?: ServerIdentity
+  /** Prefix reuse, on by default. Off buys a comparable run with prefill time; see the client. */
+  cachePrompt?: boolean
+}
+
+/**
+ * Apply `--difficulty` to a task's cases, and say what it selected.
+ *
+ * Shared by both tasks here rather than written twice, and applied at ALL, which it was not:
+ * the flag reached this file, was declared in the options above, and was then read by
+ * nothing. `eval --task all --difficulty 5` graded five of twenty-one notes for vital signs
+ * and every record and every note for these two, with no line of output saying so. A filter
+ * silently not applied is worse than a filter refused — the run reports a number for a corpus
+ * nobody asked about, and it looks exactly like the number they wanted.
+ */
+const inTier = <C extends { difficulty: number }>(
+  all: C[],
+  difficulty: string | undefined,
+  what: string,
+  pack: string,
+): { cases: C[]; scope: string } => {
+  if (!difficulty) return { cases: all, scope: `difficulty ${DIFFICULTY_MIN}-${DIFFICULTY_MAX}` }
+  const keep = parseDifficultyRange(difficulty)
+  const cases = all.filter((c) => keep(c.difficulty))
+  if (!cases.length) throw new ProfileError(`no ${what} cases at difficulty '${difficulty}' in pack '${pack}'`)
+  return {
+    cases,
+    scope:
+      cases.length === all.length
+        ? `difficulty ${DIFFICULTY_MIN}-${DIFFICULTY_MAX}`
+        : `difficulty ${difficulty} only — ${cases.length} of ${all.length}`,
+  }
+}
+
+/** What every task returns to the profile, so one verdict can be built from three of them. */
+export interface TaskResult {
+  task: string
+  /** The gated number and its floor. */
+  score: number
+  floor: number
+  /**
+   * Was there anything to score? A rate over a zero denominator is 1.0 — see `ratio`, where
+   * that is correct, because "found none of the zero things there were to find" is not a
+   * failure for a CASE that has nothing to extract. It is not correct for a FLOOR.
+   *
+   * Left as it was, a gate cleared itself by measuring nothing, and the unconstrained
+   * gemma-3-4b run showed exactly that: every case failed to parse, no quote was ever
+   * checked, and the verdict line still read `provenance 100%, derivation 100%`. A gate that
+   * passes when nothing was checked is indistinguishable from one that passed on evidence,
+   * which is the single thing a gate exists to tell you apart.
+   */
+  measured: boolean
+  /** Extra gates within the task; each must clear on its own, and each must be measured. */
+  gates?: Gate[]
+  summary: string
+  bench?: BenchSummary
+}
+
+export interface Gate {
+  name: string
+  score: number
+  floor: number
+  measured: boolean
+}
+
+/** One place decides what clearing a floor means, for a task gate and a sub-gate alike. */
+export const gatePasses = (g: { score: number; floor: number; measured: boolean }): boolean =>
+  g.measured && g.score >= g.floor
+
+/**
+ * One sample per case-run that produced a completion. Identical in both tasks below.
+ *
+ * Takes the whole outcome rather than its `cost` array, because two of the three numbers it
+ * needs are not in there: `attempts` counts requests SENT and `cost` counts completions read,
+ * and a case whose first attempt died at transport used to report one attempt, no retry, and
+ * none of the time it spent failing.
+ */
+const sampleOf = (name: string, outcome: Pick<ExtractOutcome<unknown>, 'cost' | 'attempts' | 'lostMs'>): BenchSample | undefined => {
+  const cost = outcome.cost
+  return cost.length
+    ? {
+        case: name,
+        wallMs: cost.reduce((n, a) => n + a.wallMs, 0) + outcome.lostMs,
+        attempts: outcome.attempts,
+        promptTokens: cost.reduce((n, a) => n + (a.timings?.promptTokens ?? 0), 0),
+        promptMs: cost.reduce((n, a) => n + (a.timings?.promptMs ?? 0), 0),
+        predictedTokens: cost.reduce((n, a) => n + (a.timings?.predictedTokens ?? 0), 0),
+        predictedMs: cost.reduce((n, a) => n + (a.timings?.predictedMs ?? 0), 0),
+        cachedTokens: cost.reduce((n, a) => n + (a.timings?.cachedTokens ?? 0), 0),
+      }
+    : undefined
+}
+
+/**
+ * A rate for the one-line verdict, which says "not measured" rather than a number when the
+ * denominator was zero. `(0/0) → 100%` in the line a CI log keeps is the most misleading
+ * output this harness can produce.
+ */
+const measuredPct = (rate: number, denominator: number): string =>
+  denominator > 0 ? `${(rate * 100).toFixed(0)}%` : 'not measured'
+
+/**
+ * The cost block, and the conditions it is only valid under.
+ *
+ * `identity` was threaded in here for the reason the vital-signs eval records it: a timing
+ * belongs to a machine, a build and a quantisation, and these two tasks used to print one
+ * with no statement of any of them. When the server would not say, the trace's `identified`
+ * flag lets a consumer refuse to quote the figure rather than having to notice a placeholder.
+ */
+const reportBench = (
+  samples: BenchSample[],
+  trace: Trace,
+  task: string,
+  identity: ServerIdentity | undefined,
+): BenchSummary | undefined => {
+  if (!samples.length) return undefined
+  const bench = summarizeBench(samples)
+  console.log(`\nwhat it cost:`)
+  for (const line of formatBench(bench, identity?.props)) console.log(`  ${line}`)
+  trace.write({
+    event: 'bench',
+    task,
+    bench,
+    samples,
+    model: identity?.model ?? UNIDENTIFIED,
+    identified: identity?.identified ?? false,
+    benchConditions: identity?.props,
+  })
+  return bench
+}
+
+// --- Patient summary ----------------------------------------------------------------------
+
+export const runSummaryEval = async (o: TaskEvalOptions): Promise<TaskResult> => {
+  const req = summaryRequest(o.pack, o.constrain)
+  const { itemRecallFloor, cases: allCases } = loadSummaryCases(o.pack)
+  // Filtering here rather than in the loader keeps the pack's own consistency checks running
+  // over the WHOLE case file even when a run grades one record of it.
+  const { cases, scope } = inTier(allCases, o.difficulty, 'summary', o.pack.name)
+  const assembly = loadSettings(o.pack).summaryAssembly
+  // The pack's own negator list, or the documented default. Read here rather than defaulted
+  // in the scorer so both set tasks match under the same declared rule.
+  const matching = setMatching(o.pack)
+  const runs = Math.max(1, o.runs ?? 1)
+
+  const total = emptySetTally()
+  const misses: SetMiss[] = []
+  const samples: BenchSample[] = []
+
+  console.log(`\n=== Patient summary — ${cases.length} records, ${requiredSetExpectations(cases)} required items, ${scope} ===`)
+  console.log(`${o.constrain ? 'constrained' : 'unconstrained'} · temp ${req.sampling.temperature} · max_tokens ${req.sampling.max_tokens}\n`)
+
+  for (const c of cases) {
+    for (let run = 0; run < runs; run++) {
+      // The record, assembled under the pack's rule rather than joined here. A run whose
+      // input silently lost its last notes produces a plausible score for a question the
+      // model was never asked, so the truncation is recorded with the case.
+      const record = assembleDocument(c.notes.map((n) => o.pack.document(n)), assembly)
+      const outcome = await extract({
+        systemPrompt: req.prompt,
+        document: record.text,
+        parse: parsePatientSummary,
+        schema: req.schema,
+        schemaName: req.schemaName,
+        maxTokens: req.sampling.max_tokens,
+        temperature: req.sampling.temperature,
+        // This task's declared deadline is the longest in the pack because its INPUT is: a
+        // whole assembled record spends several times a single note's on prefill alone.
+        timeoutMs: req.sampling.timeout_secs * 1000,
+        baseUrl: o.baseUrl,
+        cachePrompt: o.cachePrompt,
+        label: 'patient_summary',
+      })
+
+      const scored = outcome.parsed
+        ? scoreSet(c.name, c.fields, summaryTexts(outcome.parsed), matching)
+        : scoreFailedSet(c.name, c.fields)
+      absorbSet(total, scored.tally)
+      misses.push(...scored.misses)
+      const sample = sampleOf(c.name, outcome)
+      if (sample) samples.push(sample)
+
+      o.trace.write({
+        event: 'case',
+        task: 'summary',
+        case: c.name,
+        class: c.class,
+        difficulty: c.difficulty,
+        run,
+        notes: c.notes,
+        assembled: { chars: record.text.length, notes: record.used, truncated: record.truncated },
+        ok: Boolean(outcome.parsed),
+        error: outcome.error,
+        tally: scored.tally,
+        misses: scored.misses,
+        cost: sample,
+        completion: outcome.raw,
+      })
+
+      const t = scored.tally
+      const flag = outcome.parsed ? '' : `  FAILED: ${outcome.error?.slice(0, 80)}`
+      console.log(
+        `${c.name.padEnd(22)} ${c.class.padEnd(13)} d${c.difficulty} ` +
+          `items ${pct(t.found, t.required)} emitted ${String(t.items).padStart(3)} ` +
+          `halluc ${t.hallucinations}${flag}`,
+      )
+    }
+  }
+
+  const recall = ratio(total.found, total.required)
+  console.log(`\n${'—'.repeat(78)}`)
+  console.log(`item recall ${pct(total.found, total.required)}  <- the gate, floor ${(itemRecallFloor * 100).toFixed(0)}%`)
+  console.log(`items emitted ${total.items}   hallucinations ${total.hallucinations}   failed runs ${total.failedRuns}`)
+  const bench = reportBench(samples, o.trace, 'summary', o.identity)
+  if (misses.length) {
+    console.log(`\nwhat went wrong (${misses.length}):`)
+    for (const m of misses) console.log(`  ${m.reason.padEnd(14)} ${m.case} · ${m.field} — ${m.detail}`)
+  }
+
+  return {
+    task: 'summary',
+    score: recall,
+    floor: itemRecallFloor,
+    measured: total.required > 0,
+    summary:
+      `item recall ${measuredPct(recall, total.required)} vs floor ${(itemRecallFloor * 100).toFixed(0)}% ` +
+      `(${total.found}/${total.required}, halluc ${total.hallucinations}, failed runs ${total.failedRuns})`,
+    bench,
+  }
+}
+
+// --- The quoted set tasks: note formatting, and dictated transcripts ---------------------------
+
+/**
+ * What distinguishes one quoted set task from the other. Everything else below is shared.
+ *
+ * The two tasks emit the SAME contract — four sections, every item carrying the span it came
+ * from — over inputs that differ in one respect: one is a written note and the other is a
+ * transcript of somebody speaking. So the measurement is identical and only the input,
+ * the prompt and the corpus vary, and this descriptor is exactly that list. Running them
+ * through one function is not a saving; it is the guarantee that a difference in their
+ * numbers is a difference in the models' answers rather than in how two evals counted.
+ */
+interface QuotedSetTask<C extends { name: string; class: string; difficulty: number; fields: SetExpectation[] }> {
+  /** The `--task` word, the trace's `task` field and the verdict line's label. */
+  task: string
+  /** The heading, the noun for what one case is, and the noun for the document it quotes. */
+  heading: string
+  unit: string
+  source: string
+  /** `label` on the request, which is what a server log and a pinned body are read by. */
+  requestLabel: string
+  request: TaskRequest
+  floors: QuotedSetCases
+  cases: C[]
+  /** The document this case is graded over, and what the trace should record about where it came from. */
+  document: (c: C) => string
+  provenance: (c: C) => Record<string, unknown>
+}
+
+export const runNoteFormatEval = async (o: TaskEvalOptions): Promise<TaskResult> => {
+  const floors = loadFormatCases(o.pack)
+  const { cases, scope } = inTier(floors.cases, o.difficulty, 'note-format', o.pack.name)
+  return runQuotedSetEval(o, scope, {
+    task: 'note-format',
+    heading: 'Note formatting',
+    unit: 'notes',
+    source: 'note',
+    requestLabel: 'note_format',
+    request: formatRequest(o.pack, o.constrain),
+    floors,
+    cases,
+    // The note comes from the vital-signs corpus by name: 30 notes, three tasks, one copy.
+    document: (c) => o.pack.document(c.source, DOCUMENT_KIND['note-format']),
+    provenance: (c) => ({ source: c.source }),
+  })
+}
+
+/**
+ * The dictated-transcript eval.
+ *
+ * Deliberately the same measurement as note formatting, over a corpus of speech. The three
+ * things it does not share are named in the descriptor: its own prompt (a dictation retracts
+ * itself, dictates its own punctuation and talks to the room, and a prompt that says nothing
+ * about any of that is measuring whether the model guessed), its own cases, and its own
+ * corpus — reached through the `transcript` documents kind rather than `notes/`, because a
+ * transcript filed as a note is mislabelled in the one directory where that matters most.
+ *
+ * Its floors are PROVISIONAL and its case file says so. Nothing here treats them differently:
+ * a floor is a floor, and a harness that softened a gate because a comment called it new would
+ * be the wrong place to record that fact.
+ */
+export const runTranscriptEval = async (o: TaskEvalOptions): Promise<TaskResult> => {
+  const floors = loadTranscriptCases(o.pack)
+  const { cases, scope } = inTier(floors.cases, o.difficulty, 'transcript', o.pack.name)
+  return runQuotedSetEval(o, scope, {
+    task: 'transcript',
+    heading: 'Dictated transcripts',
+    unit: 'transcripts',
+    source: 'transcript',
+    requestLabel: 'transcript',
+    request: transcriptRequest(o.pack, o.constrain),
+    floors,
+    cases,
+    // The case IS the document here: there is no written note to point at.
+    document: (c) => o.pack.document(c.name, DOCUMENT_KIND.transcript),
+    provenance: () => ({}),
+  })
+}
+
+const runQuotedSetEval = async <C extends { name: string; class: string; difficulty: number; fields: SetExpectation[] }>(
+  o: TaskEvalOptions,
+  scope: string,
+  def: QuotedSetTask<C>,
+): Promise<TaskResult> => {
+  const req = def.request
+  const { itemRecallFloor, quoteFloor, derivationFloor, fabricationFloor } = def.floors
+  const cases = def.cases
+  const settings = loadSettings(o.pack)
+  const rules = {
+    quote: settings.quoteVerification,
+    derivation: settings.textDerivation,
+    matching: setMatching(o.pack),
+  }
+  const runs = Math.max(1, o.runs ?? 1)
+
+  const total = emptyFormatTally()
+  const misses: SetMiss[] = []
+  const samples: BenchSample[] = []
+
+  console.log(`\n=== ${def.heading} — ${cases.length} ${def.unit}, ${requiredSetExpectations(cases)} required items, ${scope} ===`)
+  console.log(`${o.constrain ? 'constrained' : 'unconstrained'} · temp ${req.sampling.temperature} · max_tokens ${req.sampling.max_tokens}\n`)
+
+  for (const c of cases) {
+    const note = def.document(c)
+    for (let run = 0; run < runs; run++) {
+      const outcome = await extract({
+        systemPrompt: req.prompt,
+        document: note,
+        parse: parseNoteFormat,
+        schema: req.schema,
+        schemaName: req.schemaName,
+        maxTokens: req.sampling.max_tokens,
+        temperature: req.sampling.temperature,
+        timeoutMs: req.sampling.timeout_secs * 1000,
+        baseUrl: o.baseUrl,
+        cachePrompt: o.cachePrompt,
+        label: def.requestLabel,
+      })
+
+      const scored = outcome.parsed
+        ? scoreFormatCase(c.name, c.fields, outcome.parsed, note, rules)
+        : scoreFailedFormat(c.name, c.fields)
+      absorbFormat(total, scored.tally)
+      misses.push(...scored.misses)
+      const sample = sampleOf(c.name, outcome)
+      if (sample) samples.push(sample)
+
+      o.trace.write({
+        event: 'case',
+        task: def.task,
+        case: c.name,
+        class: c.class,
+        difficulty: c.difficulty,
+        ...def.provenance(c),
+        run,
+        ok: Boolean(outcome.parsed),
+        error: outcome.error,
+        tally: scored.tally,
+        misses: scored.misses,
+        cost: sample,
+        completion: outcome.raw,
+      })
+
+      const t = scored.tally
+      const flag = outcome.parsed ? '' : `  FAILED: ${outcome.error?.slice(0, 80)}`
+      console.log(
+        `${c.name.padEnd(22)} ${c.class.padEnd(14)} d${c.difficulty} ` +
+          `items ${pct(t.found, t.required)} quote ${pct(t.quotesVerified, t.quotes)} ` +
+          `deriv ${pct(t.derivationsOk, t.derivations)} halluc ${t.hallucinations} dose ${t.doseErrors}${flag}`,
+      )
+    }
+  }
+
+  const recall = ratio(total.found, total.required)
+  const quoteRate = ratio(total.quotesVerified, total.quotes)
+  const derivationRate = ratio(total.derivationsOk, total.derivations)
+  // Quotes that are somewhere in the note, under some relaxation of case or accents — so the
+  // complement of this is the model INVENTING a span, which is a different accusation from the
+  // model tidying one. Derived rather than counted: a strictly-verified quote and an
+  // edited-only failure are both spans that exist, and everything else is not.
+  const unfabricated = total.quotesVerified + total.quotesEditedOnly
+  const fabricationRate = ratio(unfabricated, total.quotes)
+
+  console.log(`\n${'—'.repeat(78)}`)
+  console.log(`item recall ${pct(total.found, total.required)}  <- the gate, floor ${(itemRecallFloor * 100).toFixed(0)}%`)
+  // `pct` already prints `n/a` for a zero denominator; the note beside it says what that
+  // means for the VERDICT, which is the part a reader would otherwise have to guess.
+  const unmeasured = ' — nothing was checked, so this gate cannot pass'
+  console.log(
+    `provenance  ${pct(total.quotesVerified, total.quotes)}  <- sub-gate, floor ${(quoteFloor * 100).toFixed(0)}% — quotes found in the ${def.source}` +
+      (total.quotes ? '' : unmeasured),
+  )
+  console.log(
+    `derivation  ${pct(total.derivationsOk, total.derivations)}  <- sub-gate, floor ${(derivationFloor * 100).toFixed(0)}% — text is its quote with words deleted` +
+      (total.derivations ? '' : unmeasured),
+  )
+  // Printed as its own line when the pack gates on it, so the two accusations a provenance
+  // failure can be are visible apart rather than only summed in the line below.
+  if (fabricationFloor !== undefined) {
+    console.log(
+      `not invented ${pct(unfabricated, total.quotes)}  <- sub-gate, floor ${(fabricationFloor * 100).toFixed(0)}% — ` +
+        'the span exists, even where a capital drifted' +
+        (total.quotes ? '' : unmeasured),
+    )
+  }
+  console.log(
+    `items emitted ${total.items}   hallucinations ${total.hallucinations}   dose errors ${total.doseErrors}   ` +
+      `edited-only quote failures (a capital or an accent) ${total.quotesEditedOnly}   failed runs ${total.failedRuns}`,
+  )
+  const bench = reportBench(samples, o.trace, def.task, o.identity)
+  if (misses.length) {
+    console.log(`\nwhat went wrong (${misses.length}):`)
+    for (const m of misses) console.log(`  ${m.reason.padEnd(14)} ${m.case} · ${m.field} — ${m.detail}`)
+  }
+
+  return {
+    task: def.task,
+    score: recall,
+    floor: itemRecallFloor,
+    measured: total.required > 0,
+    // Sub-gates, not averaged in: a run that cites fabricated spans has not passed, however
+    // many expected items it found. Each carries whether it was measured at all, because a
+    // run that emitted no items has not proved its provenance — it has avoided the question.
+    gates: [
+      { name: 'provenance', score: quoteRate, floor: quoteFloor, measured: total.quotes > 0 },
+      { name: 'derivation', score: derivationRate, floor: derivationFloor, measured: total.derivations > 0 },
+      // Optional, and separate from `provenance` on purpose: it lets a pack say "tidying may
+      // cost me five per cent, inventing a sentence may cost me nothing", which is the
+      // sentence most packs mean and which one provenance floor cannot express.
+      ...(fabricationFloor === undefined
+        ? []
+        : [{ name: 'not-invented', score: fabricationRate, floor: fabricationFloor, measured: total.quotes > 0 }]),
+    ],
+    summary:
+      `item recall ${measuredPct(recall, total.required)} vs floor ${(itemRecallFloor * 100).toFixed(0)}% ` +
+      `(${total.found}/${total.required}), provenance ${measuredPct(quoteRate, total.quotes)}, ` +
+      `derivation ${measuredPct(derivationRate, total.derivations)}, ` +
+      (fabricationFloor === undefined ? '' : `not-invented ${measuredPct(fabricationRate, total.quotes)}, `) +
+      `halluc ${total.hallucinations}, dose ${total.doseErrors}`,
+    bench,
+  }
+}
+
+export type { FormatCase, FormatTally, SetTally, SummaryCase, TranscriptCase }

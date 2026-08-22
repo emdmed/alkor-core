@@ -11,15 +11,17 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { loadPack } from '../src/core/pack.ts'
+import { loadPack, specGap, SPEC_VERSION } from '../src/core/pack.ts'
 import {
   gradedExpectations,
   gradedFields,
   loadSampling,
   loadSettings,
   loadVitalCases,
+  parseDifficultyRange,
   vitalPrompt,
   vitalSchema,
   vitalSchemaGolden,
@@ -30,9 +32,49 @@ import { scoreCase, norm } from '../src/profiles/clinical/scorer.ts'
 const pack = loadPack(join(import.meta.dirname, '..', 'packs', 'clinical'))
 const fields = gradedFields(pack)
 const { cases, fieldRecallFloor } = loadVitalCases(pack, fields)
+// The scorer verifies quotes under the PACK's rule, the same one note formatting uses. It is
+// a parameter rather than a default precisely so a task cannot quietly grade under its own.
+const QUOTE_RULE = loadSettings(pack).quoteVerification
 
 test('the pack declares the spec version this harness reads', () => {
-  assert.equal(pack.spec, 1)
+  assert.equal(pack.spec, SPEC_VERSION)
+  // Not a tautology: `spec` is read from the manifest and this is the reference pack, so the
+  // assertion is that the pack was BUMPED with the format rather than left behind by it —
+  // which is the mistake spec 2 exists to record. Two keys became load-bearing while the
+  // manifest still said 1.
+  assert.equal(pack.spec, 3)
+  assert.deepEqual(specGap(pack.spec), [], 'the reference pack must not be older than the harness')
+})
+
+/**
+ * A pack that predates a format change is told what changed, not merely which key is absent.
+ *
+ * The measured failure: `accentSensitive` became required, `spec` stayed at 1, and every pack
+ * written the day before got a message about an incomplete TOML table with nothing anywhere
+ * saying the format had moved.
+ */
+test('a pack older than the harness is refused by version, not only by key', () => {
+  assert.ok(specGap(1).some((c) => c.includes('accentSensitive')), 'the changelog must name the key')
+  assert.equal(specGap(SPEC_VERSION).length, 0)
+
+  const stale = {
+    name: 'stale',
+    spec: 1,
+    root: mkdtempSync(join(tmpdir(), 'medextract-stale-')),
+  }
+  writeFileSync(
+    join(stale.root, 'pack.toml'),
+    'spec = 1\nname = "stale"\n[clinical]\ndefaultTask = "vital-signs"\n' +
+      '[clinical.quoteVerification]\ncollapseWhitespace = true\ncaseSensitive = true\n' +
+      '[clinical.textDerivation]\ndeletionOnly = true\n[clinical.summaryAssembly]\ntotalChars = 10000\n',
+  )
+  assert.throws(() => loadSettings(stale as unknown as typeof pack), (e: Error) => {
+    assert.match(e.message, /accentSensitive/, 'the key')
+    assert.match(e.message, /declares spec 1/, 'the version the pack claims')
+    assert.match(e.message, new RegExp(`reads spec ${SPEC_VERSION}`), 'the version the harness reads')
+    return true
+  })
+  rmSync(stale.root, { recursive: true, force: true })
 })
 
 /**
@@ -102,16 +144,138 @@ test('every case accounts for every slot, exactly once', () => {
  * like an error, it looks like a score.
  */
 test('the graded denominator is what the floor was authored against', () => {
-  assert.equal(cases.length, 12)
-  assert.equal(gradedExpectations(cases), 46)
+  assert.equal(cases.length, 30)
+  assert.equal(gradedExpectations(cases), 132)
+  // The floor is unchanged by the corpus growing, deliberately. It is a requirement of the
+  // contract rather than a number fitted to a model, so nine notes written against the failure
+  // modes two models actually showed must move the MEASUREMENT and not the bar.
   assert.equal(fieldRecallFloor, 0.9)
+})
+
+/**
+ * The two sub-gates, pinned where the evidence put them.
+ *
+ * Detection saturated on this corpus — 87/88 and 88/88 across two models, at every tier —
+ * while unit ran 86/87 against 81/88. A floor at 0.95 is the statement that a model with
+ * PERFECT detection and the weaker model's unit rate (92%) does not pass, which is exactly
+ * the run that used to. Asserted here rather than left to the case file so a floor lowered
+ * to make a run go green is a test failure and not a quiet edit.
+ */
+test('value and unit gate, at a floor the weaker measured model fails', () => {
+  const { valueFloor, unitFloor } = loadVitalCases(pack, fields)
+  assert.equal(valueFloor, 0.95)
+  assert.equal(unitFloor, 0.95)
+  // 81/88 and 82/88 are what gemma-3-4b measured beside a clean 88/88 detection.
+  assert.ok(81 / 88 < unitFloor, 'a gate that the measured failure clears is not a gate')
+  assert.ok(82 / 88 < valueFloor)
+  // ... and what Qwen3-4B measured, which must still pass.
+  assert.ok(86 / 87 >= unitFloor && 86 / 87 >= valueFloor, 'the floor must be reachable')
+})
+
+/**
+ * Difficulty rates the NOTE, so it is a property of the corpus: it does not move when the
+ * weights do, and a per-tier score from two different models is comparing the same texts.
+ * Pinned per tier for the same reason the total is pinned — a case whose rating drifted
+ * would move slots between buckets and the breakdown would keep printing, just wrong.
+ */
+test('every case rates how hard its note is, and the tiers hold their weight', () => {
+  const slots = new Map<number, number>()
+  for (const c of cases) {
+    assert.ok(Number.isInteger(c.difficulty) && c.difficulty >= 1 && c.difficulty <= 5, `${c.name} is unrated`)
+    const graded = c.fields.filter((f) => f.expect.kind === 'value' || f.expect.kind === 'bp').length
+    slots.set(c.difficulty, (slots.get(c.difficulty) ?? 0) + graded)
+  }
+  assert.deepEqual([...slots.entries()].sort(), [
+    [1, 6],
+    [2, 22],
+    [3, 22],
+    [4, 42],
+    [5, 40],
+  ])
+  // A corpus with no hard end cannot tell a good extractor from a lucky one. Half the
+  // graded slots sit at 4 and 5 on purpose.
+  const hard = (slots.get(4) ?? 0) + (slots.get(5) ?? 0)
+  assert.ok(hard >= gradedExpectations(cases) / 3, `only ${hard} graded slots above difficulty 3`)
+})
+
+test('the case file states the rubric the ratings mean', () => {
+  const raw = pack.json<Record<string, string>>('vitalSignsCases')
+  assert.ok(raw._difficulty?.includes('1 - '), 'the rubric must define what a 1 is')
+  assert.ok(raw._difficulty?.includes('5 - '), 'the rubric must define what a 5 is')
+})
+
+/**
+ * An unrated case is refused at load rather than defaulted. A default would put a case's
+ * slots in a bucket its author never chose, and the breakdown would go on printing.
+ */
+test('a case with no difficulty, or one off the scale, is refused at load', () => {
+  const stub = (difficulty: unknown) =>
+    ({
+      name: 'stub',
+      json: () => ({
+        fieldRecallFloor: 0.9,
+        valueFloor: 0.95,
+        unitFloor: 0.95,
+        cases: [{ name: 'c1', class: 'block', difficulty, fields: [] }],
+      }),
+    }) as unknown as Parameters<typeof loadVitalCases>[0]
+
+  for (const bad of [undefined, 0, 6, 2.5, '3']) {
+    assert.throws(() => loadVitalCases(stub(bad), fields), /needs an integer 1-5/, `difficulty ${bad} was accepted`)
+  }
+  assert.doesNotThrow(() => loadVitalCases(stub(3), fields))
+})
+
+test('a difficulty scope is parsed, and a malformed one is refused', () => {
+  const only4 = parseDifficultyRange('4')
+  assert.ok(only4(4) && !only4(3) && !only4(5))
+  const hard = parseDifficultyRange('4-5')
+  assert.ok(hard(4) && hard(5) && !hard(3))
+  // Refused rather than ignored: a run meant to be the hard tier that quietly graded the
+  // whole corpus reports a number for a corpus nobody asked about.
+  assert.throws(() => parseDifficultyRange('6'), /expects N or N-M/)
+  assert.throws(() => parseDifficultyRange('hard'), /expects N or N-M/)
+  assert.throws(() => parseDifficultyRange('5-4'), /is empty/)
 })
 
 test('the corpus keeps its discriminating classes', () => {
   const classes = new Set(cases.map((c) => c.class))
   // Each of these is a distinct way for an extractor to fail, and a corpus that loses one
   // stops being able to tell that failure from success.
-  for (const needed of ['block', 'units', 'prose', 'temporal', 'none', 'qualitative', 'language', 'repeat', 'negative-controls', 'extreme', 'derived']) {
+  for (const needed of [
+    'block',
+    'units',
+    'prose',
+    'temporal',
+    'none',
+    'qualitative',
+    'language',
+    'repeat',
+    'negative-controls',
+    'extreme',
+    'derived',
+    // The hard end: a sign discussed but not measured, a range around one true reading,
+    // somebody else's readings, a figure retracted further down, a chart instead of
+    // sentences, an infant's normal values, a discharge summary made of other numbers,
+    // and the characters a real letter is set in.
+    'negation',
+    'range',
+    'attribution',
+    'retraction',
+    'tabular',
+    'paediatric',
+    'haystack',
+    'typography',
+    // Written against the failure modes two models actually showed, rather than against a
+    // guess at what might be hard. `table` is the layout that broke one model on provenance
+    // and another on value in the same note; `distractors` is a lab panel shaped like an
+    // observation chart; `prompt-echo` is a note whose true figures CONTRADICT the prompt's
+    // own worked example, which is the case the corpus could not previously produce — a model
+    // emitted the example's `94 bpm` for a note with no heart rate in it.
+    'table',
+    'distractors',
+    'prompt-echo',
+  ]) {
     assert.ok(classes.has(needed), `the corpus no longer covers '${needed}'`)
   }
   // Both halves of the BMI pair, or the control proves nothing.
@@ -213,7 +377,7 @@ test('a perfect extraction scores every slot and verifies every quote', () => {
     height: { value: 171, unit: 'cm', raw_text: 'Height 171 cm' },
     oxygen_saturation: { value: 97, unit: '%', raw_text: 'SpO2 97%' },
   }
-  const { tally, misses } = scoreCase(c, got, note)
+  const { tally, misses } = scoreCase(c, got, note, QUOTE_RULE)
   assert.equal(tally.gradedTotal, 6)
   assert.equal(tally.detected, 6)
   assert.equal(tally.valueExact, 6)
@@ -225,16 +389,16 @@ test('a perfect extraction scores every slot and verifies every quote', () => {
 
 test('a value invented where the note has none is a hallucination, not a miss', () => {
   const c = caseNamed('vs-en-05-no-vitals')
-  const { tally, misses } = scoreCase(c, { heart_rate: { value: 72, unit: 'bpm' } }, pack.document(c.name))
+  const { tally, misses } = scoreCase(c, { heart_rate: { value: 72, unit: 'bpm' } }, pack.document(c.name), QUOTE_RULE)
   assert.equal(tally.gradedTotal, 0, 'this case grades nothing — it can only lose points')
   assert.equal(tally.hallucinations, 1)
-  assert.equal(misses[0].reason, 'hallucination')
+  assert.equal(misses[0]!.reason, 'hallucination')
 })
 
 test('a qualitative sign turned into a number is a hallucination', () => {
   const c = caseNamed('vs-en-06-qualitative')
   const got = { temperature: { value: 38.5, unit: '°C', raw_text: 'febrile' }, weight: { value: 64, unit: 'kg', raw_text: 'Weight 64 kg' } }
-  const { tally } = scoreCase(c, got, pack.document(c.name))
+  const { tally } = scoreCase(c, got, pack.document(c.name), QUOTE_RULE)
   assert.equal(tally.hallucinations, 1, "'febrile' is not a temperature")
   assert.equal(tally.detected, 1, 'the weight is still detected')
 })
@@ -242,7 +406,7 @@ test('a qualitative sign turned into a number is a hallucination', () => {
 test('a right number with a wrong unit is a unit failure, not a value failure', () => {
   const c = caseNamed('vs-en-02-imperial')
   const got = { temperature: { value: 101.2, unit: '°C', raw_text: 'Temp 101.2 F' } }
-  const { tally, misses } = scoreCase(c, got, pack.document(c.name))
+  const { tally, misses } = scoreCase(c, got, pack.document(c.name), QUOTE_RULE)
   assert.equal(tally.valueExact, 1)
   assert.equal(tally.unitExact, 0)
   assert.equal(misses.filter((m) => m.reason === 'unit').length, 1)
@@ -251,7 +415,7 @@ test('a right number with a wrong unit is a unit failure, not a value failure', 
 test('a half-right blood pressure is wrong', () => {
   const c = caseNamed('vs-en-01-vitals-block')
   const got = { blood_pressure: { systolic: 148, diastolic: 90, unit: 'mmHg', raw_text: 'BP 148/92 mmHg' } }
-  const { tally } = scoreCase(c, got, pack.document(c.name))
+  const { tally } = scoreCase(c, got, pack.document(c.name), QUOTE_RULE)
   assert.equal(tally.detected, 1, 'it was detected')
   assert.equal(tally.valueExact, 0, 'and it is still wrong')
 })
@@ -263,7 +427,7 @@ test('a half-right blood pressure is wrong', () => {
 test('provenance catches a right number attached to a fabricated quote', () => {
   const c = caseNamed('vs-en-01-vitals-block')
   const got = { heart_rate: { value: 78, unit: 'bpm', raw_text: 'pulse was 78 and regular' } }
-  const { tally, misses } = scoreCase(c, got, pack.document(c.name))
+  const { tally, misses } = scoreCase(c, got, pack.document(c.name), QUOTE_RULE)
   assert.equal(tally.valueExact, 1, 'the number is right')
   assert.equal(tally.quoteVerified, 0, 'the sentence it claims to come from is not in the note')
   assert.equal(misses.find((m) => m.reason === 'quote')?.field, 'heart_rate')
@@ -276,7 +440,7 @@ test('a quote broken across a line break still verifies', () => {
   // model wrote a space. Without collapsing, every multi-line quote would fail and the
   // metric would measure the wrapping rather than the model.
   const got = { heart_rate: { value: 88, unit: 'bpm', raw_text: 'the heart rate had settled to 88 beats per minute' } }
-  const { tally } = scoreCase(c, got, note)
+  const { tally } = scoreCase(c, got, note, QUOTE_RULE)
   assert.equal(tally.quoteVerified, 1)
 })
 

@@ -8,12 +8,18 @@
     "unresolved": "The note names the sign without a number ('febrile', 'tachycardic'). Detection is NOT required and NOT rewarded; emitting any number here counts as a hallucination. This is the class that catches a model filling in what a clinician would have written.",
     "absent": "The sign appears nowhere in the note, or appears only as a value the prompt tells the model to ignore. Any non-null output is a hallucination."
   },
-  "_floor": "fieldRecallFloor gates the eval: of expectations with kind `value` or `bp`, the share the model extracted at all. Detection is the gated metric because a missed vital is invisible to the clinician, while a spurious one is visible and rejected in a click. 0.90 is a requirement of this contract, not a number fitted to a model - a run that lands under it fails, and the run's own report says by how much.",
+  "_difficulty": "Every case carries `difficulty`, 1-5. It rates HOW HARD THE BASE TEXT IS TO READ, not how many slots it grades and not how badly a particular model does on it: a note that is hard for a reader stays hard when a bigger model gets it right, so the number is a property of the corpus and does not move when the weights do. The eval reports detection per tier, which is the whole reason to record it - one aggregate percentage over a corpus with both tiers in it says a model works, while the same runs split by tier say where it stops working. 1 - LABELLED AND CANONICAL: the sign is named, the figure follows it, and one reading exists per sign. Find the label. 2 - ONE SYSTEMATIC TRANSFORMATION: still labelled, but every figure needs the same single conversion of spelling applied - foreign abbreviations, imperial units, a decimal comma, a value outside the plausible range. 3 - A RULE MUST BE APPLIED: the figures are in running prose, or the note holds more than one candidate for the same sign and a rule of the contract decides between them (last measurement, this encounter only, stated rather than derived). 4 - REJECTION BEFORE TRANSCRIPTION: the text puts non-measurements in measurement shape - lab panels, targets, plans, another person's readings, a paediatric range an adult prior calls wrong - so the model must decide what is NOT a vital sign before it transcribes what is. 5 - THE TEXT FIGHTS THE READER: layout instead of sentences, a figure retracted further down, a range with one true reading inside it, or the reading buried in a long document made mostly of other numbers.",
+  "_reRating": "The tiers were re-read against the rubric after detection saturated at EVERY one of them - 23/24 and 24/24 at difficulty 5 across two models, which is the tier that was added to end saturation. The scale is fixed 1-5 on purpose, so the notes moved and the scale did not. What changed: (1) tier 5 gained three tabular notes, because vs-en-17-flowsheet was the single most informative note in the corpus - it broke one model on provenance with five invented citations and another on value by reading the wrong row - and one note carrying that much signal should not be one note; vs-en-22, vs-en-23 and vs-es-24 are that note in three other layouts. (2) vs-en-21-typography was re-read and KEPT at 5 with a second footnote added: typography by itself is a tier-2 transformation of spelling and now lives at 4 in vs-en-27, so a note that stays at 5 has to earn it on something else. It earns it on three answers each having a wrong neighbour further down the page. (3) Nothing was demoted. A note that is hard for a reader stays hard when a bigger model gets it right, and re-rating a note because a model scored well on it would make the tier a property of the weights - which is precisely what the fixed scale exists to prevent. Detection saturating is evidence about DETECTION, not about the text: the same runs at those tiers were losing value and unit slots, which is why those two now gate.",
+  "_floor": "fieldRecallFloor gates the eval: of expectations with kind `value` or `bp`, the share the model extracted at all. Detection is the gated metric because a missed vital is invisible to the clinician, while a spurious one is visible and rejected in a click. 0.90 is a requirement of this contract, not a number fitted to a model - a run that lands under it fails, and the run's own report says by how much. It is ONE number over the WHOLE corpus, difficulty 5 included, and the per-tier breakdown is printed beside it without gating: a contract ships or does not ship as one thing, and a floor computed over the easy tier alone would be a number the application never gets to enjoy. Adding the difficulty 4-5 notes moved the denominator from 46 slots to 88 and is expected to move measured detection down - a model that passed on the first twelve notes and fails now was always this good, and the earlier corpus was what could not tell.",
+  "_subGates": "valueFloor and unitFloor are SUB-GATES over what was detected, and they exist because detection stopped discriminating. Measured on this corpus across two models: detection 87/88 and 88/88, saturated at every tier including 5 — the tier that was added to end saturation — while value ran 86/87 against 82/88 and unit 86/87 against 81/88. The axis that gated agreed about the two models; the two axes that told them apart did not gate at all, so a run that read a fifth of the flowsheet wrong passed CI. Detection remains the headline floor and is unchanged: it is the floor it always was, and it is no longer asked to be the discriminator it stopped being. 0.95 is a requirement of the contract rather than a number fitted to a model - at most one transcription error in twenty readings the model claims to have found - and it is deliberately set where the weaker of the two measured models fails it. Value and unit are floored SEPARATELY because they are separate bugs with separate fixes: a right number in the wrong unit is a units-and-symbols problem in the prompt, a wrong number is a reading problem in the note, and one blended floor would let a ceiling on either pay for a collapse in the other.",
   "fieldRecallFloor": 0.9,
+  "valueFloor": 0.95,
+  "unitFloor": 0.95,
   "cases": [
     {
       "name": "vs-en-01-vitals-block",
       "class": "block",
+      "difficulty": 1,
       "note": "Standard vitals block in the usual English abbreviations. Discriminator: abbreviation expansion (BP, HR, T, SpO2) and the canonical degree symbol where the note writes a bare 'C'. This is the case that should never fail; if it does, nothing below is interpretable.",
       "fields": [
         { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 148, "diastolic": 92, "unit": "mmHg" } },
@@ -27,6 +33,7 @@
     {
       "name": "vs-en-02-imperial",
       "class": "units",
+      "difficulty": 2,
       "note": "Imperial units throughout. Discriminator: the measurement system must be transcribed as written (°F, lb, in), NOT silently converted to metric. A converted value is scored as a unit error even when the arithmetic is right, because a conversion hides a transcription error behind a plausible number.",
       "fields": [
         { "field": "temperature", "expect": { "kind": "value", "value": 101.2, "unit": "°F" } },
@@ -40,6 +47,7 @@
     {
       "name": "vs-en-03-prose",
       "class": "prose",
+      "difficulty": 3,
       "note": "No vitals block at all - every value is embedded in running prose, and every unit is spelled out ('106 over 68', '88 beats per minute', '18 times a minute', '37.1 degrees', '94 per cent'). Discriminator: extraction without the visual scaffolding of a labelled block, which is how ward evolution notes are actually written, plus canonicalising a unit the note never writes as a symbol.",
       "fields": [
         { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 106, "diastolic": 68, "unit": "mmHg" } },
@@ -52,6 +60,7 @@
     {
       "name": "vs-en-04-historical",
       "class": "temporal",
+      "difficulty": 3,
       "note": "Carries two historical weights (104 kg, 97 kg) and a historical blood pressure (156/94), all clearly attributed to previous visits, alongside today's values. Discriminator: only THIS encounter's observations. Emitting 104 or 97 as the weight is the failure being measured, and it is the most clinically dangerous one in the corpus because the number is real, just stale.",
       "fields": [
         { "field": "weight", "expect": { "kind": "value", "value": 91.2, "unit": "kg" } },
@@ -63,12 +72,14 @@
     {
       "name": "vs-en-05-no-vitals",
       "class": "none",
+      "difficulty": 1,
       "note": "A telephone consultation with no examination and no observations of any kind. Every slot is implicitly absent, so this case grades nothing and can only lose points - it exists to measure whether the model invents a plausible set of normal vitals when handed a note that has none. The single most important case in the corpus for a clinical reader.",
       "fields": []
     },
     {
       "name": "vs-en-06-qualitative",
       "class": "qualitative",
+      "difficulty": 3,
       "note": "Four signs named in words with no figure attached ('febrile', 'tachycardic', 'tachypnoeic', 'saturating well'), and one real number that happens to be a weight recorded for drug dosing. Discriminator: a qualitative description is not a measurement. A model that turns 'febrile' into 38.5 has done the one thing the prompt forbids.",
       "fields": [
         { "field": "weight", "expect": { "kind": "value", "value": 64, "unit": "kg" } },
@@ -81,6 +92,7 @@
     {
       "name": "vs-es-07-bloque",
       "class": "language",
+      "difficulty": 2,
       "note": "A full Spanish vitals block. Three discriminators at once: Spanish abbreviations (PA, FC, T, Peso, Talla, SatO2, FR), the decimal comma ('36,8', '70,5') which must become a JSON number with a point, and unit canonicalisation across languages ('lpm' -> 'bpm', 'rpm' -> 'breaths/min'). The measurement system is unchanged by any of that, which is the distinction the prompt draws.",
       "fields": [
         { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 128, "diastolic": 76, "unit": "mmHg" } },
@@ -95,6 +107,7 @@
     {
       "name": "vs-es-08-glucemia-repetida",
       "class": "repeat",
+      "difficulty": 3,
       "note": "Blood glucose measured twice in the same encounter: 240 mg/dL on arrival, 155 mg/dL two hours later. The last measurement is the answer. The first figure is the alarming one and it opens the note, which is exactly why the rule exists and exactly what makes this case discriminating.",
       "fields": [
         { "field": "blood_glucose", "expect": { "kind": "value", "value": 155, "unit": "mg/dL" } },
@@ -104,6 +117,7 @@
     {
       "name": "vs-en-09-distractors",
       "class": "negative-controls",
+      "difficulty": 4,
       "note": "Numbers that look like vital signs and are not: a creatinine in mg/dL, sodium and potassium in mmol/L, a pain score written '7/10' in the shape of a blood pressure, a drug dose, an oxygen FLOW rate of 2 L/min, and a room number. Two real observations sit underneath them. The absent expectations here are listed explicitly rather than left implicit, because each names a specific trap.",
       "fields": [
         { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 122, "diastolic": 78, "unit": "mmHg" } },
@@ -115,6 +129,7 @@
     {
       "name": "vs-en-10-extreme",
       "class": "extreme",
+      "difficulty": 2,
       "note": "Every value is clinically implausible but internally consistent with a critically unwell patient: HR 210, BP 88/44, glucose 612 mg/dL. Discriminator: the prompt says transcribe rather than correct, and the schema's numeric bounds are deliberately wide enough to admit all of these. A model that 'fixes' 210 to 110 has silently destroyed the one reading that mattered.",
       "fields": [
         { "field": "heart_rate", "expect": { "kind": "value", "value": 210, "unit": "bpm" } },
@@ -127,6 +142,7 @@
     {
       "name": "vs-es-11-imc-declarado",
       "class": "derived",
+      "difficulty": 2,
       "note": "BMI is WRITTEN DOWN ('IMC 28,7 kg/m2') alongside the weight and height it came from, so it is extracted like any other transcribed value. Paired with vs-en-12, which withholds it. Also carries the decimal comma and a unit written without the superscript.",
       "fields": [
         { "field": "weight", "expect": { "kind": "value", "value": 88, "unit": "kg" } },
@@ -138,6 +154,7 @@
     {
       "name": "vs-en-12-bmi-not-stated",
       "class": "derived",
+      "difficulty": 3,
       "note": "Weight 70 kg and height 180 cm are both present and the BMI is trivially computable, and it is NOT written in the note - so it is absent. The pair with vs-es-11 is the whole point: the same two inputs, one note that states the derived value and one that does not, and only the stated one may be emitted. A model that computes 21.6 here is doing arithmetic the prompt forbids, and doing it well is not a defence.",
       "fields": [
         { "field": "weight", "expect": { "kind": "value", "value": 70, "unit": "kg" } },
@@ -145,6 +162,252 @@
         { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 124, "diastolic": 76, "unit": "mmHg" } },
         { "field": "heart_rate", "expect": { "kind": "value", "value": 68, "unit": "bpm" } },
         { "field": "bmi", "expect": { "kind": "absent" } }
+      ]
+    },
+    {
+      "name": "vs-en-13-negation",
+      "class": "negation",
+      "difficulty": 4,
+      "note": "Three signs are named and then explicitly NOT measured: the saturation probe got no trace, the patient declined to be weighed, no cuff was free for a blood pressure. Each refusal is followed, further down, by a number of exactly the right shape - a target BP of 130/80 and a glucose threshold of 200 mg/dL, both of which live in the plan rather than in the observations. Discriminator: a sign the note discusses at length is not thereby a sign the note measured. The absences are listed explicitly because each names a specific trap, and the traps are what make this a 4 rather than a 1.",
+      "fields": [
+        { "field": "heart_rate", "expect": { "kind": "value", "value": 84, "unit": "bpm" } },
+        { "field": "temperature", "expect": { "kind": "value", "value": 37.0, "unit": "°C" } },
+        { "field": "respiratory_rate", "expect": { "kind": "value", "value": 16, "unit": "breaths/min" } },
+        { "field": "blood_pressure", "expect": { "kind": "absent" } },
+        { "field": "oxygen_saturation", "expect": { "kind": "absent" } },
+        { "field": "weight", "expect": { "kind": "absent" } },
+        { "field": "blood_glucose", "expect": { "kind": "absent" } }
+      ]
+    },
+    {
+      "name": "vs-en-14-ranges",
+      "class": "range",
+      "difficulty": 5,
+      "note": "A nursing handover written entirely in trends. Blood pressure is given as a range in blood-pressure shape (132/78 to 158/94) with the current reading named separately as 141/86; heart rate is 'in the 60s' with the monitor at 63; saturations are '94-97% overnight, 95% now'. Discriminator: a range is not a measurement, and the single current figure inside a sentence of figures is the answer. Temperature is absent and is the sharpest trap in the case - 'has not been rechecked since the evening round' asserts that an earlier reading exists without ever giving it, and a model that fills in a plausible afebrile number has invented a vital sign out of a sentence that says one is missing.",
+      "fields": [
+        { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 141, "diastolic": 86, "unit": "mmHg" } },
+        { "field": "heart_rate", "expect": { "kind": "value", "value": 63, "unit": "bpm" } },
+        { "field": "oxygen_saturation", "expect": { "kind": "value", "value": 95, "unit": "%" } },
+        { "field": "respiratory_rate", "expect": { "kind": "value", "value": 14, "unit": "breaths/min" } },
+        { "field": "temperature", "expect": { "kind": "absent" } }
+      ]
+    },
+    {
+      "name": "vs-en-15-third-party",
+      "class": "attribution",
+      "difficulty": 4,
+      "note": "Two people's readings in one note. The husband's home BP (150/95) and pulse (58) open the note and belong to somebody who is not the patient; the patient's own home readings from last week (126/80) belong to her but not to this encounter. Today's clinic set sits between them. Discriminator: whose reading, then which encounter - the second question is vs-en-04's and the first is new. The husband's readings are the more dangerous of the two, because 'previous visit' at least concerns the right patient.",
+      "fields": [
+        { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 118, "diastolic": 72, "unit": "mmHg" } },
+        { "field": "heart_rate", "expect": { "kind": "value", "value": 76, "unit": "bpm" } },
+        { "field": "weight", "expect": { "kind": "value", "value": 68.4, "unit": "kg" } }
+      ]
+    },
+    {
+      "name": "vs-en-16-addendum",
+      "class": "retraction",
+      "difficulty": 5,
+      "note": "A tidy vitals block, then an addendum forty minutes later retracting exactly one line of it: the 78.0 kg belonged to the previous patient's card and the correct weight is 61.4 kg. The addendum then reconfirms the other three readings. Discriminator: a retraction is not a repeat measurement, and the note is deliberately arranged so that neither shortcut works alone - a model anchored on the block emits 78.0, and a model applying 'take the last figure' blindly gets the weight right for the wrong reason and has no way to be right about the height, which is stated once and never restated.",
+      "fields": [
+        { "field": "weight", "expect": { "kind": "value", "value": 61.4, "unit": "kg" } },
+        { "field": "height", "expect": { "kind": "value", "value": 163, "unit": "cm" } },
+        { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 128, "diastolic": 84, "unit": "mmHg" } },
+        { "field": "heart_rate", "expect": { "kind": "value", "value": 70, "unit": "bpm" } }
+      ]
+    },
+    {
+      "name": "vs-en-17-flowsheet",
+      "class": "tabular",
+      "difficulty": 5,
+      "note": "An observation chart transcribed as a whitespace-aligned table: five signs down the left, four timepoints across the top, and the 18:00 column is the answer. Two discriminators at once. Layout carries the meaning - the association between '121/74' and 'BP' is a column position rather than a sentence, and there are three earlier readings of every sign, each of which is a plausible-looking wrong answer. And NOT ONE UNIT IS WRITTEN ANYWHERE in the chart, so every unit must come from the prompt's canonical list rather than from the note; this is the case where value accuracy and unit accuracy are most likely to diverge. The 4 L/min oxygen delivery underneath is the same flow-rate trap as vs-en-09, in a note where the model is already reading numbers out of columns.",
+      "fields": [
+        { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 121, "diastolic": 74, "unit": "mmHg" } },
+        { "field": "heart_rate", "expect": { "kind": "value", "value": 91, "unit": "bpm" } },
+        { "field": "respiratory_rate", "expect": { "kind": "value", "value": 19, "unit": "breaths/min" } },
+        { "field": "oxygen_saturation", "expect": { "kind": "value", "value": 96, "unit": "%" } },
+        { "field": "temperature", "expect": { "kind": "value", "value": 37.2, "unit": "°C" } },
+        { "field": "blood_glucose", "expect": { "kind": "absent" } }
+      ]
+    },
+    {
+      "name": "vs-es-18-mixta",
+      "class": "language",
+      "difficulty": 4,
+      "note": "A Spanish note code-switched with English abbreviations: 'TA' and 'HR' in the same line, 'lpm' for the rate, 'Sat O2' spaced. Glucose is in mmol/L rather than the mg/dL the rest of the corpus uses, and height is in metres (1,78 m) - both must be transcribed in the system the note wrote, so a model that emits 178 cm or 151 mg/dL has converted. Two traps: the target 'TA por debajo de 140/90' is a goal rather than a reading, and 'su MAP' is the patient's primary care physician (medico de atencion primaria), not a mean arterial pressure - an abbreviation that means a vital sign in one language and a job title in the other.",
+      "fields": [
+        { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 142, "diastolic": 88, "unit": "mmHg" } },
+        { "field": "heart_rate", "expect": { "kind": "value", "value": 71, "unit": "bpm" } },
+        { "field": "blood_glucose", "expect": { "kind": "value", "value": 8.4, "unit": "mmol/L" } },
+        { "field": "weight", "expect": { "kind": "value", "value": 95.2, "unit": "kg" } },
+        { "field": "height", "expect": { "kind": "value", "value": 1.78, "unit": "m" } },
+        { "field": "oxygen_saturation", "expect": { "kind": "value", "value": 97, "unit": "%" } }
+      ]
+    },
+    {
+      "name": "vs-es-19-pediatrico",
+      "class": "paediatric",
+      "difficulty": 4,
+      "note": "A six-week-old infant, where every figure is normal for the patient and alarming for an adult: FC 158, FR 46, weight 4,32 kg. This is vs-en-10 from the other side - there the values were genuinely extreme, here they only look extreme to a prior trained mostly on adults, and both fail the same way if the model corrects towards what it expects. The weight is written twice in two units in the same breath, '4,32 kg (4320 g)', so the decimal comma and the parenthetical gloss compete; the kg figure is the one with the canonical unit. 'T axilar' is a route of measurement, not a different sign.",
+      "fields": [
+        { "field": "heart_rate", "expect": { "kind": "value", "value": 158, "unit": "bpm" } },
+        { "field": "respiratory_rate", "expect": { "kind": "value", "value": 46, "unit": "breaths/min" } },
+        { "field": "temperature", "expect": { "kind": "value", "value": 37.9, "unit": "°C" } },
+        { "field": "oxygen_saturation", "expect": { "kind": "value", "value": 99, "unit": "%" } },
+        { "field": "weight", "expect": { "kind": "value", "value": 4.32, "unit": "kg" } },
+        { "field": "height", "expect": { "kind": "value", "value": 55, "unit": "cm" } }
+      ]
+    },
+    {
+      "name": "vs-en-20-discharge",
+      "class": "haystack",
+      "difficulty": 5,
+      "note": "The longest note in the corpus, and the one most made of numbers that are not vital signs: a CRP trend, a white cell count, three electrolytes, a QTc, four drug doses, two oxygen flow rates, five dates and a bed number. It carries TWO complete sets of observations from the same admission - the admission set (BP 96/58, HR 118, SpO2 88%) and the discharge set - so the last-measurement rule decides, and the admission set is the one with the abnormal figures a model is drawn to. Weight is stated once, on admission, and 'not repeated before discharge' - still this encounter, so still the answer. Blood glucose is listed absent explicitly: the urea in mmol/L is the only thing in the note wearing a glucose's units.",
+      "fields": [
+        { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 124, "diastolic": 78, "unit": "mmHg" } },
+        { "field": "heart_rate", "expect": { "kind": "value", "value": 82, "unit": "bpm" } },
+        { "field": "respiratory_rate", "expect": { "kind": "value", "value": 18, "unit": "breaths/min" } },
+        { "field": "oxygen_saturation", "expect": { "kind": "value", "value": 95, "unit": "%" } },
+        { "field": "temperature", "expect": { "kind": "value", "value": 36.8, "unit": "°C" } },
+        { "field": "weight", "expect": { "kind": "value", "value": 72, "unit": "kg" } },
+        { "field": "blood_glucose", "expect": { "kind": "absent" } }
+      ]
+    },
+    {
+      "name": "vs-en-21-typography",
+      "class": "typography",
+      "difficulty": 5,
+      "note": "A clinic letter with the characters a real one has, and TWO footnotes that fight the body of the letter. The characters: a middle-dot decimal ('37·2 °C', '74·8 kg') as several journals still set it, and a Unicode subscript in 'SpO₂'. The footnotes are the difficulty. The first says the quoted blood pressure was taken after ten minutes seated and that 'the first reading, 134/88 mmHg, was taken on arrival' - so the earlier-in-time figure appears LATER on the page, and the last-measurement rule has to be read as last in time rather than last in the text. The second, added when this note was re-read against the rubric, puts two more weights below the real one, both attributed to earlier documents and neither measured here, so weight now has three candidates in descending order of correctness. The '70 % of predicted' peak flow is a percentage that is not a saturation and it sits four lines below a real one; the '2 L/min' of oxygen is the flow-rate trap in the same paragraph. RE-RATED READING: this stays at 5. Typography alone is a tier-2 transformation and has moved to vs-en-27; what keeps this note at the top tier is that three of its five answers have a wrong neighbour further down the page.",
+      "fields": [
+        { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 118, "diastolic": 76, "unit": "mmHg" } },
+        { "field": "heart_rate", "expect": { "kind": "value", "value": 88, "unit": "bpm" } },
+        { "field": "oxygen_saturation", "expect": { "kind": "value", "value": 96, "unit": "%" } },
+        { "field": "temperature", "expect": { "kind": "value", "value": 37.2, "unit": "°C" } },
+        { "field": "weight", "expect": { "kind": "value", "value": 74.8, "unit": "kg" } }
+      ]
+    },
+    {
+      "name": "vs-en-22-obs-table",
+      "class": "table",
+      "difficulty": 5,
+      "note": "The second observation chart in the corpus, and it exists because the first one carries more signal than any other note here: vs-en-17-flowsheet broke one model on provenance (five values right, five citations invented) and another on value (five citations right, the wrong ROW read). One note carrying that much discrimination should not be one note. This chart adds two rows that are shaped exactly like observations and are not: NEWS is a derived early warning score and Pain is a visual analogue score, both integers between 0 and 10 in a column of integers. The fluid rate in mL/hour and the oxygen flow in L/min are the same trap in prose. The answer is the 20:00 column throughout.",
+      "fields": [
+        { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 114, "diastolic": 72, "unit": "mmHg" } },
+        { "field": "heart_rate", "expect": { "kind": "value", "value": 102, "unit": "bpm" } },
+        { "field": "respiratory_rate", "expect": { "kind": "value", "value": 20, "unit": "breaths/min" } },
+        { "field": "oxygen_saturation", "expect": { "kind": "value", "value": 96, "unit": "%" } },
+        { "field": "temperature", "expect": { "kind": "value", "value": 37.4, "unit": "°C" } },
+        { "field": "blood_glucose", "expect": { "kind": "absent" } },
+        { "field": "weight", "expect": { "kind": "absent" } }
+      ]
+    },
+    {
+      "name": "vs-en-23-ward-round-grid",
+      "class": "table",
+      "difficulty": 5,
+      "note": "A table whose SECOND column is not a measurement at all. Every row carries the observation and then the range the team is aiming for, so a reader who takes the rightmost number emits 'below 140/90' as a blood pressure and '60-100' as a heart rate. It is the layout half of the vs-en-14-ranges discriminator, and it is harder here because the range is a well-formed neighbour of a real figure rather than an obvious interval. Urine output is in the same table, in the same shape, and is not one of the nine slots.",
+      "fields": [
+        { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 132, "diastolic": 78, "unit": "mmHg" } },
+        { "field": "heart_rate", "expect": { "kind": "value", "value": 88, "unit": "bpm" } },
+        { "field": "respiratory_rate", "expect": { "kind": "value", "value": 16, "unit": "breaths/min" } },
+        { "field": "oxygen_saturation", "expect": { "kind": "value", "value": 97, "unit": "%" } },
+        { "field": "temperature", "expect": { "kind": "value", "value": 36.9, "unit": "°C" } }
+      ]
+    },
+    {
+      "name": "vs-es-24-grafica",
+      "class": "table",
+      "difficulty": 5,
+      "note": "The tabular layout and the Spanish unit problem in one note, because in a Spanish ward they arrive in one note. Row labels carry their units in parentheses - FC in lpm and FR in rpm - so the unit is stated and must still be emitted as the canonical bpm and breaths/min. Temperature uses a comma decimal inside a column of them. The glucose row states no unit in the table and the line under it does, which is where a model that reads only the grid loses the unit slot. The answer is the 19:00 column.",
+      "fields": [
+        { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 134, "diastolic": 82, "unit": "mmHg" } },
+        { "field": "heart_rate", "expect": { "kind": "value", "value": 82, "unit": "bpm" } },
+        { "field": "respiratory_rate", "expect": { "kind": "value", "value": 18, "unit": "breaths/min" } },
+        { "field": "oxygen_saturation", "expect": { "kind": "value", "value": 96, "unit": "%" } },
+        { "field": "temperature", "expect": { "kind": "value", "value": 37.1, "unit": "°C" } },
+        { "field": "blood_glucose", "expect": { "kind": "value", "value": 148, "unit": "mg/dL" } }
+      ]
+    },
+    {
+      "name": "vs-en-25-lab-panel-table",
+      "class": "distractors",
+      "difficulty": 4,
+      "note": "A table of laboratory results with two real observations in the prose beneath it. Every trap here is a number in a table with a reference interval beside it, which is the shape of an observation chart and the content of a blood panel: 'White cells 10.4' reads as a temperature, 'Creatinine 92' as a heart rate, 'Sodium 139' as a systolic. The note says in words that none of them is a vital sign, and a model that transcribes the table anyway has ignored the one rule the prompt states twice. Only two slots are gradeable, so this case can mostly only lose points - which is the point of it.",
+      "fields": [
+        { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 124, "diastolic": 76, "unit": "mmHg" } },
+        { "field": "temperature", "expect": { "kind": "value", "value": 36.8, "unit": "°C" } },
+        { "field": "heart_rate", "expect": { "kind": "absent" } },
+        { "field": "blood_glucose", "expect": { "kind": "absent" } },
+        { "field": "oxygen_saturation", "expect": { "kind": "absent" } }
+      ]
+    },
+    {
+      "name": "vs-es-26-mixta",
+      "class": "language",
+      "difficulty": 4,
+      "note": "Spanish that switches to English mid-paragraph, which is what a note in a bilingual service looks like. The Spanish sentence carries lpm and rpm and the English one carries bpm - and the English figure is a resting heart rate recorded by another clinician LAST SPRING, so it is both the wrong encounter and the only one already in canonical units. A model that anchors on the familiar spelling emits 88 and fails attribution and value together. Weight uses a comma decimal; the note states in words that no body mass index was calculated, so bmi is absent even though weight and height are both present.",
+      "fields": [
+        { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 118, "diastolic": 72, "unit": "mmHg" } },
+        { "field": "heart_rate", "expect": { "kind": "value", "value": 64, "unit": "bpm" } },
+        { "field": "respiratory_rate", "expect": { "kind": "value", "value": 16, "unit": "breaths/min" } },
+        { "field": "oxygen_saturation", "expect": { "kind": "value", "value": 96, "unit": "%" } },
+        { "field": "weight", "expect": { "kind": "value", "value": 71.6, "unit": "kg" } },
+        { "field": "height", "expect": { "kind": "value", "value": 168, "unit": "cm" } },
+        { "field": "bmi", "expect": { "kind": "absent" } }
+      ]
+    },
+    {
+      "name": "vs-en-27-typography",
+      "class": "typography",
+      "difficulty": 4,
+      "note": "The second typography note, and unlike vs-en-21 it is about the UNIT symbols rather than about a footnote. Four separate spellings have to survive: a middle-dot decimal in an imperial temperature ('98·4 °F', which must not be converted), a Unicode subscript in 'SpO₂', a height in metres rather than centimetres, and a body mass index the dietitian wrote as 'kg/m2' where the contract's canonical symbol is 'kg/m²'. The last one cost a model a unit slot on vs-es-11 and is repeated here in a different language and a different sentence, because one instance of a failure mode is an anecdote. The waist circumference is a measurement in centimetres that is not one of the nine slots.",
+      "fields": [
+        { "field": "temperature", "expect": { "kind": "value", "value": 98.4, "unit": "°F" } },
+        { "field": "heart_rate", "expect": { "kind": "value", "value": 76, "unit": "bpm" } },
+        { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 128, "diastolic": 82, "unit": "mmHg" } },
+        { "field": "oxygen_saturation", "expect": { "kind": "value", "value": 98, "unit": "%" } },
+        { "field": "weight", "expect": { "kind": "value", "value": 104.6, "unit": "kg" } },
+        { "field": "height", "expect": { "kind": "value", "value": 1.72, "unit": "m" } },
+        { "field": "bmi", "expect": { "kind": "value", "value": 35.4, "unit": "kg/m²" } }
+      ]
+    },
+    {
+      "name": "vs-en-28-cough-not-the-example",
+      "class": "prompt-echo",
+      "difficulty": 4,
+      "note": "Written AGAINST the prompt rather than alongside it. The opening sentence echoes the prompt's own worked example - a patient attending with a cough, a clear chest - and then gives different figures: 142/91 where the example has 136/86, and 67 bpm where the example has 94. This is not a hypothetical trap. A model emitted '94 bpm' on a note of this corpus that records no heart rate at all, which is the exact figure in Example 1, so the prompt's illustration was being copied rather than read. A corpus that never contradicts its own prompt cannot see that happen.",
+      "fields": [
+        { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 142, "diastolic": 91, "unit": "mmHg" } },
+        { "field": "heart_rate", "expect": { "kind": "value", "value": 67, "unit": "bpm" } },
+        { "field": "temperature", "expect": { "kind": "value", "value": 37.6, "unit": "°C" } },
+        { "field": "oxygen_saturation", "expect": { "kind": "absent" } },
+        { "field": "respiratory_rate", "expect": { "kind": "absent" } }
+      ]
+    },
+    {
+      "name": "vs-en-29-no-arithmetic",
+      "class": "derived",
+      "difficulty": 4,
+      "note": "A weight and a height, in the same line, never combined - and a note that goes out of its way to invite the combination by calling the patient obese in the following sentence. The prompt forbids deriving a value that is not written down, and this is the case that tests the rule where the arithmetic is easy and the clinical conclusion is already stated in prose. The blood pressure is 136/84, one digit from the prompt's own example of 136/86, so a model completing from memory rather than reading fails value while looking almost right.",
+      "fields": [
+        { "field": "weight", "expect": { "kind": "value", "value": 96.4, "unit": "kg" } },
+        { "field": "height", "expect": { "kind": "value", "value": 163, "unit": "cm" } },
+        { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 136, "diastolic": 84, "unit": "mmHg" } },
+        { "field": "heart_rate", "expect": { "kind": "value", "value": 72, "unit": "bpm" } },
+        { "field": "bmi", "expect": { "kind": "absent" } }
+      ]
+    },
+    {
+      "name": "vs-es-30-prosa-unidades",
+      "class": "language",
+      "difficulty": 3,
+      "note": "Spanish running prose with every unit spelled out the way a home visit is dictated: 'la tension arterial es de 152 sobre 94', 'la frecuencia cardiaca de 102 lpm', 'la frecuencia respiratoria de 24 rpm', 'la saturacion de oxigeno es del 91 por ciento', '38,4 grados'. It is vs-en-03's prose discriminator carried into the language whose abbreviations cost one model five unit slots across three notes, and it is rated 3 rather than 4 because nothing here is attributed to another encounter or another person - the difficulty is the transcription, not the judgement.",
+      "fields": [
+        { "field": "blood_pressure", "expect": { "kind": "bp", "systolic": 152, "diastolic": 94, "unit": "mmHg" } },
+        { "field": "heart_rate", "expect": { "kind": "value", "value": 102, "unit": "bpm" } },
+        { "field": "respiratory_rate", "expect": { "kind": "value", "value": 24, "unit": "breaths/min" } },
+        { "field": "oxygen_saturation", "expect": { "kind": "value", "value": 91, "unit": "%" } },
+        { "field": "temperature", "expect": { "kind": "value", "value": 38.4, "unit": "°C" } },
+        { "field": "blood_glucose", "expect": { "kind": "value", "value": 212, "unit": "mg/dL" } }
       ]
     }
   ]

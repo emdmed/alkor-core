@@ -1,0 +1,34 @@
+DISCHARGE SUMMARY - MEDICAL ADMISSIONS UNIT
+
+Admitted 03/03 with community-acquired pneumonia, discharged 07/03 after four
+days. Ward 7, bed 12. Synthetic record; no identifiers are used.
+
+Admission observations (03/03): BP 96/58 mmHg, HR 118 bpm, RR 28 breaths/min,
+SpO2 88% on air, T 39.1 C.
+
+Investigations:
+  CRP 214 mg/L on admission, 41 mg/L on 06/03
+  White cell count 18.2 x10^9/L, neutrophils 15.6
+  Urea 9.8 mmol/L, creatinine 104 umol/L, sodium 131 mmol/L
+  ECG: sinus tachycardia, rate 116, QTc 412 ms
+  Chest radiograph: right lower lobe consolidation
+
+Treatment: IV co-amoxiclav 1.2 g three times daily for 48 hours, switched to
+oral amoxicillin 500 mg three times daily to complete seven days. Oxygen
+6 L/min via mask on admission, weaned to 2 L/min on 05/03 and to air on 06/03.
+Paracetamol 1 g four times daily as required.
+
+Progress: afebrile from 05/03, mobilising independently from 06/03, tolerating
+a full diet. Reviewed by physiotherapy before discharge.
+
+Observations at discharge (07/03), on air:
+BP 124/78 mmHg
+HR 82 bpm
+RR 18 breaths/min
+SpO2 95%
+T 36.8 C
+
+Weight on admission 72 kg; not repeated before discharge.
+
+Follow-up: chest radiograph in six weeks. GP to review blood pressure within
+two weeks, target below 140/90 mmHg.

@@ -14,12 +14,28 @@
 # Paths are relative to this file. The harness reads files by KEY, never by path, so
 # moving or renaming a contract is a change here rather than a change in code.
 
-spec = 1
+# The format version, and it is a real one: it was bumped to 2 the day two keys became
+# load-bearing. `[clinical.quoteVerification].accentSensitive` is REQUIRED and a pack without
+# it does not load; `[clinical].corpusSynthetic` decides whether a trace may hold completions
+# verbatim, and a pack that omits it is treated as holding real records. Both were added
+# while `spec` said 1, which meant every pack written the day before stopped loading and got
+# a message about a missing TOML key rather than a statement that the format had moved. See
+# SPEC_CHANGES in src/core/pack.ts, which is what a loader quotes when it finds one absent.
+spec = 3
 name = "clinical"
 
 # Per-case source documents. `{case}` is substituted with the eval case name, which is why
-# a case's `name` and its note's filename are the same string.
-documents = "notes/{case}.note.txt"
+# a case's `name` and its document's filename are the same string.
+#
+# A TABLE rather than one template, because this pack now holds two corpora that are not the
+# same kind of thing. `default` is the written notes, read by three tasks. `transcript` is the
+# dictated consultations, read by the fourth — and filing those under `notes/*.note.txt` would
+# mislabel them in the one directory of this repository where what a document IS carries the
+# most weight. A pack with one corpus still writes `documents = "..."`; that is the `default`
+# kind and nothing about it changed.
+[documents]
+default    = "notes/{case}.note.txt"
+transcript = "transcripts/{case}.transcript.txt"
 
 [files]
 # The system prompt. NO placeholders: the note is the `user` message, not spliced into this
@@ -34,6 +50,34 @@ vitalSignsSchema       = "schemas/vital-signs.schema.json"
 vitalSignsSchemaGolden = "schemas/vital-signs.golden.json"
 vitalSignsCases        = "evals/vital-signs-cases.json"
 
+# --- Patient summary: history / usual medication / pending, over a whole record. --------
+# Set extraction rather than transcription, and the task whose INPUT is assembled from many
+# notes — see [clinical.summaryAssembly] below, which is part of the contract for the same
+# reason the prompt is: two runtimes that assemble differently grade different inputs while
+# appearing to share a prompt.
+summaryPrompt       = "prompts/patient-summary.md"
+summarySchema       = "schemas/patient-summary.schema.json"
+summarySchemaGolden = "schemas/patient-summary.golden.json"
+summaryCases        = "evals/patient-summary-cases.json"
+
+# --- Note formatting: one note rewritten into the four sections a clinician reads. ------
+# The same single-note input as vital signs, read differently: that pass pulls numbers out,
+# this one reorganises the prose. Its cases name a note in the vital-signs corpus rather
+# than carrying their own, so 21 notes serve three tasks.
+noteFormatPrompt       = "prompts/note-format.md"
+noteFormatSchema       = "schemas/note-format.schema.json"
+noteFormatSchemaGolden = "schemas/note-format.golden.json"
+noteFormatCases        = "evals/note-format-cases.json"
+
+# --- Dictated transcripts: the SAME four sections, from speech instead of prose. --------
+# No schema of its own, deliberately. A clinician reads one structure, so the transcript task
+# emits the note-format contract byte for byte — the keys above are reused rather than copied,
+# and an edit to that schema moves both tasks or neither. What this task has of its own is a
+# PROMPT (speech has retractions, dictated punctuation and asides that prose does not) and a
+# CORPUS (transcripts/, reached through the `transcript` documents kind above).
+transcriptPrompt = "prompts/transcript.md"
+transcriptCases  = "evals/transcript-cases.json"
+
 # The model declaration. Read by the profile for its per-task sampling, and by anyone who
 # wants to reproduce a number: a result quoted without the weights and the cap it ran
 # under is not reproducible.
@@ -46,11 +90,105 @@ models = "models.default.toml"
 # than in that code because it is part of the contract: a rule the eval applies and the
 # consuming application does not is a rule that ships unverified.
 [clinical]
+# These notes were written for this corpus. That is what permits the harness to trace
+# completions verbatim, and it is stated here as DATA rather than in the comment at the top of
+# this file because the redactor has to read it: a pack that does not set this is treated as
+# holding real records and its traces are elided to a digest. Setting it true on a pack of
+# real notes is the one line in this file that can put patient data on disk.
+corpusSynthetic = true
+
 # `json_schema.name` in the request body. llama.cpp does not act on this label, but two
 # runtimes sharing this pack must send the SAME one or their pinned bodies differ for no
 # reason.
 vitalSignsSchemaName = "vital_signs"
+summarySchemaName    = "patient_summary"
+noteFormatSchemaName = "note_format"
+# Its own label even though it sends the same schema, because the label is what a server log
+# and a pinned request body are read by: two tasks that produce different numbers should not
+# be indistinguishable in the record of what was sent.
+transcriptSchemaName = "dictated_note"
 
-# Which task `eval --profile clinical` runs when none is named. One task today; the key
-# exists because the second one should not change the command line.
+# Which task `eval --profile clinical` runs when none is named. `--task all` runs the four,
+# and each clears its own floor: averaging them would let a ceiling on one hide a failure in
+# another, which matters here because vital signs is the mature task and the other two are
+# not.
 defaultTask = "vital-signs"
+
+# How a note-format `quote` is checked against the note it came from.
+#
+# The rule is HERE rather than in the code because it is part of the contract: a quote an
+# application accepts and the eval rejects is worse than no check at all — the feature would
+# ship looking verified. It is deliberately not a regex; see src/core/verify.ts.
+[clinical.quoteVerification]
+# Collapse every run of whitespace to a single space on BOTH sides before comparing. The
+# notes are hard-wrapped at ~78 columns, so a quote spanning a line break carries a newline
+# where the model wrote a space; without this every quote longer than one line fails and the
+# axis measures the wrapping rather than the model.
+collapseWhitespace = true
+# Case is compared STRICTLY. "Copy it character by character" is the instruction, and a model
+# that lowercases a sentence-initial capital is already editing rather than copying. The eval
+# reports the edited-only rate alongside, so a run that fails only on capitalisation stays
+# distinguishable from one that fabricated a span.
+caseSensitive = true
+# Accents likewise: `presión` is not `presion`. Stated because the two tasks that verify
+# quotes used to disagree about it in silence — note formatting compared accents strictly and
+# vital signs stripped them, so one pack produced two different provenance measurements and
+# printed them in the same table. This rule now governs BOTH, and an accent-only failure is
+# reported apart from a fabrication exactly as a case-only one is.
+#
+# It applies to the QUOTE, which is a copy. It does not touch how an ITEM is matched against
+# an answer key: "fibrilación" and "fibrilacion" are the same fact, and set matching stays
+# accent-insensitive in src/profiles/clinical/set-scorer.ts.
+accentSensitive = true
+
+# How an item's `text` — and a medication's `dose` — may differ from its `quote`.
+#
+# DELETION ONLY: every word in the derived field must already be in the quote, in the same
+# order. This is the half of provenance that quote verification alone does not give you, and
+# it was paid for by a measured run on a sibling pack: the model emitted a quote reading
+# "antibiotic cover with ceftriaxona 2 g every 24 hours", which verifies character for
+# character, beside the item "ceptriaxona 2 g every 24 hours". Provenance was perfect and the
+# line a clinician reads named a drug that does not exist.
+#
+# The cost is that the model may not add a connective to make a fragment read on its own.
+# That is a real loss and it is worth it: an item that reads slightly rougher is a
+# clinician's problem for one second, and a drug name that drifted is a problem for as long
+# as the record exists.
+[clinical.textDerivation]
+deletionOnly = true
+
+# How an ITEM is matched against the answer key, as opposed to how a QUOTE is checked against
+# the note. Two different questions: a quote is a copy and is compared strictly, an item is a
+# paraphrase and is compared case- and accent-insensitively — "fibrilación" and "fibrilacion"
+# are the same fact.
+#
+# The negator list is the part that has to be data. Plain containment credited the expectation
+# `diabet` against the item "No diabetes mellitus" — the opposite fact, counted as a find — so
+# a match is refused when one of these words opens the same clause. While the list lived in
+# src/profiles/clinical/set-scorer.ts it was code rather than contract, which meant a pack in
+# a third language inherited eleven English and Spanish words, matched none of its own
+# negations, and had every negated item scored as a find. Silently, and in the direction that
+# inflates recall.
+#
+# These are exactly the words the harness would default to. They are written out anyway,
+# because a corpus in two languages should say which two rather than leave a reader to infer
+# it from a score. A pack in another language replaces the list; a pack that omits the table
+# inherits this one and is told so in spec/pack.md.
+[clinical.setMatching]
+negators = ["no", "not", "never", "denies", "denied", "without", "sin", "niega", "ningun", "ninguna", "nunca"]
+
+# The summary task's user message is ASSEMBLED from many notes rather than being one
+# document, so the assembly rule is part of the contract. See src/core/assemble.ts.
+[clinical.summaryAssembly]
+# Per-note cap, applied on a CHARACTER boundary — never a raw byte slice. A cut between the
+# two bytes of an "á" is a replacement character here and a panic in a runtime that reads
+# this pack from Rust.
+perNoteBytes = 2500
+# Running total after which assembly stops. Checked AFTER appending, so the note that crosses
+# the line is included whole and the marker follows it.
+totalChars = 10000
+# 1-based index, note type, then content. No space after the period — matched verbatim.
+lineFormat = "{i}.{note_type}-{content}\n"
+truncationMarker = "...[further notes truncated]"
+# Pinned to one value because varying it would measure an input no application produces.
+noteType = "Progress note"

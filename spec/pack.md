@@ -1,4 +1,4 @@
-# Contract pack format — spec 1
+# Contract pack format — spec 3
 
 A **contract pack** is a directory belonging to your project that holds the prompts,
 schemas, vocabularies and eval cases a model is measured against. `medextract` reads it; so,
@@ -26,7 +26,7 @@ change to code.
 ## `pack.toml`
 
 ```toml
-spec = 1                              # format version; absent means 1
+spec = 3                              # format version; absent means 1
 name = "clinical"                     # identifies the pack in errors and traces
 
 documents = "notes/{case}.note.txt"   # optional: per-case source documents
@@ -65,7 +65,29 @@ Optional. A path template containing `{case}`, substituted with an eval case's n
 how a pack ships one source document per case without listing them all.
 
 The consequence worth knowing: a case's `name` and its document's filename are the same
-string, which is a constraint on how you name cases.
+string, which is a constraint on how you name cases. A template with no `{case}` in it is
+**refused** at load: every case would read the same file, and the run that followed would
+report a number over a corpus of one.
+
+**Since spec 3 it may instead be a table of kind → template**, for a pack whose tasks read
+different KINDS of source document:
+
+```toml
+[documents]
+default    = "notes/{case}.note.txt"
+transcript = "transcripts/{case}.transcript.txt"
+```
+
+A bare string means the `default` kind and nothing about it changed, so no existing pack
+needs editing. A profile asks for a kind by name; asking for one the pack does not declare is
+an **error**, never a fall back to `default` — a task handed the wrong corpus does not fail,
+it produces a plausible number for a question nobody asked.
+
+Reach for the table only when the documents really are different things. The reference pack
+grades three tasks over written clinical notes and a fourth over transcripts of clinicians
+dictating them: the two corpora share no file, answer to different prompts, and filing the
+transcripts as `notes/*.note.txt` would mislabel them in the one directory where what a
+document is matters most. Two tasks reading the same notes still share one kind — see below.
 
 ### `[files]`
 
@@ -76,6 +98,30 @@ Keys are yours. The harness has no opinion about what a pack contains — `promp
 and `cases` above are conventions of the profile reading them, not of the format. A profile
 asking for a key the manifest does not declare gets an error naming every key that *is*
 declared.
+
+**Several tasks live in one pack by prefixing keys**, not by nesting tables: the reference
+pack declares `vitalSignsPrompt`/`vitalSignsSchema`/`vitalSignsCases` beside `summaryPrompt`
+and `noteFormatPrompt`. The format grows no concept of a "task" for this, because a task is
+a decision of the profile reading the pack — which is also why the flag that selects one
+(`--task`) is passed through to the profile untouched, and why a pack may declare which task
+runs by default in its own settings table.
+
+Two things the reference pack does that a multi-task pack usually wants:
+
+- **Share the corpus where it is the same corpus.** A second task's cases can name a first
+  task's case and read the same file: 30 notes grade three tasks in the reference pack, and a
+  note fixed once is fixed for all of them. Where it is NOT the same corpus, declare a second
+  `documents` kind rather than bending one filename convention over both.
+- **Share the schema where it is the same contract.** Two of that pack's tasks answer the same
+  question — what are the four sections a clinician reads — about a written note and about a
+  dictation. They send the same schema under different `json_schema.name` labels, because two
+  schemas for one structure are two things free to drift in property order, and property order
+  is what gets compiled into a grammar. What differs between them is the prompt.
+- **State the input rule, not just the prompt.** A task whose input is assembled from several
+  documents has an assembly rule — per-document cap, running total, line format — and that
+  rule belongs in the manifest beside the prompt. Two runtimes that assemble differently are
+  grading different inputs while appearing to share a prompt, and nothing in either codebase
+  would show it.
 
 ### `[include]`
 
@@ -96,6 +142,48 @@ Any table the harness does not know is ignored. It acts only on `spec`, `name`, 
 Put your profile's own settings here rather than in its code when they are part of the
 *contract* — a rule the eval applies and the application does not is a rule that ships
 unverified. The reference pack keeps its schema label and its default task this way.
+
+Three rules are worth calling out, because all three were learned by getting them wrong.
+
+**State a verification rule in full; never let it default.** The reference pack declares
+`collapseWhitespace`, `caseSensitive` and `accentSensitive` for quote checking, and
+`deletionOnly` for derivation, and the loader refuses a pack that omits any of them. A
+comparison rule that defaults is a check the pack author believes is running and may not be:
+this pack's two quoting tasks silently disagreed about accents for as long as the accent rule
+was unstated, so one corpus produced two different provenance numbers and printed them in the
+same table.
+
+**Say whether your corpus is synthetic.** A trace holds the completion, the parse error that
+quotes it, and the misses that quote the model's spans. The reference profile writes those
+verbatim only when the pack sets:
+
+```toml
+[clinical]
+corpusSynthetic = true
+```
+
+A pack that does not say is treated as holding real records and its trace content is elided to
+a digest. That default is deliberate and belongs in your own profile too: the failure here is
+not an untidy log, and a safety check that has to be switched on is one that was off the first
+time it mattered.
+
+**Say which language your corpus negates in.** Set matching refuses a match when a negator
+opens the same clause, because plain containment scored the term `diabet` against the item
+"No diabetes mellitus" — the opposite fact, counted as a find. The word list is the pack's:
+
+```toml
+[clinical.setMatching]
+negators = ["no", "not", "never", "denies", "denied", "without",
+            "sin", "niega", "ningun", "ninguna", "nunca"]
+```
+
+Omitting the table inherits exactly that list, which is **English and Spanish** — the
+reference corpus's two languages and nobody else's. A pack in German or Portuguese that says
+nothing gets eleven words matching none of its own negations, and every negated item scores as
+a find: silently, and in the direction that inflates recall. Unlike the verification rules
+above this one has a default, because an absent negator list does not fake a passing check —
+it is simply wrong in a way a default fixes rather than hides. Declaring the table and leaving
+it empty is refused; that is a typo, not a language without negations.
 
 ## Goldens: pin bytes, not structure
 
@@ -153,8 +241,30 @@ notes, which are the measured input.
 
 ## Versioning this format
 
-- Breaking: removing a key's meaning, changing a resolution rule, or changing render
-  semantics. These bump `spec`.
+- Breaking: removing a key's meaning, changing a resolution rule, changing render
+  semantics, or making a previously-optional key **required**. These bump `spec`.
 - Not breaking: adding an optional key, or adding a table the harness ignores.
 
-`SPEC_VERSION` in `src/core/pack.ts` is what the harness reads today.
+`SPEC_VERSION` in `src/core/pack.ts` is what the harness reads today, and `SPEC_CHANGES`
+beside it is what each version added, in the words a pack author needs. A loader that finds
+a required key absent quotes that table rather than reporting only the key: "your pack
+declares spec 1, this harness reads spec 2, and here is everything that happened in
+between" is a fix, where "a table is incomplete" is a second way to be stuck.
+
+### Changelog
+
+**spec 2.** Two keys the reference profile now requires became load-bearing:
+
+- `[clinical.quoteVerification].accentSensitive` — **required**. Without it the profile
+  refuses to load. The two tasks that verify quotes had silently disagreed about accents,
+  so one pack, one corpus and one declared rule produced two different provenance
+  measurements printed side by side.
+- `[clinical].corpusSynthetic` — optional, and its **default is the safe one**: a pack that
+  does not set it is treated as holding real records, and its traces are elided to a digest
+  rather than holding completions verbatim.
+
+Both landed while `spec` still said 1, which is the mistake this section exists to record.
+A pack written against spec 1 fails to load with a message naming the version it declares,
+the version the harness reads, and the key — not with a bare TOML complaint.
+
+**spec 1.** The format as first written.

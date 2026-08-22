@@ -33,7 +33,55 @@ export const MANIFEST_NAME = 'pack.toml'
  * future one rather than silently misreading it. Absent means 1: every pack written before
  * this existed is a valid `spec = 1` pack, and none of them should have to be edited.
  */
-export const SPEC_VERSION = 1
+export const SPEC_VERSION = 3
+
+/**
+ * What each version of the format ADDED, in the words a pack author needs.
+ *
+ * This table exists because the alternative was measured and is bad. Two keys were added to
+ * the reference pack in one afternoon — `[clinical.quoteVerification].accentSensitive`, which
+ * the profile REQUIRES, and `[clinical].corpusSynthetic`, which decides whether traces hold
+ * patient text — and `spec` was left at 1. Every pack written against the format the day
+ * before stopped loading, and what it got for its trouble was a message about a missing TOML
+ * key with no statement anywhere that the format had moved underneath it.
+ *
+ * A version number that nobody bumps is not a version number. Bumping it is only half the
+ * job: a reader who is told "this is spec 2 and yours is spec 1" and not told what changed
+ * has been given a different way to be stuck. So the harness carries the changelog, and any
+ * loader — core's, or a profile reading its own table out of the manifest — can name the
+ * version a key arrived in rather than merely that the key is absent.
+ *
+ * Keyed by the version that INTRODUCED each requirement. Nothing is ever removed from here:
+ * the entries are what a pack author reads when their pack is older than the harness, and
+ * that gap only grows.
+ */
+export const SPEC_CHANGES: Record<number, string[]> = {
+  2: [
+    '[clinical.quoteVerification].accentSensitive is REQUIRED — the two tasks that verify quotes ' +
+      'silently disagreed about accents, so one pack produced two different provenance measurements',
+    '[clinical].corpusSynthetic decides whether a trace may hold completions verbatim; a pack that ' +
+      'does not set it is treated as holding real records and its traces are elided to a digest',
+  ],
+  3: [
+    '`documents` may be a TABLE of kind -> template as well as a single template — a pack whose ' +
+      'tasks read different kinds of source document (a written note and a dictated transcript) ' +
+      'used to have to file both under one filename convention. A string still means what it did: ' +
+      'the `default` kind, which is what `document(case)` reads.',
+  ],
+}
+
+/**
+ * What a pack of version `spec` is missing relative to what this harness reads, as prose.
+ *
+ * Empty when the pack is current. Exported so a profile that finds one of its own required
+ * keys absent can say WHICH VERSION it arrived in, which is the difference between "add this
+ * key" and "your pack predates a format change, here is the whole of it".
+ */
+export const specGap = (spec: number): string[] =>
+  Object.entries(SPEC_CHANGES)
+    .filter(([v]) => Number(v) > spec)
+    .sort(([a], [b]) => Number(a) - Number(b))
+    .flatMap(([v, changes]) => changes.map((c) => `spec ${v}: ${c}`))
 
 export interface PackManifest {
   /** Format version. Absent means 1. */
@@ -48,8 +96,15 @@ export interface PackManifest {
   /**
    * Per-case documents, as a path template containing `{case}`. Used by eval modes that
    * run one document per case.
+   *
+   * A TABLE of kind -> template when a pack's tasks read different KINDS of source document.
+   * The reference pack grades three tasks over written notes and a fourth over dictated
+   * transcripts, and the two corpora are not interchangeable: a transcript filed as
+   * `notes/x.note.txt` is mislabelled in the one directory of this repository where what a
+   * document is matters most. A bare string is the `default` kind and means exactly what it
+   * meant in spec 1 and 2, so no existing pack changes.
    */
-  documents?: string
+  documents?: string | Record<string, string>
   /**
    * Placeholder -> file key, substituted into a rendered prompt by `render`. These are
    * whole-file includes; computed values are passed by the profile instead.
@@ -74,8 +129,12 @@ export interface Pack {
   toml<T = unknown>(key: string): T
   /** Whether a key is declared AND the file it names exists on disk. */
   has(key: string): boolean
-  /** Contents of the per-case document named by `documents`. */
-  document(caseName: string): string
+  /**
+   * Contents of the per-case document named by `documents`. `kind` selects a template when
+   * the manifest declares a table of them; omitted, it reads the `default` kind, which is
+   * what a bare `documents` string declares.
+   */
+  document(caseName: string, kind?: string): string
   /**
    * Read the file at `key` and substitute `{{PLACEHOLDER}}` markers: first every entry
    * in the manifest's `include` table, then the caller's `vars`. Substitution is literal
@@ -137,7 +196,11 @@ export const loadPack = (root: string): Pack => {
   }
   if (!manifest.name) throw new PackError(`${manifestPath} is missing 'name'`)
 
-  const spec = manifest.spec ?? SPEC_VERSION
+  // Absent means 1, NOT "whatever this harness reads". Defaulting to the current version
+  // would make every unversioned pack claim to be current on whatever harness opened it, and
+  // the one thing `spec` exists to do — let a reader know the pack predates a change — would
+  // be answered with the reader's own version number.
+  const spec = manifest.spec ?? 1
   if (!Number.isInteger(spec) || spec < 1) {
     throw new PackError(`${manifestPath}: spec must be a positive integer, got ${JSON.stringify(manifest.spec)}`)
   }
@@ -148,6 +211,28 @@ export const loadPack = (root: string): Pack => {
     throw new PackError(
       `pack '${manifest.name}' declares spec ${spec}, but this harness reads spec ${SPEC_VERSION} — upgrade the harness`,
     )
+  }
+
+  // One shape downstream, whichever shape the manifest used: a bare string is the `default`
+  // kind. Normalised HERE rather than at every call site, so `document()` has one code path
+  // and a pack cannot mean two things by the same key.
+  const documents: Record<string, string> =
+    typeof manifest.documents === 'string'
+      ? { default: manifest.documents }
+      : { ...(manifest.documents ?? {}) }
+  for (const [kind, template] of Object.entries(documents)) {
+    if (typeof template !== 'string') {
+      throw new PackError(`${manifestPath}: documents.${kind} must be a path template, got ${JSON.stringify(template)}`)
+    }
+    // A template with no `{case}` resolves to the same file for every case, which is a corpus
+    // of one note graded N times reporting a number for N. Refused rather than read: the run
+    // it produces looks exactly like the run the author wanted.
+    if (!template.includes('{case}')) {
+      throw new PackError(
+        `${manifestPath}: documents.${kind} = '${template}' contains no '{case}', ` +
+          'so every case would read the same file',
+      )
+    }
   }
 
   const files = manifest.files ?? {}
@@ -182,7 +267,7 @@ export const loadPack = (root: string): Pack => {
     root,
     path,
     read,
-    has: (key) => Boolean(files[key]) && existsSync(resolve(root, files[key])),
+    has: (key) => Boolean(files[key]) && existsSync(resolve(root, files[key]!)),
     json: <T,>(key: string) => {
       try {
         return JSON.parse(read(key)) as T
@@ -197,16 +282,25 @@ export const loadPack = (root: string): Pack => {
         throw new PackError(`pack '${manifest.name}' key '${key}' is not valid TOML: ${(e as Error).message}`)
       }
     },
-    document: (caseName: string) => {
-      if (!manifest.documents) {
-        throw new PackError(`pack '${manifest.name}' declares no 'documents' template, so it has no per-case documents`)
+    document: (caseName: string, kind = 'default') => {
+      const template = documents[kind]
+      if (!template) {
+        // Name the kinds that ARE declared, for the reason `path` does: the usual cause is a
+        // profile reading a corpus the pack files under another name, and a bare "no template"
+        // leaves the author to guess whether they misspelled the kind or never wrote it.
+        const declared = Object.keys(documents)
+        throw new PackError(
+          declared.length
+            ? `pack '${manifest.name}' declares no '${kind}' documents template (declared: ${declared.join(', ')})`
+            : `pack '${manifest.name}' declares no 'documents' template, so it has no per-case documents`,
+        )
       }
-      const abs = resolve(root, manifest.documents.replaceAll('{case}', caseName))
+      const abs = resolve(root, template.replaceAll('{case}', caseName))
       opened.add(abs)
       try {
         return readFileSync(abs, 'utf8')
       } catch (e) {
-        throw new PackError(`pack '${manifest.name}' document for case '${caseName}' -> ${abs}: ${(e as Error).message}`)
+        throw new PackError(`pack '${manifest.name}' ${kind} document for case '${caseName}' -> ${abs}: ${(e as Error).message}`)
       }
     },
     digest: () => {
