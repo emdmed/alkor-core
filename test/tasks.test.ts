@@ -291,8 +291,8 @@ test('the transcript task sends the note-format contract under its own label', (
 })
 
 test('the transcript corpus spans the tiers and states its floors', () => {
-  assert.equal(transcript.cases.length, 12)
-  assert.equal(requiredSetExpectations(transcript.cases), 73)
+  assert.equal(transcript.cases.length, 13)
+  assert.equal(requiredSetExpectations(transcript.cases), 77)
   // Not all hard. Without an easy dictation the tier distribution collapses to 3-5 and a
   // prompt change that helps only the well-behaved speaker is invisible.
   const tiers = new Set(transcript.cases.map((c) => c.difficulty))
@@ -302,14 +302,23 @@ test('the transcript corpus spans the tiers and states its floors', () => {
   const corrections = transcript.cases.filter((c) => c.class === 'self-correction')
   assert.equal(corrections.length, 2)
   assert.deepEqual([...new Set(corrections.map((c) => c.name.slice(0, 5)))].sort(), ['tr-en', 'tr-es'])
-  // MEASURED floors, set 2026-08-22 from two agreeing runs of the declared weights — 82%
-  // recall, 100% provenance, 91% derivation — each sitting about one item under what was
-  // measured. Pinned here rather than left to the pack alone because the direction of a floor
-  // change is the thing worth noticing in a diff: a gate that drifts downward to fit a run is
-  // how a pack stops measuring, and it looks like a one-character edit. See RESULTS.md.
-  assert.equal(transcript.itemRecallFloor, 0.8)
+  // MEASURED floors, set 2026-08-22 from two agreeing runs of the declared weights over all
+  // thirteen transcripts — 95% recall, 100% provenance, 99% derivation — each sitting a few
+  // items under what was measured. Pinned here rather than left to the pack alone because the
+  // DIRECTION of a floor change is the thing worth noticing in a diff: a gate that drifts
+  // downward to fit a run is how a pack stops measuring, and it looks like a one-character
+  // edit. See RESULTS.md.
+  //
+  // These went UP, from 80/95/90, and the route matters. Adding tr-es-13-control took
+  // derivation to 85% — six points under the old floor — and the run went red rather than
+  // being absorbed. The defect was that prompts/transcript.md never said what language to
+  // answer in, so Spanish transcripts came back as English notes that verified every quote and
+  // derived no text. The prompt now states the rule; derivation went 85% -> 99% on the same
+  // weights and the floors followed the measurement. The next person to move these numbers
+  // should be moving them up too.
+  assert.equal(transcript.itemRecallFloor, 0.9)
   assert.equal(transcript.quoteFloor, 0.95)
-  assert.equal(transcript.derivationFloor, 0.9)
+  assert.equal(transcript.derivationFloor, 0.95)
   assert.equal(transcript.fabricationFloor, 1.0, 'an invented citation is not a budget item')
 })
 

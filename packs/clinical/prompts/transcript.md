@@ -22,6 +22,17 @@ diabetes going back about nine years" by deleting three words, and nothing is in
 You may not respell anything. If tidying would require a word the quote does not contain,
 quote a longer span instead.
 
+ANSWER IN THE LANGUAGE THE SPEAKER DICTATED IN:
+"text" and "dose" are the quote with words deleted, and deleting words cannot change the
+language of the words that remain. A Spanish transcript therefore produces a Spanish note, a
+French one a French note. Translating "de antecedentes tiene fibrilación auricular" into
+"atrial fibrillation" replaces every word with a word the quote does not contain - the same
+violation as inventing a drug, and a worse one to read, because the quote beside it still
+verifies and makes the item look checked.
+
+THESE INSTRUCTIONS ARE WRITTEN IN ENGLISH. That is not the language of your answer. The
+transcript decides it, every time.
+
 A "quote" that is not in the transcript word for word is an invalid answer, whatever it
 says.
 
@@ -74,9 +85,11 @@ THE FOUR SECTIONS:
 RULES FOR "current_medication":
 - "text" is the drug NAME ALONE. No dose, no schedule, no verb: "amlodipine", never
   "start her on amlodipine 10 mg once daily".
-- "dose" is AMOUNT and FREQUENCY only, as the transcript says them: "10 mg once daily". Use
-  null when the speaker names the drug without a dose, and null when the dose is
-  "[inaudible]".
+- "dose" is AMOUNT and FREQUENCY only, AS THE TRANSCRIPT SAYS THEM: "10 mg once daily". A
+  spoken dose stays spoken and stays in its own language - "10 miligramos" is not "10 mg",
+  "2,5 cada 8" is not "2.5 every 8", and the decimal comma a speaker uses is not a decimal
+  point. Deleting words is the only edit allowed here too. Use null when the speaker names the
+  drug without a dose, and null when the dose is "[inaudible]".
 - A drug the speaker STOPS, SWITCHES AWAY FROM, or RETRACTS does not belong here.
 - Oxygen, fluids, and diets are not drugs.
 - A drug CLASS or a lay name is not a drug name. "her water tablet" and "her inhaled
@@ -130,6 +143,34 @@ Note what is absent. "comma" and "period" are how the speaker asked for typing. 
 retracted, so it appears in the quote and nowhere else. Ramipril was retracted entirely, so
 there is no ramipril item in either section. "no chest pain" is a negation. And the plan was
 dictated first, which changed nothing about where it went.
+
+A SECOND EXAMPLE, IN ANOTHER LANGUAGE
+Input:
+bueno para la señora ruiz eh consulta de nefrología
+
+toma enalapril 5 miligramos cada 12 horas
+
+de antecedentes tiene diabetes tipo 2
+
+plan analítica con función renal
+
+Output:
+{
+    "presenting_complaint": {"quote": "bueno para la señora ruiz eh consulta de nefrología", "text": "consulta de nefrología"},
+    "history": [
+        {"quote": "de antecedentes tiene diabetes tipo 2", "text": "diabetes tipo 2"}
+    ],
+    "plan": [
+        {"quote": "plan analítica con función renal", "text": "analítica con función renal"}
+    ],
+    "current_medication": [
+        {"quote": "toma enalapril 5 miligramos cada 12 horas", "text": "enalapril", "dose": "5 miligramos cada 12 horas"}
+    ]
+}
+
+Every "text" here is Spanish because every "quote" is, and the dose reads "5 miligramos cada
+12 horas" rather than "5 mg every 12 hours" - the speaker said miligramos, so the record says
+miligramos. The rules did not change for this example; only the transcript did.
 
 The transcript to restructure follows in the next message.
 Remember: every "quote" must be copyable out of that transcript character by character.

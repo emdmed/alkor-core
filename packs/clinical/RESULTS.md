@@ -426,3 +426,127 @@ expectation that it would fabricate spans, carried over from the note tasks, did
 speech. What it does instead is emit a negated history item on `tr-en-09` where the correct answer
 is an empty section, and put a retracted `ramipril` in the plan on `tr-en-02` — the retraction trap,
 which Qwen passed.
+
+### 2026-08-22, later still — a thirteenth transcript, and the derivation gate goes red
+
+`tr-es-13-control` was added after a short Spanish dictation failed repeatedly in the consuming
+application. It is 191 characters, has no retraction, no aside, no inaudible span and no dictated
+markup — none of the axes this corpus was built for — and it takes the task through a floor.
+
+    Qwen3-4B-Q4_K_M.official.gguf   constrained   same flags, same machine
+    temp 0 · max_tokens 2048 · 13 transcripts · 77 required items · 1 run each
+
+| gate | 13 transcripts | 12 transcripts | floor | |
+|---|---|---|---|---|
+| item recall | **81%** (62/77) | 82% (60/73) | 80% | pass |
+| provenance | **100%** (59/59) | 100% (54/54) | 95% | pass |
+| derivation | **85%** (63/74) | 91% (61/67) | 90% | **FAIL** |
+| nothing invented | **100%** (59/59) | 100% (54/54) | 100% | pass |
+
+59 items emitted, 8 hallucinations, 5 dose errors, 0 edited-only quote failures, 0 failed runs.
+11.3 tok/s (3617 tokens in 319.5 s), 93% prompt cache reuse, median 23.5 s, 344.8 s wall. Trace
+`2026-08-22T14-23-13-176Z.jsonl`.
+
+**Nothing regressed.** The twelve-case portion of this run reproduces the 2026-08-21 measurement
+item for item — 60/73 recall, 54/54 provenance, 61/67 derivation — three weeks of harness changes
+later and on a different server process. The entire movement in the table is the one new case, and
+the new case scores 2/4 items with 2/7 derivations.
+
+**The floors were not moved.** Derivation is six points under and the task fails. `_floorsMargin`
+in the case file predicted this in as many words — "the number is one behaviour away from moving a
+long way in either direction and the floor should notice when it does" — because five of the six
+derivation failures were a single Spanish case translating its quote. There are now two such cases
+and the prediction paid out on the first opportunity. Relaxing the floor to accommodate a real
+defect would spend the one measurement this pack has that noticed it.
+
+#### What the case shows that tr-es-10 did not
+
+The translation behaviour is the same and it is worth recording that a *short* transcript does not
+escape it — the standing hope was that the model drifted into English on long Spanish input, and
+191 characters is not long. Beyond that, two failures with no analogue anywhere in the corpus:
+
+- **The ASR mangled both drug names, and the mangle is the correct answer.** The recording gave
+  `amblodipina` for amlodipino and `en la laperil` for enalapril. Deletion-only derivation makes
+  repairing either one a violation, which is the right rule: a silently corrected drug name is a
+  prescription the recording does not contain and is indistinguishable downstream from a good
+  reading. The model preserved both, so this is the one thing it got right, and no case before this
+  one tested it — every other transcript spells its drugs correctly.
+- **Spoken doses are normalised into written ones.** `10 miligramos` came back as `10 mg` and
+  `2,5 cada 8` as `2.5 every 8`. Both are graded twice, as derivation failures (`mg` and `2.5` are
+  characters the transcript never contained) and as dose errors against a key spelled as dictated.
+  Two of the run's five dose errors are this.
+
+The visit also has no plan — `viene para control de salud` is a reason for attendance and
+`está todo bien` is a finding — and the model filed `health check` under `plan`, which the `empty`
+expectation catches. `presenting_complaint` swallowed the entire transcript, history and drug list
+included, which two `absent` expectations catch.
+
+**The corpus is now 13 and the Spanish third still scores 50%** (8/16 items), the same figure it
+scored at 12. Adding a fourth measurement to that axis moved it not at all, which is a firmer
+statement about the language gap than the original 6/12 was.
+
+**This is a prompt problem, not a model problem** — gemma-3-4b answered `tr-es-10` in Spanish under
+the identical prompt. Re-measure and raise the floors when the transcript prompt states the output
+language; until then the red gate is the finding.
+
+### 2026-08-22, later still again — the prompt was missing a sentence, and it cost 14 points
+
+The red gate above is closed. `prompts/transcript.md` never stated what language to answer in,
+and `tr-es-13-control` was the second case to prove it mattered. Two rules were added — output
+language follows the transcript, and a spoken dose stays spoken — plus a short Spanish worked
+example beside the English one. Nothing else changed: same weights, same schema, same key, same
+machine, same thirteen transcripts.
+
+| gate | after | before | floor (was) | |
+|---|---|---|---|---|
+| item recall | **95%** (73/77) | 81% (62/77) | 90% (80%) | pass |
+| provenance | **100%** (63/63) | 100% (59/59) | 95% (95%) | pass |
+| derivation | **99%** (82/83) | 85% (63/74) | 95% (90%) | pass |
+| nothing invented | **100%** (63/63) | 100% | 100% | pass |
+
+63 items emitted, 4 hallucinations, 2 dose errors, 0 edited-only quote failures, 0 failed runs.
+11.1 tok/s (3714 tokens in 333.6 s), median 24.2 s, 382.2 s wall. Traces
+`2026-08-22T14-36-51-480Z.jsonl` and `2026-08-22T14-43-48-303Z.jsonl` — **two runs on different
+prompt-cache states** (88% and 95% reuse), agreeing item for item and token for token, which is
+the standard this pack sets before a floor moves.
+
+**The floors were raised to 90/95/95/100.** They were left alone while the task was failing and
+moved only after the defect was fixed and reproduced, which is the order that keeps a floor
+meaningful.
+
+#### What the two Spanish cases did
+
+    tr-es-10   29% items, 0% derivation   ->   86% items, 100% derivation
+    tr-es-13   50% items, 29% derivation  ->  100% items, 100% derivation
+
+Spanish is now 15/16 items rather than 8/16. The single remaining miss is `tr-es-10`'s
+presenting complaint. Both cases derive every text and every dose by deletion, so the app flags
+nothing in them — previously it flagged every item in both, correctly, and a clinician had no
+way to tell that from a real provenance failure.
+
+#### The English cases improved too, which was not the intent
+
+`tr-en-01` 86->100, `tr-en-07` 86->100, `tr-en-12` 75->100, and `tr-en-08` went from 9 to 11
+derivations checked with all of them passing. Two rules aimed at a language bug moved four
+English cases, and the honest reading is that the second worked example did most of that work
+rather than the language sentence: a prompt with one example teaches its example, and the corpus
+had been measuring how well the model generalised from a single English dictation. Recorded
+because it means the 82% baseline this pack reported for months was partly a property of having
+one example, and a future prompt change that removes the Spanish example should expect to lose
+more than the Spanish cases.
+
+#### What still fails, and none of it is language
+
+Four missed items and four hallucinations remain, unchanged in kind by this fix:
+
+- `tr-en-02` still loses **amlodipine entirely** — the retraction over-correction documented
+  above. "no actually make that 10 mg" deletes the subject rather than replacing the value. This
+  is now the single largest defect in the corpus, worth 2 of the 4 missed items.
+- `tr-en-06`, `tr-en-09` and `tr-es-13` each put something in a section that should be **empty**.
+  On `tr-es-13` it is `control de salud` filed as a plan: the reason for attendance is not a
+  decision, and the prompt says what `plan` is without ever saying that a visit can have none.
+- `tr-en-05` and `tr-en-09` write a dose where the transcript has none (`milligrams`,
+  `two years`), where null is the contract's answer.
+
+Three of those four are the same shape — the model is reluctant to emit an empty section — and
+that, not language, is where the next prompt change should go.

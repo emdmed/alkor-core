@@ -210,7 +210,7 @@ test('a flagged reading tells the reader to check it', () => {
  */
 test('--task transcript selects the transcript corpus, and nothing else does', () => {
   const names = transcriptDocumentNames(pack)
-  assert.equal(names.length, 12)
+  assert.equal(names.length, 13)
   assert.ok(names.includes('tr-en-02-self-correction'))
 
   assert.equal(
