@@ -35,10 +35,12 @@ if (Boolean(values.case) === Boolean(values.note)) {
 }
 
 const pack = loadPack(values.pack!)
-const req = transcriptRequest(pack, !values.unconstrained)
 const document = values.case
   ? pack.document(values.case, DOCUMENT_KIND.transcript)
   : readFileSync(values.note!, 'utf8')
+// AFTER the document, because the prompt is chosen by the transcript's language. A pin
+// assembled before reading the transcript would pin a body the eval never sends.
+const req = transcriptRequest(pack, !values.unconstrained, document)
 
 // Exactly the call `extract` makes, with the same fields in the same order. A script that
 // assembled its own would be pinning itself.

@@ -30,6 +30,7 @@ import { extract } from '../../modes/extract.ts'
 import { DOCUMENT_KIND, loadSettings, loadTranscriptCases, transcriptRequest } from './contracts.ts'
 import { parseNoteFormat, type FormatItem, type MedicationItem, type NoteFormat } from './extraction.ts'
 import { verifyDerivation, verifyQuote, type DerivationRule, type DerivationVerdict, type QuoteRule } from '../../core/verify.ts'
+import { repairReading, type RepairTally } from './repair.ts'
 
 export interface TranscriptReviewOptions {
   pack: Pack
@@ -37,6 +38,13 @@ export interface TranscriptReviewOptions {
   trace: Trace
   constrain: boolean
   input: { kind: 'case'; name: string } | { kind: 'text'; text: string; label?: string }
+  /**
+   * Run the repair pass over the items whose provenance failed. Off by default, and that
+   * default is the measurement talking rather than caution: every number this pack has pinned
+   * describes one pass, so a repair that ran unless asked would silently make the old numbers
+   * incomparable with the new ones.
+   */
+  repair?: boolean
 }
 
 /**
@@ -66,6 +74,23 @@ export interface ReviewedItem {
   text: string
   dose?: string | null
   verification: ItemVerification
+  /**
+   * Set when the repair pass replaced this item's citation and the VERIFIER accepted the
+   * replacement. Absent on every item of a run with no repair pass, which is what keeps a
+   * fixture produced before the pass existed comparable with one produced after.
+   */
+  repaired?: boolean
+  /**
+   * What the first pass produced, on a repaired item. Carried rather than overwritten: an item
+   * showing a verified quote must always be able to say what it looked like when it failed, or
+   * the repair is an improvement nobody can audit.
+   */
+  before?: {
+    quote: string
+    text: string
+    dose?: string | null
+    verification: ItemVerification
+  }
 }
 
 /**
@@ -107,14 +132,30 @@ export interface TranscriptReport {
     derivationsChecked: number
     derivationsOk: number
   }
+  /**
+   * The reading BEFORE the repair pass, and what that pass did — present only when it ran.
+   *
+   * Both numbers, never one. A report that showed only the repaired totals would be a report
+   * of two passes describing itself as a reading, and the difference between these two objects
+   * is the only honest measure of what the second pass is worth.
+   */
+  repair?: {
+    tally: RepairTally
+    totalsBefore: TranscriptReport['totals']
+    why?: string
+    error?: string
+  }
 }
 
 export const reviewTranscript = async (o: TranscriptReviewOptions): Promise<ReviewResult> => {
-  const req = transcriptRequest(o.pack, o.constrain)
   const settings = loadSettings(o.pack)
   const document =
     o.input.kind === 'case' ? o.pack.document(o.input.name, DOCUMENT_KIND.transcript) : o.input.text
   const label = o.input.kind === 'case' ? o.input.name : (o.input.label ?? 'supplied transcript')
+  // Assembled AFTER the document is in hand, because the prompt is chosen by the transcript's
+  // language — exactly as `runTranscriptEval` assembles it. A review that read a different
+  // contract from the one the eval measured is the failure this file exists to avoid.
+  const req = transcriptRequest(o.pack, o.constrain, document)
 
   // Asked of the server rather than read from the pack, for the reason `reviewVitalSigns`
   // asks: the two differ the moment --url points elsewhere, and a reading that names the
@@ -149,9 +190,27 @@ export const reviewTranscript = async (o: TranscriptReviewOptions): Promise<Revi
     label: 'transcript',
   })
 
-  const items = outcome.parsed
+  const first = outcome.parsed
     ? verifyReading(outcome.parsed, document, settings.quoteVerification, settings.textDerivation)
     : []
+
+  // The second pass, over the items the first pass failed to cite. It cannot throw and it
+  // cannot lose a reading: every failure path inside returns the items it was given. See
+  // repair.ts for why a second turn is admissible here at all.
+  const repair =
+    o.repair && first.length
+      ? await repairReading({
+          pack: o.pack,
+          document,
+          items: first,
+          quoteRule: settings.quoteVerification,
+          derivationRule: settings.textDerivation,
+          constrain: o.constrain,
+          baseUrl: o.baseUrl,
+          trace: o.trace,
+        })
+      : null
+  const items = repair?.items ?? first
 
   const report: TranscriptReport = {
     task: 'transcript',
@@ -168,6 +227,16 @@ export const reviewTranscript = async (o: TranscriptReviewOptions): Promise<Revi
     reading: outcome.parsed ?? null,
     items,
     totals: tallyReviewed(items),
+    ...(repair
+      ? {
+          repair: {
+            tally: repair.tally,
+            totalsBefore: tallyReviewed(first),
+            why: repair.why,
+            error: repair.error,
+          },
+        }
+      : {}),
   }
 
   const header =
@@ -243,6 +312,32 @@ export const verifyReading = (
   return out
 }
 
+/**
+ * The inverse of `verifyReading`: reviewed items back into the reading they came from.
+ *
+ * Needed because the eval scores a `NoteFormat` and the repair pass works on verified items,
+ * and one of the two has to cross. It goes THIS way — items rebuilt into a reading, scored by
+ * the same `scoreFormatCase` as an unrepaired run — so that a repaired run and a plain one are
+ * graded by the same function over the same shape. A second scorer that read items directly
+ * would be a second opinion about what counts as a found item, and the difference between the
+ * two runs would stop being the repair.
+ *
+ * Section order and item order are the reading's own, which `verifyReading` preserves, so this
+ * round-trips: `readingFromItems(verifyReading(r)) ` is `r` for every reading the parser accepts.
+ */
+export const readingFromItems = (items: ReviewedItem[]): NoteFormat => {
+  const plain = (i: ReviewedItem): FormatItem => ({ quote: i.quote, text: i.text })
+  const complaint = items.find((i) => i.section === 'presenting_complaint')
+  return {
+    presenting_complaint: complaint ? plain(complaint) : null,
+    history: items.filter((i) => i.section === 'history').map(plain),
+    plan: items.filter((i) => i.section === 'plan').map(plain),
+    current_medication: items
+      .filter((i) => i.section === 'current_medication')
+      .map((i): MedicationItem => ({ ...plain(i), dose: i.dose ?? null })),
+  }
+}
+
 const asVerdict = (v: DerivationVerdict): { ok: boolean; reason?: string; token?: string } =>
   v.ok ? { ok: true } : { ok: false, reason: v.reason, token: v.token }
 
@@ -294,11 +389,38 @@ export const renderTranscriptReading = (report: TranscriptReport): string => {
       const dose = i.dose ? `  [dose ${i.dose}]` : i.dose === null ? '  [no dose]' : ''
       lines.push(`  • ${i.text}${dose}`)
       lines.push(`      ${verdictLine(i)}`)
+      // Named on the item and not only in the summary. A clinician reading down this list is
+      // deciding what to check by hand, and "this citation was written by a second pass after
+      // the first one failed" is exactly the kind of thing that should change that decision.
+      if (i.repaired && i.before) {
+        lines.push(`      RE-CITED by the repair pass — the first pass had ${JSON.stringify(clip(i.before.quote))}`)
+      }
     }
   }
 
   const t = report.totals
   lines.push('')
+  // What the repair pass did, BEFORE the totals rather than after, because the totals below
+  // are its output: a reader who saw "5/5 quotes found" first and the repair line second would
+  // have already formed the number's meaning by the time they learned a second pass produced it.
+  if (report.repair) {
+    const r = report.repair
+    const b = r.totalsBefore
+    if (r.why && !r.tally.offered) {
+      lines.push(`repair pass: not run — ${r.why}`)
+    } else {
+      lines.push(
+        `repair pass: ${r.tally.accepted}/${r.tally.offered} re-cited` +
+          (r.tally.refused ? ` · ${r.tally.refused} proposed and refused by the verifier` : '') +
+          (r.tally.confessed ? ` · ${r.tally.confessed} the model could not find in the transcript` : '') +
+          (r.tally.unanswered ? ` · ${r.tally.unanswered} unanswered` : ''),
+      )
+      lines.push(
+        `  first pass alone: ${b.quotesVerified}/${b.items} quotes · ${b.derivationsOk}/${b.derivationsChecked} derivations`,
+      )
+      if (r.error) lines.push(`  the repair reply did not parse: ${r.error}`)
+    }
+  }
   lines.push(
     `${t.items} item${t.items === 1 ? '' : 's'} · ` +
       `${t.quotesVerified}/${t.items} quote${t.items === 1 ? '' : 's'} found in the transcript · ` +

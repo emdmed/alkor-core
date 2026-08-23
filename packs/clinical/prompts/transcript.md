@@ -19,9 +19,6 @@ in "text" must already be in "quote", in the same order. This is what the transc
 needs most: "uh he's got type 2 diabetes going back about nine years" becomes "type 2
 diabetes going back about nine years" by deleting three words, and nothing is invented.
 
-You may not respell anything. If tidying would require a word the quote does not contain,
-quote a longer span instead.
-
 ANSWER IN THE LANGUAGE THE SPEAKER DICTATED IN:
 "text" and "dose" are the quote with words deleted, and deleting words cannot change the
 language of the words that remain. A Spanish transcript therefore produces a Spanish note, a
@@ -32,6 +29,34 @@ verifies and makes the item look checked.
 
 THESE INSTRUCTIONS ARE WRITTEN IN ENGLISH. That is not the language of your answer. The
 transcript decides it, every time.
+
+You may not respell anything. If tidying would require a word the quote does not contain,
+quote a longer span instead.
+
+COPYING IS NOT REPHRASING:
+Copying is typing the same characters. It is not saying the same thing in your own words, and
+the rephrasings that break a quote are tiny ones: swapping a verb, swapping a preposition,
+moving from first person to third, singular for plural. The transcript says "a patient of 28
+with a background of hypertension". The quote is "with a background of hypertension". "he has a
+background of hypertension" is an INVALID quote even though it means exactly the same thing:
+those words are not in the recording, and a quote that cannot be found in the transcript proves
+nothing, however faithful it is to the sense. The whole item is discarded over it, including the
+diagnosis it got right.
+
+The same holds for "text" and "dose", which are the quote with words deleted. If the speaker
+says "I'll see him back in two months", the text is "see him back in two months". "review in two
+months" is the same decision said with a word nobody said, and that word invalidates it.
+
+THE WORDS IN THESE INSTRUCTIONS ARE NOT IN THE TRANSCRIPT:
+"he has a background of", "he's on", "she takes" and "he's here for" appear below because they
+were needed to state the rules and write the examples. None of them is evidence of anything.
+Copying from these pages instead of from the transcript, because the sentence beside it looked
+similar, is the easiest way to write an invalid quote.
+
+BEFORE YOU ANSWER, go back over every "quote" you wrote and look for it in the transcript,
+letter by letter, the way you would hunt a word on a page. If it is not there exactly as you
+wrote it, it is wrong: fix it by lengthening or shortening the REAL span, never by wording it
+again.
 
 A "quote" that is not in the transcript word for word is an invalid answer, whatever it
 says.
@@ -81,6 +106,20 @@ THE FOUR SECTIONS:
 - "plan": what was decided. Investigations requested, treatment changes, referrals,
   non-drug measures, follow-up.
 - "current_medication": one item per DRUG.
+
+RULES FOR "plan" - AN EMPTY PLAN IS A COMMON AND CORRECT ANSWER:
+- A plan item is something the speaker DECIDED. If nobody decided anything, "plan" is [].
+- THE REASON FOR THE VISIT IS NOT A PLAN. "she's here for a routine health check" says why
+  the patient is here: that is "presenting_complaint", and repeating it under "plan" presents
+  a decision nobody made.
+- A FINDING IS NOT A PLAN. "everything's fine" and "examination is normal" decide nothing.
+- NEVER INVENT A FOLLOW-UP INTERVAL. If the speaker does not say when the patient comes back,
+  there is no follow-up item, and no follow-up WORD in any item's text. Writing "follow-up in
+  3 months" over a dictation that never said three months is inventing an appointment, and it
+  is the easiest mistake on this list to believe, because it reads exactly like what a
+  consultation usually ends by saying.
+- A routine review where the speaker says everything is fine and orders nothing, changes
+  nothing and refers nobody has an EMPTY plan. That is the normal answer, not a gap.
 
 RULES FOR "current_medication":
 - "text" is the drug NAME ALONE. No dose, no schedule, no verb: "amlodipine", never

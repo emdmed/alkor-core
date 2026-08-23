@@ -48,6 +48,8 @@ import {
 import { ProfileError } from '../../core/profile.ts'
 import { UNIDENTIFIED, type ServerIdentity } from '../../core/client.ts'
 import { parseNoteFormat, parsePatientSummary } from './extraction.ts'
+import { readingFromItems, verifyReading, type ReviewedItem } from './review-transcript.ts'
+import { repairReading, type RepairOutcome, type RepairTally } from './repair.ts'
 import { pct, ratio } from './scorer.ts'
 import {
   absorbFormat,
@@ -76,6 +78,14 @@ export interface TaskEvalOptions {
   identity?: ServerIdentity
   /** Prefix reuse, on by default. Off buys a comparable run with prefill time; see the client. */
   cachePrompt?: boolean
+  /**
+   * Run the repair pass over failed citations, and report BOTH readings.
+   *
+   * Opt-in, and the gate is then read off the repaired reading because that is what the pass
+   * would ship. The first-pass numbers are printed beside it on every line — a repair reported
+   * alone would be a two-call pipeline quoting a one-call number.
+   */
+  repair?: boolean
 }
 
 /**
@@ -325,12 +335,29 @@ interface QuotedSetTask<C extends { name: string; class: string; difficulty: num
   source: string
   /** `label` on the request, which is what a server log and a pinned body are read by. */
   requestLabel: string
-  request: TaskRequest
+  /**
+   * The request for ONE document, not for the task.
+   *
+   * A function rather than a value because the transcript task chooses its prompt by the
+   * language of the transcript in front of it. Sampling and schema do not vary that way, and
+   * the header line below reads them from a representative request rather than re-deriving
+   * them per case.
+   */
+  request: (document: string) => TaskRequest
   floors: QuotedSetCases
   cases: C[]
   /** The document this case is graded over, and what the trace should record about where it came from. */
   document: (c: C) => string
   provenance: (c: C) => Record<string, unknown>
+  /**
+   * The second pass over the items whose citation failed, when the caller asked for one.
+   *
+   * Optional and per-task: only the dictated-transcript contract declares a repair, and a note
+   * formatting run given this hook would be measuring a pass its pack does not describe.
+   * Absent, every line below runs exactly as it did before the repair existed — which is what
+   * makes a `--repair` run and a plain one comparable at all.
+   */
+  repair?: (document: string, items: ReviewedItem[]) => Promise<RepairOutcome>
 }
 
 export const runNoteFormatEval = async (o: TaskEvalOptions): Promise<TaskResult> => {
@@ -342,7 +369,7 @@ export const runNoteFormatEval = async (o: TaskEvalOptions): Promise<TaskResult>
     unit: 'notes',
     source: 'note',
     requestLabel: 'note_format',
-    request: formatRequest(o.pack, o.constrain),
+    request: () => formatRequest(o.pack, o.constrain),
     floors,
     cases,
     // The note comes from the vital-signs corpus by name: 30 notes, three tasks, one copy.
@@ -374,12 +401,26 @@ export const runTranscriptEval = async (o: TaskEvalOptions): Promise<TaskResult>
     unit: 'transcripts',
     source: 'transcript',
     requestLabel: 'transcript',
-    request: transcriptRequest(o.pack, o.constrain),
+    request: (document) => transcriptRequest(o.pack, o.constrain, document),
     floors,
     cases,
     // The case IS the document here: there is no written note to point at.
     document: (c) => o.pack.document(c.name, DOCUMENT_KIND.transcript),
     provenance: () => ({}),
+    repair: o.repair
+      ? (document, items) =>
+          repairReading({
+            pack: o.pack,
+            document,
+            items,
+            quoteRule: loadSettings(o.pack).quoteVerification,
+            derivationRule: loadSettings(o.pack).textDerivation,
+            constrain: o.constrain,
+            baseUrl: o.baseUrl,
+            trace: o.trace,
+            cachePrompt: o.cachePrompt,
+          })
+      : undefined,
   })
 }
 
@@ -388,7 +429,8 @@ const runQuotedSetEval = async <C extends { name: string; class: string; difficu
   scope: string,
   def: QuotedSetTask<C>,
 ): Promise<TaskResult> => {
-  const req = def.request
+  // Sampling and schema are properties of the TASK; only the prompt can vary per document.
+  const shape = def.request('')
   const { itemRecallFloor, quoteFloor, derivationFloor, fabricationFloor } = def.floors
   const cases = def.cases
   const settings = loadSettings(o.pack)
@@ -400,14 +442,21 @@ const runQuotedSetEval = async <C extends { name: string; class: string; difficu
   const runs = Math.max(1, o.runs ?? 1)
 
   const total = emptyFormatTally()
+  // The same tally over the FIRST pass's reading, kept only when a repair ran. Two tallies
+  // rather than one plus a delta: every gate below is a ratio, and a ratio's numerator and
+  // denominator both move when a repair lands, so a difference computed from percentages
+  // would be a number that no run produced.
+  const totalBefore = emptyFormatTally()
+  const repairTally: RepairTally = { offered: 0, accepted: 0, refused: 0, confessed: 0, unanswered: 0 }
   const misses: SetMiss[] = []
   const samples: BenchSample[] = []
 
   console.log(`\n=== ${def.heading} — ${cases.length} ${def.unit}, ${requiredSetExpectations(cases)} required items, ${scope} ===`)
-  console.log(`${o.constrain ? 'constrained' : 'unconstrained'} · temp ${req.sampling.temperature} · max_tokens ${req.sampling.max_tokens}\n`)
+  console.log(`${o.constrain ? 'constrained' : 'unconstrained'} · temp ${shape.sampling.temperature} · max_tokens ${shape.sampling.max_tokens}\n`)
 
   for (const c of cases) {
     const note = def.document(c)
+    const req = def.request(note)
     for (let run = 0; run < runs; run++) {
       const outcome = await extract({
         systemPrompt: req.prompt,
@@ -423,13 +472,40 @@ const runQuotedSetEval = async <C extends { name: string; class: string; difficu
         label: def.requestLabel,
       })
 
-      const scored = outcome.parsed
+      // The first pass's reading, scored before anything is repaired. This is the number every
+      // result this pack has pinned describes, and it is computed on every run — with the
+      // repair off the two tallies are identical and the report prints one.
+      const firstScored = outcome.parsed
         ? scoreFormatCase(c.name, c.fields, outcome.parsed, note, rules)
+        : scoreFailedFormat(c.name, c.fields)
+      absorbFormat(totalBefore, firstScored.tally)
+
+      // The repair, and the reading it produced. `repairReading` cannot throw and cannot lose
+      // items, so `repair.items` is either an improved reading or the one it was handed.
+      let repair: RepairOutcome | null = null
+      if (def.repair && outcome.parsed) {
+        const items = verifyReading(outcome.parsed, note, rules.quote, rules.derivation)
+        repair = await def.repair(note, items)
+        for (const k of ['offered', 'accepted', 'refused', 'confessed', 'unanswered'] as const) {
+          repairTally[k] += repair.tally[k]
+        }
+      }
+      const reading = repair ? readingFromItems(repair.items) : outcome.parsed
+
+      const scored = reading
+        ? scoreFormatCase(c.name, c.fields, reading, note, rules)
         : scoreFailedFormat(c.name, c.fields)
       absorbFormat(total, scored.tally)
       misses.push(...scored.misses)
       const sample = sampleOf(c.name, outcome)
       if (sample) samples.push(sample)
+      // The repair's own call, sampled under the same case name. Added to the SAME array
+      // rather than reported apart, because the cost block prices what a run of this task
+      // costs — and with `--repair` on, what it costs is both calls. A block announcing "a
+      // SECOND call per transcript" above a token count covering only the first would be
+      // describing half its own cost.
+      const repairSample = repair ? sampleOf(`${c.name} (repair)`, repair) : undefined
+      if (repairSample) samples.push(repairSample)
 
       o.trace.write({
         event: 'case',
@@ -445,14 +521,26 @@ const runQuotedSetEval = async <C extends { name: string; class: string; difficu
         misses: scored.misses,
         cost: sample,
         completion: outcome.raw,
+        ...(repair
+          ? {
+              repair: { tally: repair.tally, why: repair.why, error: repair.error, completion: repair.completion },
+              tallyBeforeRepair: firstScored.tally,
+            }
+          : {}),
       })
 
       const t = scored.tally
       const flag = outcome.parsed ? '' : `  FAILED: ${outcome.error?.slice(0, 80)}`
+      // The repair's own column, per case, so a run where one transcript carried the whole
+      // gain is not reported as a run where the pass worked everywhere.
+      const fixed = repair?.tally.offered
+        ? `  repair ${repair.tally.accepted}/${repair.tally.offered}` +
+          (repair.tally.refused ? ` (${repair.tally.refused} refused)` : '')
+        : ''
       console.log(
         `${c.name.padEnd(22)} ${c.class.padEnd(14)} d${c.difficulty} ` +
           `items ${pct(t.found, t.required)} quote ${pct(t.quotesVerified, t.quotes)} ` +
-          `deriv ${pct(t.derivationsOk, t.derivations)} halluc ${t.hallucinations} dose ${t.doseErrors}${flag}`,
+          `deriv ${pct(t.derivationsOk, t.derivations)} halluc ${t.hallucinations} dose ${t.doseErrors}${fixed}${flag}`,
       )
     }
   }
@@ -493,6 +581,42 @@ const runQuotedSetEval = async <C extends { name: string; class: string; difficu
     `items emitted ${total.items}   hallucinations ${total.hallucinations}   dose errors ${total.doseErrors}   ` +
       `edited-only quote failures (a capital or an accent) ${total.quotesEditedOnly}   failed runs ${total.failedRuns}`,
   )
+
+  // What the second pass was worth, in the same four gates, against the first pass alone.
+  //
+  // Printed as a BLOCK rather than folded into the lines above, and printed whenever a repair
+  // ran even if it changed nothing. Every result this pack has pinned describes one call; a
+  // reader comparing a repaired run with those has to be able to see which half of this run is
+  // comparable, and a summary that quietly reported a two-call number under the same four
+  // headings would make every historical row wrong without editing one of them.
+  if (def.repair) {
+    const b = totalBefore
+    console.log(`\nthe repair pass (a SECOND call per transcript — the numbers above include it):`)
+    console.log(
+      `  ${repairTally.accepted}/${repairTally.offered} failed citations re-cited · ` +
+        `${repairTally.refused} proposed and refused by the verifier · ` +
+        `${repairTally.confessed} the model could not find · ${repairTally.unanswered} unanswered`,
+    )
+    console.log(
+      `  first pass alone:  item recall ${pct(b.found, b.required)}  provenance ${pct(b.quotesVerified, b.quotes)}  ` +
+        `derivation ${pct(b.derivationsOk, b.derivations)}  ` +
+        `not invented ${pct(b.quotesVerified + b.quotesEditedOnly, b.quotes)}`,
+    )
+    console.log(
+      `  with the repair:   item recall ${pct(total.found, total.required)}  provenance ${pct(total.quotesVerified, total.quotes)}  ` +
+        `derivation ${pct(total.derivationsOk, total.derivations)}  ` +
+        `not invented ${pct(unfabricated, total.quotes)}`,
+    )
+    // The refusals are the evidence that the verifier is still the authority here, so they get
+    // a sentence rather than a column when there are any.
+    if (repairTally.refused) {
+      console.log(
+        `  ${repairTally.refused} repair${repairTally.refused === 1 ? ' was' : 's were'} thrown out for not verifying — ` +
+          'those items stand exactly as the first pass left them.',
+      )
+    }
+  }
+
   const bench = reportBench(samples, o.trace, def.task, o.identity)
   if (misses.length) {
     console.log(`\nwhat went wrong (${misses.length}):`)

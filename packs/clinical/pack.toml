@@ -76,7 +76,44 @@ noteFormatCases        = "evals/note-format-cases.json"
 # PROMPT (speech has retractions, dictated punctuation and asides that prose does not) and a
 # CORPUS (transcripts/, reached through the `transcript` documents kind above).
 transcriptPrompt = "prompts/transcript.md"
+# The SAME contract, written in Spanish, chosen by the language of the transcript rather than
+# by a setting. A prompt is instructions in some language, and a small model under pressure
+# answers in the language it was instructed in: the rule that says "the transcript decides"
+# holds while every item is a quote with words deleted, and stops holding the moment the model
+# INVENTS an item, because invented text has no quote to stay in the language of. That is not
+# hypothetical here — see `tr-es-13-control`, where the observed failure is a plan item nobody
+# dictated, arriving in English out of a Spanish consultation.
+#
+# A per-language prompt is therefore not a translation of a document; it is the fallback path
+# made to fail in the right language. Absent this key, a reader falls back to `transcriptPrompt`
+# and behaves exactly as it did before — which is what the two runtimes do for every language
+# that has no file here.
+transcriptPromptEs = "prompts/transcript.es.md"
 transcriptCases  = "evals/transcript-cases.json"
+
+# --- The repair pass: the failed citations of a reading, handed back with the transcript. ---
+# A SECOND contract rather than a second call on the first, because it asks a different
+# question. The transcript task asks what this consultation contained; this one asks where in
+# the recording a specific item came from, having been told that the answer given is not there.
+# Its own schema follows from that — the reply is a list of repairs keyed to items, not a
+# reading — and its own prompt follows from the schema.
+#
+# THIS PASS CERTIFIES NOTHING. Every repair it proposes is re-run through the same
+# [clinical.quoteVerification] and [clinical.textDerivation] rules as the first pass, and a
+# repair that does not verify is discarded with the original item left standing in its original
+# failed state. That is what makes a second turn admissible here at all: the model gets to
+# propose a span and never to bless one, so the pass can raise the number of items a clinician
+# can trust and cannot raise how much of the reading LOOKS trustworthy.
+#
+# Absent these keys a reader runs the first pass alone and behaves exactly as it did before
+# they existed. The repair is a declared part of the contract or it does not happen.
+transcriptRepairPrompt       = "prompts/transcript-repair.md"
+# Per-language, for the reason transcriptPromptEs is: the pass reads a transcript and writes
+# spans copied out of it, and a model instructed in the wrong language starts translating what
+# it copies — the exact failure this pass is supposed to be repairing.
+transcriptRepairPromptEs     = "prompts/transcript-repair.es.md"
+transcriptRepairSchema       = "schemas/transcript-repair.schema.json"
+transcriptRepairSchemaGolden = "schemas/transcript-repair.golden.json"
 
 # The model declaration. Read by the profile for its per-task sampling, and by anyone who
 # wants to reproduce a number: a result quoted without the weights and the cap it ran
@@ -107,6 +144,7 @@ noteFormatSchemaName = "note_format"
 # and a pinned request body are read by: two tasks that produce different numbers should not
 # be indistinguishable in the record of what was sent.
 transcriptSchemaName = "dictated_note"
+transcriptRepairSchemaName = "quote_repair"
 
 # Which task `eval --profile clinical` runs when none is named. `--task all` runs the four,
 # and each clears its own floor: averaging them would let a ceiling on one hide a failure in
@@ -174,6 +212,60 @@ deletionOnly = true
 # because a corpus in two languages should say which two rather than leave a reader to infer
 # it from a score. A pack in another language replaces the list; a pack that omits the table
 # inherits this one and is told so in spec/pack.md.
+# --- Which language a transcript is in, and which prompt that chooses. -----------------
+#
+# OPTIONAL, and optional for the same reason `setMatching` is rather than the reason
+# `quoteVerification` is not. An absent verification rule fakes a passing check; an absent
+# table here fakes nothing — every transcript resolves to `transcriptPrompt` and both
+# runtimes behave exactly as they did before this table existed. A pack that ships one
+# prompt simply omits it.
+#
+# It is HERE, in the pack, and not in either runtime, because two runtimes that detect
+# language separately grade different inputs while appearing to share a contract. The
+# consuming app picks a prompt on this rule and the eval measures the prompt this rule
+# picks, or the numbers describe something adjacent to the product.
+[clinical.languageDetection]
+# Function words, not a model. The two languages are separated by their closed class — the
+# articles, prepositions and pronouns a clinical dictation cannot avoid — and over a
+# paragraph that is not a close call. Deliberately not a detector with an opinion about
+# forty languages: it answers one question, it needs no weights, and it runs on a path
+# where a download would be absurd.
+#
+# Chosen for DISJOINTNESS rather than for frequency, which is why the obvious ones are
+# missing: `no`, `a`, `me` and `son` are words in both languages, and a marker that scores
+# for both sides scores for neither. Compared case- and accent-insensitively, so `está` and
+# `esta` are one marker.
+[clinical.languageDetection.markers]
+es = ["de", "la", "el", "los", "las", "que", "con", "para", "por", "se", "una", "un", "del", "y",
+      "en", "es", "su", "más", "está", "tiene", "desde", "pero", "como", "esta", "señora", "señor"]
+en = ["the", "and", "of", "to", "is", "for", "with", "on", "at", "was", "she", "he", "her", "his",
+      "this", "that", "has", "from", "here", "about", "we", "it", "are", "were", "mrs", "mister"]
+
+[clinical.languageDetection.thresholds]
+# How many marker hits, and how large a lead, before the answer is worth giving. Both are
+# floors under a corpus that clears them by a distance — the closest of this pack's thirteen
+# transcripts wins its language by more than a factor of three. They exist for the input a
+# detector will actually be handed on a bad day: a one-line paste, a recording that captured
+# a cough and a name. Three hits and a 2x lead is roughly "a clause, decisively".
+#
+# Below them the answer is NO ANSWER, and no answer means `transcriptPrompt`. A harness that
+# guessed a language for a fragment would pick a prompt on a coin flip and pin the result.
+minHits = 3
+minRatio = 2
+
+# language -> the FILE KEY of the prompt that language gets. A language absent from this map
+# is not an error and not a missing translation: it is a language whose transcripts take the
+# default prompt, which is what every language did before this table.
+[clinical.languageDetection.transcriptPrompt]
+es = "transcriptPromptEs"
+
+# The same routing for the repair pass, kept as its own table rather than shared with the one
+# above. The two prompts are separate files and a pack may translate one without the other:
+# a pack with a Spanish first pass and no Spanish repair should run the repair in English
+# rather than fail to run it, and a single table would make that state inexpressible.
+[clinical.languageDetection.transcriptRepairPrompt]
+es = "transcriptRepairPromptEs"
+
 [clinical.setMatching]
 negators = ["no", "not", "never", "denies", "denied", "without", "sin", "niega", "ningun", "ninguna", "nunca"]
 

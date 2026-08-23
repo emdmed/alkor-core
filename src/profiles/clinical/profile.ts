@@ -66,7 +66,16 @@ export const PROFILE: ProfileModule = {
       input: ctx.input,
     }
     const task = reviewTask(ctx.options.task)
-    return task === 'transcript' ? reviewTranscript(shared) : reviewVitalSigns(shared)
+    // `--repair` reaches only the transcript task, and reads as unsupported rather than as
+    // ignored anywhere else: a flag that silently does nothing is a flag someone will report a
+    // number under.
+    if (task !== 'transcript') {
+      if (ctx.options.repair) {
+        throw new ProfileError("--repair applies to --task transcript; vital signs has no citation to repair")
+      }
+      return reviewVitalSigns(shared)
+    }
+    return reviewTranscript({ ...shared, repair: Boolean(ctx.options.repair) })
   },
   async runEval(ctx: EvalContext): Promise<EvalVerdict> {
     const pack = ctx.pack!
@@ -102,8 +111,17 @@ export const PROFILE: ProfileModule = {
       runs: Number(ctx.options.runs ?? 1),
       difficulty: ctx.options.difficulty as string | undefined,
       cachePrompt: ctx.options.cachePrompt !== false,
+      // Reaches the transcript eval and is ignored by the other three, which have no citation
+      // to repair. Refused rather than ignored when the run asks for ONLY those tasks: a flag
+      // that silently did nothing is a flag somebody reports a number under.
+      repair: Boolean(ctx.options.repair),
     }
     const tasks = requestedTasks(ctx.options.task, loadSettings(pack).defaultTask)
+    if (shared.repair && !tasks.includes('transcript')) {
+      throw new ProfileError(
+        `--repair applies to the transcript task, which this run does not include (${tasks.join(', ')})`,
+      )
+    }
     const results: TaskResult[] = []
 
     for (const task of tasks) {

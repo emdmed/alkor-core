@@ -550,3 +550,64 @@ Four missed items and four hallucinations remain, unchanged in kind by this fix:
 
 Three of those four are the same shape — the model is reluctant to emit an empty section — and
 that, not language, is where the next prompt change should go.
+
+## The repair pass — 2026-08-23
+
+A second call over the items whose citation failed, added because a real dictation lost a
+correct diagnosis to a reworded quote: the speaker said `con antecedentes de hipertensión` and
+the model cited `tiene antecedentes de hipertensión`. One substituted word, the same clinical
+claim, no span in the transcript — and an item that cannot be shown anchored to anything.
+
+    Qwen3-4B-Q4_K_M   constrained   ctx 32768 · 1 slot · sequential, cache_prompt on
+    temp 0 · transcript max_tokens 2048 · transcript_repair max_tokens 1024
+    13 transcripts · 77 required items · 1 run each · TWO calls per transcript
+
+| gate | with repair | first pass alone | floor | |
+|---|---|---|---|---|
+| item recall | 95% (73/77) | 95% (73/77) | 90% | pass |
+| provenance | 100% (65/65) | 100% (65/65) | 95% | pass |
+| derivation | **98%** (83/85) | 96% (82/85) | 95% | pass |
+| nothing invented | 100% (65/65) | 100% (65/65) | 100% | pass |
+
+3 failed citations offered · 1 re-cited · 1 proposed and refused by the verifier · 1 the model
+could not find. 65 items emitted, 3 hallucinations, 3 dose errors, 0 failed runs. 3889 tokens
+over 16 case-runs — 13 first passes and 3 repairs, because the pass runs only where something
+failed. Median 24.9 s, wall 451.3 s. Two runs, agreeing item for item.
+
+**The floors were NOT moved.** One item of derivation is not evidence for a floor, and a floor
+raised on the strength of a second call would be a floor a single-call run could no longer clear.
+
+### The pass certifies nothing, and that is the whole design
+
+Every repair is re-run through `verifyQuote` and `verifyDerivation` — same functions, same rule,
+no relaxation — and accepted only if STRICTLY BETTER: no check that passed may fail, and at least
+one that failed must pass. A repair that does not verify is discarded, leaving the original item
+in its original failed state. The reply is a list of repairs keyed to item POSITIONS rather than
+a reading, so the pass cannot add, drop or move an item; item recall is identical above for that
+structural reason and not by luck.
+
+### What it tried to get away with on day one
+
+Both failures are recorded because both are more informative than the gain.
+
+Handed three dose failures on the provoking dictation, the pass first returned the items
+**unchanged** — refused correctly, no progress. The prompt had never said a quote may run across
+a sentence boundary, and the doses had been dictated in the next sentence.
+
+Told that it may, the pass then proposed a span **stitched from two real fragments with the words
+between them dropped**: `está medicado con enalapril y amblodipina` joined directly to
+`2.5 miligramos cada 8 horas`, deleting the transcriber's `En alapril` from the middle. It reads
+like a sentence and it was never said. The verifier rejected it. The prompt now states that a
+quote is one unbroken run of the transcript, including the words that look like noise — and on
+that dictation the reading goes to 5/5 quotes and 7/7 derivations.
+
+Recorded because it is the clearest evidence this pack has produced for keeping proposal and
+verdict in different hands: the second pass invented evidence on its first live day, and nothing
+about the reply's shape or plausibility would have caught it.
+
+### What it cannot do
+
+Repair a hallucination. An item nobody dictated has no span to be found, `found: false` is the
+answer the prompt asks for, and the item stays flagged. The one such case in this corpus
+(`tr-en-09`, a negation run filed as history) was confessed rather than cited, which is the
+intended behaviour and not a gap.

@@ -137,7 +137,7 @@ export type DerivationVerdict =
  * quote ends in a comma. Accents are NOT stripped — in a clinical text they distinguish
  * words, and a verifier that ignored them would accept an edit this check exists to catch.
  */
-const words = (s: string): string[] =>
+export const words = (s: string): string[] =>
   s
     .toLowerCase()
     .split(/[^\p{L}\p{N}%.,/°-]+/u)

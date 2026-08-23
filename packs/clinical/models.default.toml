@@ -88,3 +88,14 @@ timeout_secs = 300
 temperature = 0.0
 max_tokens = 2048
 timeout_secs = 300
+
+# --- The repair pass over a dictated reading's failed citations. ---
+# Half the transcript cap. The input is bigger than the transcript task's — the whole
+# transcript AGAIN, plus the items that failed — but the OUTPUT is a handful of spans copied
+# off a page, not a reading, and it is bounded by how many items failed rather than by how much
+# the consultation contained. A cap sized for a full reading would be a cap that never binds,
+# which is a cap that stops reporting anything about the pass it governs.
+[sampling.transcript_repair]
+temperature = 0.0
+max_tokens = 1024
+timeout_secs = 300

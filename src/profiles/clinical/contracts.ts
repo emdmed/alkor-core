@@ -54,6 +54,15 @@ export const SAMPLING_KEY: Record<Task, string> = {
 }
 
 /**
+ * The `[sampling.*]` key the repair pass reads.
+ *
+ * NOT in the map above, because the repair is not a task: nothing invokes it by name, it has
+ * no corpus of its own and it produces no score of its own. It is a second call inside the
+ * transcript task, and adding it to `TASKS` would put a word in `--task` that nobody can run.
+ */
+export const REPAIR_SAMPLING_KEY = 'transcript_repair'
+
+/**
  * Which `documents` kind a task's input comes from — the manifest table added in spec 3.
  *
  * Three tasks read written notes and one reads dictated transcripts, and the two corpora are
@@ -89,6 +98,13 @@ export interface ClinicalSettings {
    * useless for saying which of them produced a completion.
    */
   transcriptSchemaName: string
+  /**
+   * `json_schema.name` for the repair pass. OPTIONAL, and its absence is how a pack says it
+   * has no repair contract: `repairRequest` refuses to assemble without it rather than
+   * defaulting, because a label the two runtimes disagree about is a pinned body they
+   * disagree about, for no reason a reader could ever find.
+   */
+  transcriptRepairSchemaName?: string
   quoteVerification: QuoteRule
   textDerivation: DerivationRule
   summaryAssembly: AssemblyRule
@@ -108,6 +124,28 @@ export interface ClinicalSettings {
    * see DEFAULT_NEGATORS in set-scorer.ts, where the whole argument lives.
    */
   setMatching?: SetMatchRule
+  /**
+   * Which language a transcript is in, and which prompt file key that chooses.
+   *
+   * OPTIONAL, for the reason `setMatching` is optional rather than the reason
+   * `quoteVerification` is not: an absent table fakes no check. Every transcript resolves to
+   * `transcriptPrompt` and this harness measures exactly what it measured before.
+   */
+  languageDetection?: LanguageDetection
+}
+
+/** The detector, as the pack states it. See `[clinical.languageDetection]` in pack.toml. */
+export interface LanguageDetection {
+  markers: Record<string, string[]>
+  thresholds: { minHits: number; minRatio: number }
+  /** language -> the FILE KEY of the prompt that language gets. */
+  transcriptPrompt: Record<string, string>
+  /**
+   * The same, for the repair pass. Its own map rather than a reuse of the one above: the two
+   * prompts are separate files, and a pack that has translated the first pass but not the
+   * repair should run the repair in the default language rather than not run it at all.
+   */
+  transcriptRepairPrompt?: Record<string, string>
 }
 
 export const loadSettings = (pack: Pack): ClinicalSettings => {
@@ -149,6 +187,49 @@ export const loadSettings = (pack: Pack): ClinicalSettings => {
               `\n  set 'spec = ${SPEC_VERSION}' in pack.toml once the keys above are present`
             : ''),
       )
+    }
+  }
+  // A pack that DECLARES the table must fill it — the same argument as `setMatching` below.
+  // Two marker sets that OVERLAP are the specific typo worth refusing: a word that scores for
+  // both sides scores for neither, so the ratio it feeds is measuring nothing, and the
+  // detector goes on answering.
+  if (s.languageDetection) {
+    const d = s.languageDetection
+    const langs = Object.keys(d.markers ?? {})
+    if (langs.length < 2) {
+      throw new Error(
+        `pack '${pack.name}': [clinical.languageDetection.markers] declares ${langs.length} language(s) — ` +
+          'a detector needs at least two sides to have a lead over, or omit the table',
+      )
+    }
+    if (!(d.thresholds && typeof d.thresholds.minHits === 'number' && typeof d.thresholds.minRatio === 'number')) {
+      throw new Error(
+        `pack '${pack.name}': [clinical.languageDetection.thresholds] must state minHits and minRatio — ` +
+          'a detector with no floor calls a two-word fragment for whichever side it grazed',
+      )
+    }
+    for (const [a, b] of langs.flatMap((a, i) => langs.slice(i + 1).map((b) => [a, b] as const))) {
+      const bs = (d.markers[b] ?? []).map(foldMarker)
+      const overlap = (d.markers[a] ?? []).map(foldMarker).filter((w) => bs.includes(w))
+      if (overlap.length) {
+        throw new Error(
+          `pack '${pack.name}': [clinical.languageDetection.markers] '${a}' and '${b}' share ` +
+            `${overlap.map((w) => `'${w}'`).join(', ')} — a marker that scores for both sides scores for neither`,
+        )
+      }
+    }
+    // Both prompt maps, by the same rule and with the same message: a table naming a language
+    // the markers cannot produce is a translation that will never be read, and it is worth
+    // more as a load error than as a file nobody notices going unused.
+    for (const table of ['transcriptPrompt', 'transcriptRepairPrompt'] as const) {
+      for (const [lang, key] of Object.entries(d[table] ?? {})) {
+        if (!langs.includes(lang)) {
+          throw new Error(
+            `pack '${pack.name}': [clinical.languageDetection.${table}] names language '${lang}', ` +
+              `which has no markers — the detector can never return it, so the prompt at '${key}' would never be read`,
+          )
+        }
+      }
     }
   }
   // A pack that DECLARES the table must fill it. An empty `negators` is not a language with no
@@ -264,12 +345,100 @@ export const formatRequest = (pack: Pack, constrain: boolean): TaskRequest => ({
  * a second statement of one contract, free to drift in property order, which is the one part
  * of it that is compiled into a grammar.
  */
-export const transcriptRequest = (pack: Pack, constrain: boolean): TaskRequest => ({
-  prompt: transcriptPrompt(pack),
+export const transcriptRequest = (pack: Pack, constrain: boolean, transcript?: string): TaskRequest => ({
+  prompt: transcriptPrompt(pack, transcript),
   schema: constrain ? formatSchema(pack) : undefined,
   schemaName: loadSettings(pack).transcriptSchemaName,
   sampling: loadSampling(pack, SAMPLING_KEY.transcript),
 })
+
+export const repairSchema = (pack: Pack): object => pack.json<object>('transcriptRepairSchema')
+export const repairSchemaGolden = (pack: Pack): string => pack.read('transcriptRepairSchemaGolden')
+
+/**
+ * Whether this pack declares the repair pass at all.
+ *
+ * All four keys, not one: a pack half-way through gaining the contract — prompt committed,
+ * schema not — would otherwise pass this check and fail at assembly, in the middle of a run,
+ * on a transcript. Reported as "no repair" instead, which is a state every caller already
+ * handles because it is the state every pack was in before the contract existed.
+ */
+export const hasRepairContract = (pack: Pack): boolean =>
+  pack.has('transcriptRepairPrompt') &&
+  pack.has('transcriptRepairSchema') &&
+  pack.has('transcriptRepairSchemaGolden') &&
+  Boolean(loadSettings(pack).transcriptRepairSchemaName)
+
+/**
+ * The repair pass: the failed items of a reading, handed back with the transcript.
+ *
+ * Assembled here beside the pass it corrects, and by the same rule as everything else in this
+ * file — one assembly, both callers. The eval measures the repair and the review runs it, and
+ * a repair whose prompt or cap differed between those two would be a second pass the numbers
+ * do not describe, which is the specific objection src/core/profile.ts raises against second
+ * passes. Meeting it is the point: the repair is measured or it does not run.
+ *
+ * `constrain` is honoured rather than assumed. An unconstrained arm exists to measure what the
+ * grammar is worth, and a repair that quietly forced a schema would make that arm report a
+ * number about a run nobody can reproduce without it.
+ */
+export const repairRequest = (pack: Pack, constrain: boolean, transcript?: string): TaskRequest => {
+  const name = loadSettings(pack).transcriptRepairSchemaName
+  if (!name) {
+    throw new ProfileError(
+      `pack '${pack.name}' declares repair prompts but no transcriptRepairSchemaName — ` +
+        'the label is part of the request body, and two runtimes that guess it differently ' +
+        'pin different bytes for the same contract',
+    )
+  }
+  return {
+    prompt: transcriptRepairPrompt(pack, transcript),
+    schema: constrain ? repairSchema(pack) : undefined,
+    schemaName: name,
+    sampling: loadSampling(pack, REPAIR_SAMPLING_KEY),
+  }
+}
+
+/** Lower-case and drop combining marks, so `está` and `esta` are one marker. */
+const foldMarker = (s: string): string => s.normalize('NFD').replace(/\p{Mn}/gu, '').toLowerCase()
+
+/**
+ * The language of a transcript, or `null` when it is too short or too mixed to call.
+ *
+ * `null` is a real answer and the caller falls back to the default prompt rather than to a
+ * guess: a harness that named a language for a two-word fragment would pick a prompt on a coin
+ * flip and then pin the completion it produced.
+ *
+ * The markers and the floors come from the PACK, not from this file, because the consuming
+ * application detects too — and two runtimes that detect separately grade different inputs
+ * while appearing to share a contract.
+ */
+export const detectLanguage = (pack: Pack, text: string): string | null => {
+  const d = loadSettings(pack).languageDetection
+  if (!d) return null
+
+  const hits: Record<string, number> = {}
+  const folded = new Map<string, string[]>()
+  for (const [lang, words] of Object.entries(d.markers)) {
+    hits[lang] = 0
+    folded.set(lang, words.map(foldMarker))
+  }
+  for (const raw of text.split(/[^\p{L}\p{N}]+/u)) {
+    if (!raw) continue
+    const w = foldMarker(raw)
+    // A word can only score once per side, and the sides are disjoint by construction (the
+    // loader refuses an overlap), so this is a plain count rather than a first-match chain.
+    for (const [lang, words] of folded) if (words.includes(w)) hits[lang] = (hits[lang] ?? 0) + 1
+  }
+
+  const ranked = Object.entries(hits).sort((a, b) => b[1] - a[1])
+  const top = ranked[0]
+  if (!top) return null
+  const [lang, hi] = top
+  const lo = ranked[1]?.[1] ?? 0
+  if (hi < d.thresholds.minHits || hi < Math.max(lo, 1) * d.thresholds.minRatio) return null
+  return lang
+}
 
 /**
  * The gradeable slots, in SCHEMA order — which is the order the grammar makes the model
@@ -577,7 +746,52 @@ export interface TranscriptCases extends QuotedSetCases {
   cases: TranscriptCase[]
 }
 
-export const transcriptPrompt = (pack: Pack): string => pack.read('transcriptPrompt')
+/**
+ * The transcript prompt, chosen by the language of the transcript itself.
+ *
+ * A prompt is instructions in some language, and a small model under pressure answers in the
+ * language it was instructed in. The rule "the transcript decides the language" holds while
+ * every item is a quote with words DELETED — and stops holding the moment the model invents an
+ * item, because invented text has no quote to stay in the language of. `tr-es-13-control` is
+ * that case: the observed failure is a plan item nobody dictated, arriving in English out of a
+ * Spanish consultation.
+ *
+ * With no transcript, or no language the pack has a prompt for, this is what it always was.
+ */
+export const transcriptPrompt = (pack: Pack, transcript?: string): string =>
+  promptForLanguage(pack, 'transcriptPrompt', transcript)
+
+/**
+ * The repair prompt, chosen by the same detector over the same transcript.
+ *
+ * Deliberately routed by the TRANSCRIPT and not by the language of the first pass's output.
+ * The reading being repaired may be in the wrong language — that is one of the failures this
+ * pack has measured — and routing off it would send the repair after a translation in the
+ * language of the translation, which is the one way to make the fault permanent.
+ */
+export const transcriptRepairPrompt = (pack: Pack, transcript?: string): string =>
+  promptForLanguage(pack, 'transcriptRepairPrompt', transcript)
+
+/**
+ * A prompt file key, resolved through the language table that names it.
+ *
+ * `defaultKey` is both the fallback and the name of the table: the pack keys its per-language
+ * variants under the same word the default file is filed under, so one string answers "which
+ * table" and "what if it says nothing", and the two cannot be wired to disagree.
+ */
+const promptForLanguage = (
+  pack: Pack,
+  defaultKey: 'transcriptPrompt' | 'transcriptRepairPrompt',
+  transcript?: string,
+): string => {
+  const byLang = loadSettings(pack).languageDetection?.[defaultKey]
+  if (!byLang || transcript === undefined) return pack.read(defaultKey)
+  const lang = detectLanguage(pack, transcript)
+  const key = lang ? byLang[lang] : undefined
+  // `has` rather than a bare read: a language table may name a key whose file a pack ships
+  // without, and falling back is the behaviour the table's comment promises.
+  return pack.read(key && pack.has(key) ? key : defaultKey)
+}
 
 export const loadTranscriptCases = (pack: Pack): TranscriptCases => {
   const raw = pack.json<TranscriptCases>('transcriptCases')

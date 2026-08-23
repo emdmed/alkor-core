@@ -3,7 +3,7 @@
  * Harness CLI.
  *
  *   node src/cli.ts extract --profile NAME (--note FILE | --case NAME | -) [--task NAME] [--constrain] [--json]
- *   node src/cli.ts eval    --profile NAME [--runs N] [--constrain] [--difficulty N|N-M] [--no-cache-prompt] [--url URL] [--pack DIR]
+ *   node src/cli.ts eval    --profile NAME [--runs N] [--constrain] [--repair] [--difficulty N|N-M] [--no-cache-prompt] [--url URL] [--pack DIR]
  *   node src/cli.ts eval    --profile NAME --from-trace FILE [--strip-fences]
  *   node src/cli.ts agent   --profile NAME --task "..." --workspace DIR [--url URL] [--steps N]
  *   node src/cli.ts profiles
@@ -47,6 +47,11 @@ const { values } = parseArgs({
     // Re-score a recorded run instead of producing a new one. No server is contacted.
     'from-trace': { type: 'string' },
     'strip-fences': { type: 'boolean', default: false },
+    // The second pass over the items whose citation failed. Opt-in on both verbs, because
+    // every number this harness has pinned describes one pass: a repair that ran by default
+    // would make the old results incomparable with the new ones without anyone typing
+    // anything. See src/profiles/clinical/repair.ts.
+    repair: { type: 'boolean', default: false },
     json: { type: 'boolean', default: false },
   },
 })
@@ -54,8 +59,8 @@ const { values } = parseArgs({
 const usage = (msg?: string) => {
   if (msg) console.error(`${msg}\n`)
   console.error('usage:')
-  console.error('  node src/cli.ts extract --profile NAME (--note FILE | --case NAME | --note -) [--task NAME] [--constrain] [--json] [--url URL] [--pack DIR]')
-  console.error('  node src/cli.ts eval    --profile NAME [--runs N] [--constrain] [--task NAME] [--difficulty N|N-M] [--no-cache-prompt] [--url URL] [--pack DIR]')
+  console.error('  node src/cli.ts extract --profile NAME (--note FILE | --case NAME | --note -) [--task NAME] [--constrain] [--repair] [--json] [--url URL] [--pack DIR]')
+  console.error('  node src/cli.ts eval    --profile NAME [--runs N] [--constrain] [--task NAME] [--repair] [--difficulty N|N-M] [--no-cache-prompt] [--url URL] [--pack DIR]')
   console.error('  node src/cli.ts eval    --profile NAME --from-trace FILE [--strip-fences] [--pack DIR]   (re-score a recorded run, no server)')
   console.error('  node src/cli.ts agent   --profile NAME --task "..." --workspace DIR [--url URL] [--steps N]')
   console.error('  node src/cli.ts profiles')
@@ -160,7 +165,7 @@ if (command === 'extract') {
     // `--task` selects the contract, for a profile whose pack holds more than one. A profile
     // that reads a single contract ignores it, which is why it is passed unconditionally
     // rather than being made conditional on something this file would have to know.
-    options: { constrain: values.constrain, task: values.task },
+    options: { constrain: values.constrain, task: values.task, repair: values.repair },
   })
   trace.close()
 
@@ -239,6 +244,7 @@ try {
       cachePrompt: !values['no-cache-prompt'],
       fromTrace: values['from-trace'],
       stripFences: values['strip-fences'],
+      repair: values.repair,
     },
   })
 } catch (e) {
