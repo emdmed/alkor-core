@@ -229,6 +229,74 @@
         { "field": "presenting_complaint", "expect": { "kind": "absent", "match": [["health"], ["hypertension"]] } },
         { "field": "current_medication", "expect": { "kind": "absent", "match": [["amblodipina", "laperil"]] } }
       ]
+    },
+    {
+      "name": "tr-es-14-polimedicado",
+      "class": "dictation-order",
+      "difficulty": 5,
+      "note": "Six drugs enumerated in ONE run with no pause between a dose and the next name, which is how a medication list is actually dictated and is the case the Spanish half lacked. What it discriminates is dose-to-drug binding under speed: every drug here has a different dose, so a model that slips by one pairs enalapril with atorvastatina's 40 mg and the error is invisible in the prose. The trailing 'la furosemida se la subimos el mes pasado' is a second mention that must not become a seventh drug.",
+      "fields": [
+        { "field": "history", "expect": { "kind": "present", "match": [["diabetes"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["gota"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["insuficiencia", "cardiaca"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["metformina"]], "dose": [["850 mg"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["enalapril"]], "dose": [["20 mg"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["atorvastatina"]], "dose": [["40 mg"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["omeprazol"]], "dose": [["20 mg"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["alopurinol"]], "dose": [["100 mg"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["furosemida"]], "dose": [["40 mg"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["funcion", "renal"], ["analitica"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["tres", "meses"]] } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["metformina", "enalapril", "atorvastatina", "omeprazol", "alopurinol", "furosemida"]] } }
+      ]
+    },
+    {
+      "name": "tr-es-15-alergias",
+      "class": "negation",
+      "difficulty": 5,
+      "note": "The Spanish negation case, and harder than its English counterpart because the three exclusions are of three DIFFERENT kinds: amoxicilina is an allergy, ibuprofeno is a drug stopped a year ago, and only azitromicina and paracetamol are prescribed today. A model that reads 'amoxicilina no' as a medication line puts a stated allergen on the list of a patient the transcript says reacted to it. 'amoxicilina' is said twice, which is the trap: repetition reads as emphasis and emphasis reads as importance.",
+      "fields": [
+        { "field": "presenting_complaint", "expect": { "kind": "present", "match": [["odinofagia"], ["fiebre"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["rinitis", "alergica"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["amoxicilina"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["azitromicina"]], "dose": [["500 mg"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["paracetamol"]], "dose": [["1 g"]] } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["amoxicilina"]] } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["ibuprofeno"]] } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["azitromicina", "paracetamol"]] } }
+      ]
+    },
+    {
+      "name": "tr-es-16-dosis",
+      "class": "self-correction",
+      "difficulty": 4,
+      "note": "A dose retracted inside its own unit — '50 microgramos perdon en 75 microgramos' — where both numbers are quotable and adjacent, so taking the first is a deletion of the transcript exactly as taking the last is. It is the microgram case the Spanish half lacked, and the unit is the point: levotiroxina is dosed in micrograms and metformina in milligrams in the same dictation, so a model that normalises units has changed a dose by a thousand. 'insulina glargina' is the second axis: one drug whose name is two words. The two conditions are expected in presenting_complaint rather than history: this transcript states them as the reason for attendance ('acude para control de') and carries no 'antecedentes' marker, which is the cue tr-es-10 uses to separate the two.",
+      "fields": [
+        { "field": "presenting_complaint", "expect": { "kind": "present", "match": [["hipotiroidismo"]] } },
+        { "field": "presenting_complaint", "expect": { "kind": "present", "match": [["diabetes"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["levotiroxina"]], "dose": [["75 microgramos"], ["75 mcg"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["metformina"]], "dose": [["850 mg"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["insulina", "glargina"]], "dose": [["10 unidades"]] } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["50 microgramos"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["perfil", "tiroideo"], ["glicosilada"]] } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["levotiroxina", "metformina", "insulina glargina"]] } }
+      ]
+    },
+    {
+      "name": "tr-es-17-acompanante",
+      "class": "third-party",
+      "difficulty": 5,
+      "note": "Three speakers in one dictation: the clinician, the daughter, and the patient — and the daughter is quoting a FOURTH person, a neighbour, about risperidona the patient has never taken. That is one hop further than the English third-party case, which has a relative speaking for themselves. The daughter's observation is expected in history, not presenting_complaint: it is collateral cognitive history, and tr-en-07 sets the convention that presenting_complaint is the patient's own symptom. What this case discriminates is that her observation is KEPT while her neighbour's risperidona is dropped — both arrive in the same voice.",
+      "fields": [
+        { "field": "history", "expect": { "kind": "present", "match": [["desorientada"], ["olvidan"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["sertralina"]], "dose": [["50 mg"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["lorazepam"]], "dose": [["1 mg"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["donepezilo"]], "dose": [["5 mg"]] } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["risperidona"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["neurologia"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["dos", "meses"]] } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["sertralina", "lorazepam", "donepezilo"]] } }
+      ]
     }
   ]
 }

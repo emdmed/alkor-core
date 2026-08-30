@@ -291,8 +291,8 @@ test('the transcript task sends the note-format contract under its own label', (
 })
 
 test('the transcript corpus spans the tiers and states its floors', () => {
-  assert.equal(transcript.cases.length, 13)
-  assert.equal(requiredSetExpectations(transcript.cases), 77)
+  assert.equal(transcript.cases.length, 17)
+  assert.equal(requiredSetExpectations(transcript.cases), 105)
   // Not all hard. Without an easy dictation the tier distribution collapses to 3-5 and a
   // prompt change that helps only the well-behaved speaker is invisible.
   const tiers = new Set(transcript.cases.map((c) => c.difficulty))
@@ -300,7 +300,7 @@ test('the transcript corpus spans the tiers and states its floors', () => {
   // The axis with no analogue in the note corpus, in both languages: a speaker who retracts
   // what they just said. If these cases go, the task is note formatting with worse input.
   const corrections = transcript.cases.filter((c) => c.class === 'self-correction')
-  assert.equal(corrections.length, 2)
+  assert.equal(corrections.length, 3)
   assert.deepEqual([...new Set(corrections.map((c) => c.name.slice(0, 5)))].sort(), ['tr-en', 'tr-es'])
   // MEASURED floors, set 2026-08-22 from two agreeing runs of the declared weights over all
   // thirteen transcripts — 95% recall, 100% provenance, 99% derivation — each sitting a few
