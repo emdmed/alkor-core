@@ -136,6 +136,23 @@ transcriptRepairPromptEs     = "prompts/transcript-repair.es.md"
 transcriptRepairSchema       = "schemas/transcript-repair.schema.json"
 transcriptRepairSchemaGolden = "schemas/transcript-repair.golden.json"
 
+# --- The literature pass: a finished note in, the concepts worth looking up out. ------
+# NOT GRADED BY THIS PACK, and that is stated here rather than left to be discovered. There is
+# no `literatureCases` key and no answer key, because "was that the right thing to search for"
+# is a judgement this corpus has no way to settle: the reply is not a set of facts recoverable
+# from the document, it is an editorial choice about what a clinician would want to read. The
+# contract lives here anyway, for the reason every prompt in this file does — a consuming
+# application that wrote its own prompt would be shipping instructions nobody could inspect,
+# and the eval could not grade this task later without first taking it back off them.
+#
+# What IS checkable travels with the reply and is checked by the application: every topic
+# carries a `source` copied out of the note, verified by literal search under
+# [clinical.quoteVerification] exactly as a note item's quote is. A topic whose source is not
+# in the note is discarded before anything leaves the machine.
+literaturePrompt       = "prompts/literature.md"
+literatureSchema       = "schemas/literature.schema.json"
+literatureSchemaGolden = "schemas/literature.golden.json"
+
 # The model declaration. Read by the profile for its per-task sampling, and by anyone who
 # wants to reproduce a number: a result quoted without the weights and the cap it ran
 # under is not reproducible.
@@ -166,6 +183,9 @@ noteFormatSchemaName = "note_format"
 # be indistinguishable in the record of what was sent.
 transcriptSchemaName = "dictated_note"
 transcriptRepairSchemaName = "quote_repair"
+# The literature pass. Its own label like every other task, so a server log and a pinned body
+# can tell which contract produced which bytes.
+literatureSchemaName = "literature_search"
 
 # Which task `eval --profile clinical` runs when none is named. `--task all` runs the four,
 # and each clears its own floor: averaging them would let a ceiling on one hide a failure in

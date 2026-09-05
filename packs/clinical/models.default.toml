@@ -109,3 +109,17 @@ timeout_secs = 900
 temperature = 0.0
 max_tokens = 1024
 timeout_secs = 300
+
+# --- The literature pass over a finished note. ---
+# The smallest output in the pack: three short objects, no quotes longer than a line. 512 is
+# several times a maximal legal reply, which is the same ratio vital signs runs at — a cap that
+# cannot bind on a good answer, and a backstop against a model that starts writing prose.
+#
+# The INPUT is the note rather than the transcript, which is why the deadline is the short one:
+# a written note is a fraction of the speech it came from, and this pass follows two calls the
+# clinician has already waited through. A third long wait for a panel nobody asked for would be
+# the feature paying for itself out of the wrong pocket.
+[sampling.literature]
+temperature = 0.0
+max_tokens = 512
+timeout_secs = 120
