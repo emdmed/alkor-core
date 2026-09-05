@@ -611,3 +611,330 @@ Repair a hallucination. An item nobody dictated has no span to be found, `found:
 answer the prompt asks for, and the item stays flagged. The one such case in this corpus
 (`tr-en-09`, a negation run filed as history) was confessed rather than cited, which is the
 intended behaviour and not a gap.
+
+## Doctor–patient dialogue — 2026-09-04
+
+Three consultation transcripts added to the transcript task: `tr-en-18-dialogue`,
+`tr-en-19-dialogue-correction`, `tr-es-20-dialogo`. Two speakers with labelled turns
+(`dr:` / `pt:`), against the **unchanged** dictation prompt — the point was to find out what
+a prompt written for one voice does with two.
+
+Qwen3-4B-Q4_K_M.official.gguf, constrained, temp 0, `-ngl 99 --parallel 1`, 20 transcripts /
+131 required items. The server would not report its model on this run, so the weights are named
+from the command line rather than from the server.
+
+| | |
+|---|---|
+| item recall | 94% (123/131) — floor 90%, **pass** |
+| provenance | 99% (135/136) — floor 95%, pass |
+| derivation | 94% (169/179) — floor 95%, **FAIL** |
+| not invented | 99% (135/136) — floor 100%, **FAIL** |
+
+**FAIL**, on derivation and on the fabrication floor. The seventeen dictations were previously
+99% derivation; the three dialogues contribute six of the ten derivation failures and the single
+invented span, so the red is theirs. Recall did not move much — the items are found. What breaks
+is the relationship between an item and the span it cites.
+
+### The dose is corrected by the other speaker, and the model takes the doctor's
+
+`tr-en-19` is the case these were written for. The clinician states `metformin 1 g twice daily`
+and the patient contradicts them — `no doctor it's 500 twice a day i never went up` — after which
+the clinician restates `metformin 500 mg twice daily`. Both numbers are in the transcript and both
+are quotable, so a citation verifies either way.
+
+The model emitted **1 g twice daily**. `prompts/transcript.md` states the correction rule as *the
+speaker's last word is the only word*, which is a rule about one speaker: it has nothing to say
+about a fact withdrawn by somebody else, and the transcript's own last word on the dose is a
+turn the model did not treat as a correction at all. Where a dictation's retraction is marked
+(`sorry`, `actually`, `scratch that`), a dialogue's is marked only by who is talking.
+
+### A dialogue is not a note, and the model listed it instead of sorting it
+
+The same case emitted 23 quotes and 28 derived fields where a dictation of that length produces
+six. Its `history` is the conversation, turn by turn, `text` being the turn with `dr:` deleted:
+`you stopped it altogether`, `and the ramipril`, `ten in november`. Nothing is invented and every
+quote verifies — the failure is that the four sections were used as a transcript viewer. The
+derivation failures follow from it rather than causing it.
+
+### A fact split across two turns has no span to cite
+
+`tr-es-20`: the drug is in the clinician's turn (`y el paracetamol`) and the dose is in the
+patient's reply (`1 g cuando me duele mucho tres veces al día como mucho`). No contiguous run of
+the transcript contains both, so the model spliced them — `paracetamol 1 g cuando me duele mucho
+tres veces al día como mucho`, which was never said, and which the verifier rejected. This is
+the fabrication that costs the 100% floor, and it is the same splice the repair pass produced on
+its first live day for the same reason: a quote is one unbroken run, and dialogue routinely puts
+one clinical fact across a turn boundary. In a dictation it almost never does.
+
+`tr-en-18` shows the benign version of the same pressure: `smoking` and `blood pressure
+treatment` as history items, each derived from a quote that does not contain the word. The fact
+is right and the citation is not, which is exactly the axis deletion-only derivation exists for.
+
+### What this does not say
+
+Nothing here is evidence about the weights. Three cases were added to a corpus whose floors were
+measured on the other seventeen, and the prompt they ran under names a dictation in its first
+line. The result is a measurement of the *contract* over an input it was not written for, which
+is what it was run to obtain.
+
+### 2026-09-04, later — a dialogue-aware prompt, and it moved three things and not the two it was for
+
+`prompts/transcript.md` and `prompts/transcript.es.md` gained a two-speaker section: a turn is not
+an item, a question is not an assertion, the correction rule holds across speakers, a speaker
+label is markup, and a fact split across two turns is quoted as the unbroken run that spans both
+turns *including the label between them*. Same weights, same corpus, same flags.
+
+| | before | after | |
+|---|---|---|---|
+| item recall | 94% (123/131) | **91% (119/131)** | floor 90%, still passes |
+| provenance | 99% (135/136) | 99% (140/141) | floor 95%, passes |
+| derivation | 94% (169/179) | **95% (182/191)** | floor 95%, **was red, now passes** |
+| not invented | 99% (135/136) | 99% (140/141) | floor 100%, **still red** |
+| hallucinations | 5 | 2 | |
+
+Still FAIL, on one axis instead of two. What the prompt bought was **caution**: three fewer
+inventions, the derivation gate recovered, and two dictations that had been leaking
+(`tr-es-10` 86→100%, `tr-en-12` 88→100%) came right. What it cost was **recall**, and not only on
+the dialogues — `tr-en-02` fell 83→67% and `tr-en-08` 86→71%, both dictations that the rule *a
+turn is not an item* has no business touching. A prompt is not a patch; adding a paragraph about
+one input shape moved the model's threshold for calling anything an item at all.
+
+Neither of the two failures the section was written for was fixed.
+
+**The dose is still the clinician's.** `tr-en-19` came back with `metformin`, `1 g twice daily` —
+the value the patient contradicts in the next turn. The rule now states the case almost verbatim
+and the model did not apply it.
+
+**The splice survived, in both languages.** `tr-es-20` again cited `paracetamol 1 g cuando me
+duele mucho tres veces al día como mucho`, a sentence made of two turns with the `pt:` label
+dropped from the middle — the exact string the new section forbids and shows the fix for. The
+Spanish prompt carries the same worked example. The fabrication floor is still red for this one
+item, as it was before the change.
+
+#### The dialogue case degenerated into a repetition loop
+
+`tr-en-19` scored 56% recall, its worst result, and the trace says why: `history` is fifteen
+identical items — `{"quote": "you're on metformin 1 g twice daily now", "text": "metformin 1 g
+twice daily"}` repeated to the array's `maxItems`, and `current_medication` the same. 33 quotes
+and 48 derived fields on one transcript, against six on a comparable dictation, every one of them
+verifying. The thyroid, the ramipril and the levothyroxine that follow in the transcript are
+simply never reached: the model spends the array on one turn.
+
+This is the failure `README.md` describes from the other end — a grammar blocks EOS while an array
+is open, so the model cannot stop mid-array and something has to bound it. Here `maxItems: 15` is
+what did, and `uniqueItems` did not, exactly as `note-format.schema.json`'s own caveat predicts:
+it compares whole item objects, and fifteen byte-identical objects ought to violate it, but
+llama.cpp's grammar does not enforce `uniqueItems` at all — the keyword is documentation, not a
+constraint. **A duplicate-free array is a claim this pack cannot make with a schema.**
+
+It also explains the run before this one. `tr-en-19` was killed at the pack's 300s deadline and
+scored 0/9, which read as a slow machine; it was this loop, generating duplicates until something
+stopped it. The deadline is now 900s (`[sampling.transcript]`), which is the right change for a
+different reason — a backstop that binds on a legitimate answer is not a backstop — and it does
+not make the loop a good answer. It makes it a visible one.
+
+#### What to do next, and what not to
+
+Not another paragraph in this prompt. Two edits in two days moved recall three points down and
+derivation one point up, and the second one did not touch either failure it named, which is what
+prompt-fitting looks like from inside. The two open defects are structural rather than
+instructional: a fact whose authority depends on **who is speaking**, and an item whose evidence
+spans a turn boundary. A second prompt for dialogue — routed by the same
+`[clinical.languageDetection]` machinery that routes the Spanish one, on a marker as cheap as the
+presence of turn labels — would let the dictations stop paying for rules written about speech they
+do not contain. That is a pack change with a measurement attached, and it should be made against
+these numbers rather than in place of them.
+
+### 2026-09-05 — a separate dialogue prompt, routed by shape, and the two structural defects close
+
+The two-speaker rules were taken back OUT of `prompts/transcript.md` and
+`prompts/transcript.es.md` and written as their own contract — `prompts/dialogue.md` and
+`prompts/dialogue.es.md` — reached through a new `[clinical.dialogueDetection]` table that counts
+labelled turns, with `[clinical.languageDetection.dialoguePrompt]` choosing the language. Shape is
+asked first, language second; anything the detector cannot call takes the dictation prompt, which
+is what this task has always done.
+
+| | dictation prompt | + dialogue section | **routed prompt** | |
+|---|---|---|---|---|
+| item recall | 94% (123/131) | 91% (119/131) | **92% (121/131)** | floor 90%, passes |
+| provenance | 99% (135/136) | 99% (140/141) | **99% (122/123)** | floor 95%, passes |
+| derivation | 94% (169/179) | 95% (182/191) | **92% (151/164)** | floor 95%, **red** |
+| not invented | 99% | 99% | **99% (122/123)** | floor 100%, **red** |
+
+Still FAIL, on the same two axes as the first run. The gates did not move and three specific
+things did.
+
+**The seventeen dictations are back, item for item.** `tr-en-02` 83%, `tr-en-08` 86%, `tr-en-12`
+88% — the exact figures they scored before any of this started. That is the whole argument for
+routing rather than editing: the regression the shared prompt caused was not a tradeoff anybody
+chose, and separating the files gave it back without costing the dialogues anything.
+
+**The cross-speaker correction works.** `tr-en-19`'s medication list is now completely right:
+`metformin` / `500 twice a day` — the patient's contradiction, not the clinician's `1 g` — plus
+the `ramipril` and `levothyroxine` that the repetition loop had eaten. Two runs ago this case
+returned the wrong dose and two of its three drugs were never reached.
+
+**The turn-spanning quote works, and it is the mechanism that fixed the dose.** All three of that
+case's medication items cite across a turn boundary with the label left in:
+`"you're on metformin 1 g twice daily now pt: no doctor it's 500 twice a day i never went up"`.
+The evidence for 500 is the clinician's claim and the patient's correction inside one span, which
+is what the fact actually is. `tr-es-20`'s paracetamol splice — the invented span that cost the
+fabrication floor twice — is gone: 100% provenance on that case.
+
+**The repetition loop is gone.** No section is padded to `maxItems` in any of the three dialogues.
+
+#### What is red now is not what was red before
+
+The single fabrication is a NEW one, and it is a near miss on the mechanism above:
+`tr-en-19` wrote `"and you're on metformin…"` for a turn that begins `"you're on metformin…"`. One
+word prepended to an otherwise perfect turn-spanning quote. The model reached for the right span
+and copied it imperfectly, which is a smaller failure than the splice it replaced and it fails
+the same 100% floor, exactly as it should.
+
+Derivation fell to 92%, and almost all of it is one case. `tr-en-18` emitted a single medication
+item reading `amlodipine 5 mg once daily, atorvastatin 20 mg at night` — two drugs in one item,
+with both doses in one `dose` — three times, and put medication lines in `history` besides. That
+is `_mergedItems`, the trap the transcript key already carries on all six multi-drug dictations,
+firing on a dialogue for the first time. The dialogue prompt states one-item-per-drug; the case
+that obeys it is the hard one and the case that does not is the easy one, which is not a pattern
+this corpus can currently explain.
+
+#### Where this leaves the task
+
+Three measured attempts, and the gate has been red every time: 94/99/94/99, then 91/99/95/99, then
+92/99/92/99. What has changed underneath is that the failures are now different failures. The
+dialogue-specific defects the corpus was written to expose — a dose corrected by the other
+speaker, evidence spanning a turn, a conversation copied out instead of read — are closed. What is
+left is a merged medication item and a one-word copying slip, and both of those are failures this
+pack already knows how to see on dictations.
+
+The honest next step is not another prompt. It is a second model over the same twenty transcripts:
+every number in this section is one set of weights, and `_mergedItems` exists because the first
+graded run of this task walked straight through the gap it closes. A defect that appears on the
+easy dialogue and not the hard one wants a second opinion before it wants another rule.
+
+### 2026-09-05, later — the second opinion, and it reverses the August finding
+
+`gemma-3-4b-it-Q4_K_M` (sha256 `04a43a22…`, the same file as the entry above), same harness, same
+flags, same key, same machine, constrained. Twenty transcripts, 131 items.
+
+| gate | Qwen3-4B | gemma-3-4b | floor |
+|---|---|---|---|
+| item recall | **92%** (121/131) | 85% (111/131) | 90% |
+| provenance | **99%** (122/123) | 92% (108/117) | 95% |
+| derivation | 92% (151/164) | 88% (133/151) | 95% |
+| nothing invented | **99%** | 93% (109/117) | 100% |
+
+117 items emitted, 4 hallucinations, 4 dose errors, 1 case-only quote failure, 0 failed runs,
+10.0 tok/s, 1204.7 s wall — 2.3× Qwen's throughput on this machine and half the wall clock.
+
+gemma fails all four gates; Qwen fails two. **On 2026-08-22, over thirteen transcripts, this
+comparison came out the other way** — gemma 89% recall against Qwen's 82%, and 100% provenance
+against 100%. Seven more transcripts reversed it. Nothing about the models changed; the corpus
+got harder and longer, and a seven-point lead measured on 73 items did not survive 131.
+
+That is worth more than either row. The August entry named its own limits — one run each, five
+items of margin — and this is what those limits cash out as. A number from this pack describes a
+model *on the corpus it was measured on*, and the corpus is the thing that keeps moving.
+
+#### What it was run to answer
+
+`tr-en-18` produced one medication item naming two drugs under Qwen, three times over. **gemma does
+not merge**: it emits `amlodipine` and `atorvastatin` as separate items, so the merged item is a
+property of those weights and not a hole in the prompt or the case. What gemma does on the same
+transcript is cite the wrong span for both of them — `text 'amlodipine'` derived from a quote that
+does not contain the word — and lose the aspirin, the exercise tolerance test and the blood
+pressure entirely: 67% recall where Qwen scored 78%. Two models, one transcript, two unrelated
+failures, and one number for each would have called them near-equivalent.
+
+**Both models get the cross-speaker correction right.** gemma scores 89% on
+`tr-en-19-dialogue-correction` with no dose error — the same result Qwen gets, and neither model
+takes the clinician's `1 g`. Two independent sets of weights reading the same new rule the same
+way is the strongest evidence in this file that `prompts/dialogue.md` is doing what it says.
+
+#### Where gemma actually loses it: dictations, not dialogues
+
+The dialogues cost gemma four gated items. The DICTATIONS cost it sixteen, and its provenance
+collapse is almost entirely there:
+
+- `tr-en-12-structured-dictation` — **1 of 5 quotes verify**. gemma rewrote the disciplined
+  dictation into the section headings it dictates (`subjective mrs leila haddad attends for her
+  annual review…`, `medications methotrexate 15 mg once weekly and folic acid…`), quoting a
+  tidied version of the transcript rather than the transcript. It is the EASIEST case in the
+  corpus, tier 2, and it is this model's worst.
+- `tr-es-13`, `tr-es-14`, `tr-es-17` — a fabricated span each, all of them the same move: a
+  fluent reassembly of what the speaker said.
+- `tr-en-03` — a Spanish quote (`toma beclometasona 200 microgramos dos veces al dia`) over an
+  English transcript. Not a language routing failure; the transcript is English and took the
+  English prompt. The model translated the span it was copying.
+
+That is the failure mode the August entry explicitly recorded as ABSENT for this model on speech
+— "gemma invents nothing here". It invents plenty at twenty transcripts. The expectation was not
+wrong when it was written; it was written on a corpus that did not contain the cases that provoke
+it.
+
+#### The state of the task
+
+Qwen3-4B on the routed prompt is the best reading this pack has produced of these twenty
+transcripts, and it is still two gates short. It is also, on this evidence, the model the floors
+should continue to be set from — not because it is better in general, but because it is the one
+whose failures this corpus has characterised across five runs.
+
+### 2026-09-05, later still — the dialogue prompt was 40% too long, and the fabrication gate goes green
+
+`prompts/dialogue.md` cut from 15.3 KB to 9.2 KB. Two changes, arrived at by ablation on the two
+English dialogues rather than by judgement: the medication section compressed from ten bullets to
+one paragraph, the second worked example (Spanish, inside the English prompt) removed, and the
+"a turn is not an item" block left at full length because a first slimming pass that cut it
+regressed. Same weights, same corpus, same flags.
+
+| | 15.3 KB prompt | **9.2 KB prompt** | |
+|---|---|---|---|
+| item recall | 92% (121/131) | 92% (120/131) | floor 90%, passes |
+| provenance | 99% (122/123) | **100% (127/127)** | floor 95%, passes |
+| derivation | 92% (151/164) | 92% (154/168) | floor 95%, **red** |
+| not invented | 99% (122/123) | **100% (127/127)** | floor 100%, **passes** |
+
+**Nothing was invented.** That is the first run of this corpus since the dialogues were added
+where the fabrication floor is met, and it clears the gate that a shorter prompt had no obvious
+business clearing. One red gate remains where there were two, and the prompt that got there is
+the smallest one tried.
+
+The merged medication item is gone. `tr-en-18` now emits `amlodipine` / `5 mg once daily`,
+`atorvastatin` / `20 mg at night` and `aspirin` / `75 mg once daily` as three items, and its
+recall goes 78% → 89%. Six drugs across the two English dialogues, six correct doses, including
+the cross-speaker correction on `tr-en-19`. **Compressing the section that states a rule improved
+adherence to that rule**, which is the opposite of what adding text had done all week.
+
+#### The ablation, because the negative half is the more useful half
+
+Three prompts, two English dialogues, one run each at temperature 0:
+
+| | 15.3 KB | 8.2 KB (uniform trim) | 9.2 KB (targeted) |
+|---|---|---|---|
+| medication, 6 drugs | 3 correct, 1 merged item ×3 | 5 correct, 1 miscited | **6 correct** |
+| questions filed as history | yes | worse | yes |
+| fabricated span | no | yes (`levothyoxine`) | no |
+
+The uniform trim fixed the merge and broke turn filtering; restoring the filtering block fixed
+nothing about turn filtering. **Three prompt versions — including one where the rule is stated
+against the model's own counter-examples, verbatim — all file questions as history.**
+`tr-en-18` returned `pain in the arm or the jaw`, `smoking`, `three months` and `settles when
+stopped` from a prompt containing the sentences "'any pain in the arm or the jaw' is not a
+symptom" and "'do you smoke' is not a smoking history".
+
+That is not an overload problem and it is not an instruction problem. `history` is behaving as
+the default sink for any turn the model reads as clinical, and it is where the remaining red gate
+lives: ten of the fourteen derivation failures are on the three dialogues, and seven of those ten
+are `tr-en-18`'s history absorbing questions. The one real history item on that transcript — the
+osteoarthritis — is missed, underneath the junk.
+
+#### What follows
+
+The next thing worth trying on this defect is NOT prompt text. It is either a pass whose only
+output is `history`, or a change to what the section is allowed to contain. Both are contract
+changes with floors attached, and both should be measured against this row.
+
+Also outstanding: `prompts/dialogue.es.md` is still the 15 KB version, so `tr-es-20` in the row
+above ran the unslimmed Spanish prompt. The two edits above have not been mirrored and the pair
+is inconsistent until they are, and until a run measures the result.
