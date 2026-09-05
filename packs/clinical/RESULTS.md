@@ -938,3 +938,77 @@ changes with floors attached, and both should be measured against this row.
 Also outstanding: `prompts/dialogue.es.md` is still the 15 KB version, so `tr-es-20` in the row
 above ran the unslimmed Spanish prompt. The two edits above have not been mirrored and the pair
 is inconsistent until they are, and until a run measures the result.
+
+### 2026-09-05 — the Spanish prompt mirrored, and it did not pay for itself
+
+`prompts/dialogue.es.md` cut 15.4 KB → 9.6 KB by the same two edits as its English twin, so the
+pair stops saying different things about the same contract. Same weights, same corpus, same flags.
+
+| | English slimmed only | **both slimmed** | |
+|---|---|---|---|
+| item recall | 92% (120/131) | 91% (119/131) | floor 90%, passes |
+| provenance | 100% (127/127) | 100% (127/127) | floor 95%, passes |
+| derivation | 92% (154/168) | 93% (156/168) | floor 95%, **red** |
+| not invented | 100% | 100% | floor 100%, passes |
+
+A point of derivation gained, a point of recall lost, and no gate moved in either direction.
+On `tr-es-20` the trade is visible in one case: derivation 78% → 89%, recall 88% → 75%, the lost
+item being the follow-up (`la cito en un mes`) which this run simply did not emit.
+
+**The mirror is kept anyway, and the reason is not the score.** The two files are one contract
+written twice, and this pack has already paid once for letting a pair drift — `transcript.es.md`
+had accumulated rules its English twin never got (one-item-per-drug, do-not-repair-a-drug-name,
+the history sub-rules), so for some time the same task was instructed differently depending on
+which language the speaker used, and no number reported it. A change that is neutral on the gates
+and removes a divergence is worth making on those grounds alone; it just does not get to be
+called an improvement.
+
+Both dialogue prompts now sit at 9.2 and 9.6 KB, one red gate remains, and it is derivation, and
+it is `history`.
+
+### 2026-09-05 — history decoded last, and the sink survives it
+
+An experiment, not a change: `note-format.schema.json` reordered to
+`presenting_complaint, plan, current_medication, history` in a scratch copy of the pack, golden
+regenerated through the same code path the tests pin, probed on the three dialogues with
+`extract`. The argument was the one this schema's own `x-notes` already makes for
+`plan`-before-`current_medication`: decoded second, `history` is the first array the model
+reaches and every clinical-sounding turn lands in it; decoded last, a drug sentence and a
+decision have already found their sections.
+
+It does not work, and the failure is clean.
+
+`tr-en-18` still returns the questions — `chest tightness settles within a couple of minutes`,
+`no pain in the arm or the jaw`, `stopped smoking in 2019`, `no diabetes` — and its derivation
+falls from 10/17 to 6/15. It does recover the `osteoarthritis` that every other version of this
+prompt has missed, which is the one thing the reordering demonstrably buys.
+
+`tr-en-19` and `tr-es-20` improve on the sink — history down to three items and two — and pay
+for it in the plan: `tr-en-19` keeps only the referral, losing both the hba1c repeat and the
+advice. `tr-es-20` recovers the follow-up the mirrored Spanish prompt had just lost. The same
+trade as every other intervention this week, in a new place.
+
+**NOT SHIPPED.** The schema is shared byte for byte with the note-format task, so this would move
+a second task's contract to buy nothing here, and the probe does not argue for it.
+
+#### The scorer looks away, and that is the finding
+
+Under this ordering the questions come back NEGATED: `no pain in the arm or the jaw`, `no
+diabetes`. The model is copying the exchange with the answer attached. `[clinical.setMatching]`
+refuses a match when a negator opens the clause, so those items score as *nothing emitted*
+rather than as hallucinations — the reading is exactly as wrong and the gate reads better.
+
+That is `_negationLimit` in transcript-cases.json behaving as documented, in a place its author
+did not have in mind. It means an intervention on this defect can improve the numbers by
+changing the WORDING of the junk rather than removing it, and no gate in this pack can currently
+tell those two outcomes apart. Before another attempt at the sink, the corpus needs a way to
+count a question copied into history — an `empty`-style expectation, or a check on how many items
+a section holds — because four interventions have now been evaluated against a scorer that is
+partly blind to the thing they were aimed at.
+
+#### Where the defect stands
+
+Prompt text three times (long, short, short-with-counter-examples) and schema order once. None of
+them move it. It is not an instruction problem and it is not a decode-order problem, which leaves
+a pass of its own or a change to what `history` is allowed to contain — and neither should be
+attempted before the scorer can see the failure it is meant to fix.
