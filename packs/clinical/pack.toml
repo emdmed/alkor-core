@@ -91,6 +91,27 @@ transcriptPrompt = "prompts/transcript.md"
 transcriptPromptEs = "prompts/transcript.es.md"
 transcriptCases  = "evals/transcript-cases.json"
 
+# --- The same contract again, for a transcript with TWO SPEAKERS in it. ----------------
+# A consultation transcribed as the room heard it is not a dictation, and the difference is not
+# a matter of degree: the record's facts are no longer all in the record-keeper's voice. The
+# presenting complaint is quotable only from the patient, a clinician who names a condition to
+# ASK about it has asserted nothing, and a dose the clinician states can be corrected by the
+# patient in the next turn — a retraction whose only marker is who is talking, which is the one
+# thing the dictation prompt's "the speaker's last word is the only word" cannot express.
+#
+# IT IS A SECOND PROMPT RATHER THAN A SECTION IN THE FIRST, and that was measured rather than
+# assumed. The rules below lived in prompts/transcript.md for exactly one run: derivation
+# recovered and fabrication did not, and two DICTATIONS that had nothing to do with dialogue lost
+# items to a paragraph about turn labels (tr-en-02 83→67%, tr-en-08 86→71%). A prompt is not a
+# patch — a rule written for one input shape is read against every input — so the shapes get a
+# file each and the seventeen dictations stop paying for speech they do not contain. See
+# RESULTS.md, 'a dialogue-aware prompt'.
+#
+# Absent these keys, every transcript takes `transcriptPrompt` and this pack behaves exactly as
+# it did before they existed.
+dialoguePrompt   = "prompts/dialogue.md"
+dialoguePromptEs = "prompts/dialogue.es.md"
+
 # --- The repair pass: the failed citations of a reading, handed back with the transcript. ---
 # A SECOND contract rather than a second call on the first, because it asks a different
 # question. The transcript task asks what this consultation contained; this one asks where in
@@ -259,12 +280,46 @@ minRatio = 2
 [clinical.languageDetection.transcriptPrompt]
 es = "transcriptPromptEs"
 
+# The same routing for the dialogue prompt. Shape and language are two independent questions
+# asked in that order: the shape picks WHICH FAMILY of prompt, the language picks which member of
+# it, and a pack that has a dialogue prompt in one language only falls back to the dialogue
+# prompt it has rather than to the dictation one — a wrong-language prompt for the right input
+# shape is the smaller of the two errors, and the language rule inside the prompt still holds.
+[clinical.languageDetection.dialoguePrompt]
+es = "dialoguePromptEs"
+
 # The same routing for the repair pass, kept as its own table rather than shared with the one
 # above. The two prompts are separate files and a pack may translate one without the other:
 # a pack with a Spanish first pass and no Spanish repair should run the repair in English
 # rather than fail to run it, and a single table would make that state inexpressible.
 [clinical.languageDetection.transcriptRepairPrompt]
 es = "transcriptRepairPromptEs"
+
+# --- Which transcripts are conversations, and therefore take the dialogue prompt. -----
+#
+# OPTIONAL on the same terms as [clinical.languageDetection]: absent, every transcript is read as
+# a dictation and both runtimes behave exactly as they did before this table existed. It is HERE
+# and not in either runtime for the reason the language markers are — two runtimes that decide
+# the shape of an input separately are grading different inputs while appearing to share a
+# contract, and the consuming application decides it on every recording it handles.
+#
+# The signal is TURN LABELS, not a model and not a heuristic about question marks. A dictation
+# has one voice and no labels; a transcribed consultation has a label on nearly every line,
+# because that is what a transcriber writes to say who spoke. Declaring the labels as data is the
+# whole point: another pack's transcriber writes "clinician:"/"patient:", "d:"/"p:", or
+# "médico:"/"paciente:", and a list in code would silently read all of those as dictations.
+[clinical.dialogueDetection]
+# Compared case- and accent-insensitively against the text before the colon, so "Dr:" and "dr:"
+# are one label. A line is a turn when it begins with one of these followed by a colon.
+labels = ["dr", "doctor", "pt", "patient", "med", "medico", "pac", "paciente", "clinician", "d", "p"]
+# Two floors, and both are needed. `minTurns` keeps a stray "plan:" or a single quoted line from
+# turning a dictation into a consultation; `minSpeakers` keeps a monologue that happens to be
+# labelled — a dictation with "dr:" at the top of every paragraph — out, because one voice is
+# what the dictation prompt is for however it is punctuated. The corpus clears both by a
+# distance: its three dialogues carry 13, 21 and 15 labelled turns across exactly two speakers,
+# and no dictation carries one.
+minTurns = 4
+minSpeakers = 2
 
 [clinical.setMatching]
 negators = ["no", "not", "never", "denies", "denied", "without", "sin", "niega", "ningun", "ninguna", "nunca"]

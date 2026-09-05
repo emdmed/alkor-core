@@ -3,6 +3,7 @@
   "_input": "ONE transcript per case, read through the `transcript` documents template rather than the `notes` one - `transcripts/{case}.transcript.txt`. Unlike the note-format cases, these are NOT shared with another task's corpus: there is no written note they correspond to, and inventing one would defeat the point. Case names ARE the transcript filenames, which is the constraint the documents template imposes everywhere in this pack.",
   "_synthetic": "THE TRANSCRIPTS ARE SYNTHETIC, on the same terms as the notes. They were written for this corpus to exhibit named dictation failures and are not transcribed from, derived from, or edited down from any real recording. A dictation corpus is the likeliest of all of them to carry a real voice into a public repository, because the raw material exists as audio somebody recorded.",
   "_whatThisTaskAdds": "Everything the note-format task measures, over an input that has five properties a written note does not:\n  - ORDER IS NOT MEANING. The plan may be dictated first and the history last. A model that partitions by position rather than by content sorts this corpus wrongly and sorts the written one correctly.\n  - THE SPEAKER CORRECTS THEMSELVES OUT LOUD. A dose, a drug, and in one case a whole surgical history are stated and then withdrawn. The withdrawn version is still in the transcript, still quotable, and must appear nowhere in the answer. This is the axis with no analogue in the note corpus and it is the reason the task exists.\n  - THE SPEAKER DICTATES MARKUP. 'comma', 'period', 'new paragraph', 'colon' are instructions to a typist. They are inside the spans a model must quote, and deletion-only derivation is exactly the tool for removing them - which is a pleasant accident rather than a design: the rule that stops a drug name drifting also strips a filler.\n  - THE SPEAKER TALKS TO THE ROOM. Asides to a typist, to a colleague, and to the door are not clinical facts, and they are phrased in the imperative, which is what a plan item is phrased in.\n  - THE TRANSCRIBER MISSES WORDS. '[inaudible]' is where a dose should be. It is not a value, and a model that supplies a plausible one has written a prescription nobody dictated.",
+  "_dialogue": "THREE CASES ARE NOT DICTATIONS. tr-en-18, tr-en-19 and tr-es-20 are consultations transcribed as they were spoken, two voices with labelled turns, and they are in this task rather than in a task of their own because the OUTPUT contract is the one a clinician reads either way. What they add is an input where the record's facts are not all in the record-keeper's voice: the presenting complaint is quotable only from the patient, a question puts a clinical term in the transcript without asserting it, and a dose is corrected by the OTHER speaker rather than by the one who said it. The last of those is the interesting one, because prompts/transcript.md - unchanged for these cases, deliberately - states the correction rule as 'the speaker's last word is the only word', which is a rule about one speaker. It happens to land on the right dose in tr-en-19 and it is not the reason the right dose is right.\n\nTHE FLOORS BELOW PREDATE THESE CASES. They were measured on the seventeen dictations, so a run over this corpus is being gated on a number taken from a smaller and different one until RESULTS.md carries an entry that includes the dialogues.",
   "_matching": "`match` works exactly as in note-format-cases.json: alternatives of AND-groups, compared case- and accent-insensitively against an item's `text`. A medication expectation may also carry `dose`, matched the same way against that item's `dose`, or `doseNull: true` where the speaker names a drug without a usable dose. The dose expectations here are doing more work than in the note corpus: on tr-en-02 and tr-en-07 the WRONG dose is also present in the transcript and is also quotable, so a dose error is a model taking the speaker's first word instead of their last.",
   "_expectKinds": {
     "present": "An item matching these terms must appear in the named section. The gated denominator.",
@@ -296,6 +297,66 @@
         { "field": "plan", "expect": { "kind": "present", "match": [["neurologia"]] } },
         { "field": "plan", "expect": { "kind": "present", "match": [["dos", "meses"]] } },
         { "field": "current_medication", "expect": { "kind": "absent", "match": [["sertralina", "lorazepam", "donepezilo"]] } }
+      ]
+    },
+    {
+      "name": "tr-en-18-dialogue",
+      "class": "dialogue",
+      "difficulty": 4,
+      "note": "The first two-speaker case. Every transcript above it is one clinician talking to a microphone; this is a consultation as the room heard it, turns labelled 'dr:' and 'pt:', and it changes three things at once. THE FACT ARRIVES IN THE PATIENT'S VOICE and in the first person - the presenting complaint is quotable only from 'it's my chest doctor i get this tightness when i walk up the hill to the shops', so the item a clinician reads is derived by deleting words from a sentence the clinician did not say. A QUESTION IS NOT AN ASSERTION: 'any pain in the arm or the jaw' and 'any diabetes' put three clinical terms in the transcript that are asked about and then denied, and a model that harvests terms rather than claims files all three as history. THE THIRD PARTY IS NOW A TURN RATHER THAN AN ASIDE - the sister's diabetes and the husband's heart attack are the patient answering the question they were asked, which is the same trap tr-en-07 lays and laid in the clinician's voice. The lay name is here too ('the little white one'), named by the doctor in the next turn exactly as tr-en-05's water tablet is.",
+      "fields": [
+        { "field": "presenting_complaint", "expect": { "kind": "present", "match": [["tightness"], ["chest"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["osteoarthritis"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["blood pressure"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["exercise tolerance test"], ["exercise tolerance"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["aspirin"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["chest pain clinic"], ["rapid access"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["amlodipine"]], "dose": [["5 mg once daily"], ["5 mg"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["atorvastatin"]], "dose": [["20 mg"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["aspirin"]], "dose": [["75 mg once daily"], ["75 mg"]] } },
+        { "field": "history", "expect": { "kind": "absent", "match": [["diabetes"]] } },
+        { "field": "history", "expect": { "kind": "absent", "match": [["heart attack"]] } },
+        { "field": "history", "expect": { "kind": "absent", "match": [["jaw"]] } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["white one"]] } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["amlodipine", "atorvastatin"], ["amlodipine", "aspirin"], ["atorvastatin", "aspirin"]] } }
+      ]
+    },
+    {
+      "name": "tr-en-19-dialogue-correction",
+      "class": "dialogue",
+      "difficulty": 5,
+      "note": "The correction axis, moved into a second voice, and this is the case the dialogue cases exist for. Every retraction above is a speaker abandoning their OWN words, and prompts/transcript.md is written for exactly that: 'the speaker's last word is the only word'. Here the wrong dose is the doctor's ('you're on metformin 1 g twice daily now') and the right one is the patient's contradiction of it ('no doctor it's 500 twice a day i never went up'). Last-word-wins still lands on 500, but for the wrong reason, and a model that treats the clinician as the authority on the record - which is what a note is - takes the 1 g. Both numbers are quotable and the doctor then restates the corrected one, so a citation verifies either way. Beside it sits a drug the PATIENT reports stopping ('i stopped the gliclazide back in the spring'), a stop stated by the person who did it rather than decided by the person dictating.",
+      "fields": [
+        { "field": "presenting_complaint", "expect": { "kind": "present", "match": [["stomach"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["type 2 diabetes"], ["diabetes"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["thyroid"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["hba1c"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["three months"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["diabetes nurse"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["metformin"]], "dose": [["500 mg twice daily"], ["500 twice a day"], ["500"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["ramipril"]], "dose": [["5 mg"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["levothyroxine"]], "dose": [["100 micrograms"]] } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["gliclazide"]] } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["metformin", "ramipril"], ["metformin", "levothyroxine"], ["ramipril", "levothyroxine"]] } }
+      ]
+    },
+    {
+      "name": "tr-es-20-dialogo",
+      "class": "dialogue",
+      "difficulty": 4,
+      "note": "The Spanish dialogue, and it puts the language rule under the pressure the two-speaker input adds rather than repeating tr-es-13. The patient answers in lay Spanish ('el azúcar me lo miran pero dicen que está bien') and the doctor asks in clinical Spanish, so a model that translates has two registers to flatten rather than one. The history arrives as a doctor's question the patient confirms - 'y de antecedentes usted tiene hipertensión y artrosis verdad' / 'sí' - which is history stated interrogatively, the one grammar the dictation corpus never uses for a fact that is true. The daughter's hands and her infiltraciones are the third party, and they arrive in the patient's own turn with no marker that they belong to somebody else beyond the word 'hija'. Ibuprofeno is prescribed today and therefore legitimately appears in both plan and medication, quoting the same span.",
+      "fields": [
+        { "field": "presenting_complaint", "expect": { "kind": "present", "match": [["rodilla"], ["dolor"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["hipertension"]] } },
+        { "field": "history", "expect": { "kind": "present", "match": [["artrosis"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["radiografia"]] } },
+        { "field": "plan", "expect": { "kind": "present", "match": [["un mes"], ["cito"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["enalapril"]], "dose": [["20 mg al dia"], ["20 mg"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["paracetamol"]], "dose": [["1 g"]] } },
+        { "field": "current_medication", "expect": { "kind": "present", "match": [["ibuprofeno"]], "dose": [["600 mg cada 8 horas"], ["600 mg"]] } },
+        { "field": "history", "expect": { "kind": "absent", "match": [["hija"], ["infiltraciones"], ["manos"]] } },
+        { "field": "presenting_complaint", "expect": { "kind": "absent", "match": [["knee"], ["pain"]] } },
+        { "field": "current_medication", "expect": { "kind": "absent", "match": [["enalapril", "paracetamol"], ["enalapril", "ibuprofeno"], ["paracetamol", "ibuprofeno"]] } }
       ]
     }
   ]

@@ -28,6 +28,7 @@ import {
   gradedFields,
   requiredSetExpectations,
   summaryPrompt,
+  isDialogue,
   transcriptPrompt,
   transcriptRequest,
   summarySchema,
@@ -290,9 +291,63 @@ test('the transcript task sends the note-format contract under its own label', (
   assert.notEqual(req.schemaName, settings.noteFormatSchemaName, 'a pinned body must say which task sent it')
 })
 
+/**
+ * Shape routing, which is a different question from language routing and asked first.
+ *
+ * The reason it is worth a test rather than a comment: the fallback is SILENT and correct-looking
+ * in every direction. A detector that stops recognising turn labels reads every consultation as a
+ * dictation and produces a number, not an error — which is exactly what the task did before the
+ * dialogue prompt existed, and it scored 91%.
+ */
+test('a consultation takes the dialogue prompt and a dictation does not', () => {
+  const dictation = pack.document('tr-en-01-rambling', 'transcript')
+  const dialogue = pack.document('tr-en-18-dialogue', 'transcript')
+  const spanish = pack.document('tr-es-20-dialogo', 'transcript')
+
+  assert.ok(!isDialogue(pack, dictation), 'a one-voice dictation has no labelled turns')
+  assert.ok(isDialogue(pack, dialogue))
+  assert.ok(isDialogue(pack, spanish))
+
+  // The four prompts are four distinct files, and the pairs that matter are the ones a wiring
+  // mistake would collapse: shape without language, and language without shape.
+  assert.notEqual(transcriptPrompt(pack, dialogue), transcriptPrompt(pack, dictation))
+  assert.notEqual(transcriptPrompt(pack, spanish), transcriptPrompt(pack, dialogue))
+  assert.equal(transcriptPrompt(pack, dialogue), pack.read('dialoguePrompt'))
+  assert.equal(transcriptPrompt(pack, spanish), pack.read('dialoguePromptEs'))
+  assert.equal(transcriptPrompt(pack, dictation), pack.read('transcriptPrompt'))
+  // No transcript at all is the default, exactly as it was before shape routing existed.
+  assert.equal(transcriptPrompt(pack), pack.read('transcriptPrompt'))
+})
+
+/**
+ * Both floors, from the side each one guards. `minSpeakers` is the one that would otherwise go
+ * untested, because the corpus contains no labelled monologue — and a labelled monologue is a
+ * DICTATION, however it is punctuated: the dialogue prompt's whole subject is a fact arriving in
+ * a voice that is not the record-keeper's.
+ */
+test('one voice is a dictation however it is punctuated, and a dictated colon is not a turn', () => {
+  const monologue = ['dr: first line', 'dr: second line', 'dr: third line', 'dr: fourth line'].join('\n')
+  assert.ok(!isDialogue(pack, monologue), 'four turns, one speaker')
+
+  // The dictated-markup corpus says "colon" aloud rather than writing one, but a pack whose
+  // transcriber writes the punctuation would have lines like this, and none of them is a turn:
+  // what precedes the colon is a sentence, not a name.
+  const dictated = ['subjective: cough for three weeks', 'plan: repeat the hba1c', 'medications: none'].join('\n')
+  assert.ok(!isDialogue(pack, dictated))
+})
+
+test('every dialogue case is detected as one, and no dictation is', () => {
+  const dialogues = transcript.cases.filter((c) => c.class === 'dialogue').map((c) => c.name)
+  assert.equal(dialogues.length, 3, 'two English and one Spanish, added 2026-09-04')
+  for (const c of transcript.cases) {
+    const detected = isDialogue(pack, pack.document(c.name, 'transcript'))
+    assert.equal(detected, dialogues.includes(c.name), `${c.name}: detector disagrees with the case's class`)
+  }
+})
+
 test('the transcript corpus spans the tiers and states its floors', () => {
-  assert.equal(transcript.cases.length, 17)
-  assert.equal(requiredSetExpectations(transcript.cases), 105)
+  assert.equal(transcript.cases.length, 20)
+  assert.equal(requiredSetExpectations(transcript.cases), 131)
   // Not all hard. Without an easy dictation the tier distribution collapses to 3-5 and a
   // prompt change that helps only the well-behaved speaker is invisible.
   const tiers = new Set(transcript.cases.map((c) => c.difficulty))

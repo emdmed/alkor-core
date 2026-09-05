@@ -84,10 +84,20 @@ timeout_secs = 300
 # prefill. The quotes are longer for the same reason, since a span containing a correction has
 # to be quoted whole to be quotable at all, so the cap stays at the summary's rather than
 # dropping to what the sections alone would need.
+#
+# The DEADLINE is three times the other tasks', and it was raised from 300 the day the corpus
+# grew a two-speaker consultation. A dialogue is the longest input and the longest answer this
+# task has: the same facts arrive spread over forty short turns, and an item whose drug and dose
+# sit in different turns must quote the run that spans both, so the quotes lengthen with the
+# input. On a loaded iGPU at 4 tok/s `tr-en-19-dialogue-correction` was still generating at 300s,
+# nowhere near the 2048-token cap, and was killed — scoring 0 on every item and reading in the
+# table as a model that found nothing. That is a transport limit wearing a model result's
+# clothing, which is the one thing a deadline here must not do. It is a backstop against a hung
+# server, and a backstop that binds on a legitimate answer has stopped being one.
 [sampling.transcript]
 temperature = 0.0
 max_tokens = 2048
-timeout_secs = 300
+timeout_secs = 900
 
 # --- The repair pass over a dictated reading's failed citations. ---
 # Half the transcript cap. The input is bigger than the transcript task's — the whole

@@ -1,0 +1,31 @@
+dr: buenos días señora molina siéntese qué le trae por aquí
+
+pt: pues doctor llevo dos semanas con mucho dolor en la rodilla derecha
+
+dr: le duele al andar
+
+pt: sobre todo al bajar las escaleras
+
+dr: y de antecedentes usted tiene hipertensión y artrosis verdad
+
+pt: sí y el azúcar me lo miran pero dicen que está bien
+
+dr: toma enalapril 20 mg al día
+
+pt: sí una pastilla por la mañana
+
+dr: y el paracetamol
+
+pt: 1 g cuando me duele mucho tres veces al día como mucho
+
+dr: le duele el pecho o le falta el aire
+
+pt: no nada de eso
+
+pt: mi hija tiene lo mismo en las manos y le han puesto unas infiltraciones
+
+dr: bien vamos a pedir una radiografía de la rodilla y le doy ibuprofeno 600 mg cada 8 horas durante una semana
+
+pt: y puedo seguir andando
+
+dr: sí camine en llano y la cito en un mes

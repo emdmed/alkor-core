@@ -132,6 +132,15 @@ export interface ClinicalSettings {
    * `transcriptPrompt` and this harness measures exactly what it measured before.
    */
   languageDetection?: LanguageDetection
+  /**
+   * Which transcripts are conversations rather than dictations.
+   *
+   * OPTIONAL on the same terms as `languageDetection`, and orthogonal to it: this decides which
+   * FAMILY of prompt an input takes, the language table decides which member of that family.
+   * Absent, every transcript is read as a dictation and this harness measures exactly what it
+   * measured before.
+   */
+  dialogueDetection?: DialogueDetection
 }
 
 /** The detector, as the pack states it. See `[clinical.languageDetection]` in pack.toml. */
@@ -146,6 +155,23 @@ export interface LanguageDetection {
    * repair should run the repair in the default language rather than not run it at all.
    */
   transcriptRepairPrompt?: Record<string, string>
+  /** The same again, for the dialogue prompt, and its own map for the same reason. */
+  dialoguePrompt?: Record<string, string>
+}
+
+/**
+ * How a two-speaker transcript is told from a dictation. See `[clinical.dialogueDetection]`.
+ *
+ * The signal is turn LABELS rather than anything about the prose, because that is the one mark a
+ * transcriber puts on a conversation and never on a dictation — and because the labels a given
+ * transcriber writes are a property of that project, not of this code.
+ */
+export interface DialogueDetection {
+  labels: string[]
+  /** How many labelled turns before the answer is worth giving. */
+  minTurns: number
+  /** How many DISTINCT labels. One voice is a dictation however it is punctuated. */
+  minSpeakers: number
 }
 
 export const loadSettings = (pack: Pack): ClinicalSettings => {
@@ -221,7 +247,7 @@ export const loadSettings = (pack: Pack): ClinicalSettings => {
     // Both prompt maps, by the same rule and with the same message: a table naming a language
     // the markers cannot produce is a translation that will never be read, and it is worth
     // more as a load error than as a file nobody notices going unused.
-    for (const table of ['transcriptPrompt', 'transcriptRepairPrompt'] as const) {
+    for (const table of ['transcriptPrompt', 'transcriptRepairPrompt', 'dialoguePrompt'] as const) {
       for (const [lang, key] of Object.entries(d[table] ?? {})) {
         if (!langs.includes(lang)) {
           throw new Error(
@@ -230,6 +256,25 @@ export const loadSettings = (pack: Pack): ClinicalSettings => {
           )
         }
       }
+    }
+  }
+  // A pack that DECLARES the table must fill it, and here the empty version is worse than
+  // useless: no labels means no line is ever a turn, so every consultation is read as a
+  // dictation while the pack's manifest says it has a dialogue contract. A floor of zero is the
+  // same failure from the other side — every dictation becomes a dialogue on a stray colon.
+  if (s.dialogueDetection) {
+    const d = s.dialogueDetection
+    if (!(Array.isArray(d.labels) && d.labels.length)) {
+      throw new Error(
+        `pack '${pack.name}': [clinical.dialogueDetection] declares no labels — ` +
+          'no label means no line is ever a turn, and every consultation would be read as a dictation',
+      )
+    }
+    if (!(typeof d.minTurns === 'number' && d.minTurns > 0 && typeof d.minSpeakers === 'number' && d.minSpeakers > 1)) {
+      throw new Error(
+        `pack '${pack.name}': [clinical.dialogueDetection] must state minTurns > 0 and minSpeakers > 1 — ` +
+          'one voice is a dictation however it is punctuated',
+      )
     }
   }
   // A pack that DECLARES the table must fill it. An empty `negators` is not a language with no
@@ -438,6 +483,37 @@ export const detectLanguage = (pack: Pack, text: string): string | null => {
   const lo = ranked[1]?.[1] ?? 0
   if (hi < d.thresholds.minHits || hi < Math.max(lo, 1) * d.thresholds.minRatio) return null
   return lang
+}
+
+/**
+ * Is this transcript a conversation between two people, rather than one person dictating?
+ *
+ * Counts LABELLED TURNS: a line whose first token, up to a colon, is one of the labels the pack
+ * declares. Both floors have to clear — enough turns that a stray `plan:` cannot carry it, and
+ * enough distinct speakers that a labelled monologue stays a dictation.
+ *
+ * `false` is the fallback for everything it cannot call, and that is the safe direction: an
+ * unrecognised transcript takes the prompt this pack has always used for transcripts.
+ */
+export const isDialogue = (pack: Pack, text: string): boolean => {
+  const d = loadSettings(pack).dialogueDetection
+  if (!d) return false
+  const labels = d.labels.map(foldMarker)
+  const seen = new Set<string>()
+  let turns = 0
+  for (const line of text.split('\n')) {
+    // The label is what precedes the FIRST colon on the line, and only when nothing but the
+    // label precedes it. `dr: and the citalopram` is a turn; `plan: repeat the hba1c in three
+    // months, colon` inside a dictated sentence is not, because the words before the colon are
+    // a sentence rather than a name.
+    const m = /^\s*([^\s:]{1,12})\s*:/.exec(line)
+    if (!m) continue
+    const label = foldMarker(m[1] ?? '')
+    if (!labels.includes(label)) continue
+    turns++
+    seen.add(label)
+  }
+  return turns >= d.minTurns && seen.size >= d.minSpeakers
 }
 
 /**
@@ -758,8 +834,20 @@ export interface TranscriptCases extends QuotedSetCases {
  *
  * With no transcript, or no language the pack has a prompt for, this is what it always was.
  */
-export const transcriptPrompt = (pack: Pack, transcript?: string): string =>
-  promptForLanguage(pack, 'transcriptPrompt', transcript)
+export const transcriptPrompt = (pack: Pack, transcript?: string): string => {
+  // SHAPE first, then language. A consultation with two speakers is a different input from a
+  // dictation — the facts are not all in the record-keeper's voice — and the two families of
+  // prompt say different things about corrections, questions and what a turn is worth. The
+  // language table then picks a member of whichever family the shape chose.
+  //
+  // `has` rather than a bare read, so a pack that declares the detector without shipping the
+  // prompt falls back to the dictation one instead of failing: the fallback for everything this
+  // routing cannot answer is what this task has always done.
+  if (transcript !== undefined && isDialogue(pack, transcript) && pack.has('dialoguePrompt')) {
+    return promptForLanguage(pack, 'dialoguePrompt', transcript)
+  }
+  return promptForLanguage(pack, 'transcriptPrompt', transcript)
+}
 
 /**
  * The repair prompt, chosen by the same detector over the same transcript.
@@ -781,7 +869,7 @@ export const transcriptRepairPrompt = (pack: Pack, transcript?: string): string 
  */
 const promptForLanguage = (
   pack: Pack,
-  defaultKey: 'transcriptPrompt' | 'transcriptRepairPrompt',
+  defaultKey: 'transcriptPrompt' | 'transcriptRepairPrompt' | 'dialoguePrompt',
   transcript?: string,
 ): string => {
   const byLang = loadSettings(pack).languageDetection?.[defaultKey]
