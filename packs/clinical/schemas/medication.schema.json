@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://medextract.dev/packs/clinical/medication.schema.json",
+  "title": "CurrentMedication",
+  "description": "Shape contract for the medication pass: ONE transcript in, the patient's current medication out, and nothing else. The same item definition as the note-format contract, deliberately — this pass replaces that contract's `current_medication` section, so an item it produces must be indistinguishable from one the four-section reading produces, or the two halves of a shipped note would answer to different rules.",
+  "x-notes": {
+    "whyASecondSchema": "Because the pass asks a smaller question, not a different one. The four-section schema cannot express 'medication only' — every property is required, so a model handed it must fill history and plan too, which is the decode competition this pass exists to remove. MEASURED, on nine dictations: inside the four-section reading the model returned 23/25 drugs and 22/25 doses; asked for medication alone it returned 25/25 and 25/25.",
+    "itemsAreShared": "`$defs.medication` is copied from note-format.schema.json and must stay identical to it. A drift here is a drift between an item as measured and the same item as shipped, and nothing in either file would report it — so test/tasks.test.ts compares the two definitions rather than trusting this note.",
+    "propertyOrder": "One property, so the order that is load-bearing elsewhere is vacuous here. Kept as an object rather than a bare array anyway: `response_format` takes an object schema, and a pack that returned a top-level array would be a pack whose grammar differs from every other task's for no reason a reader could find."
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "current_medication"
+  ],
+  "properties": {
+    "current_medication": {
+      "description": "DRUG NAMES ONLY in `text`, one item per drug, with amount and frequency in `dose`. A drug the note stops does not belong here; neither does oxygen, a fluid, or a diet. A drug class the note names without naming a drug ('her inhaled steroid') is not a drug name and has no item.",
+      "type": "array",
+      "maxItems": 15,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/medication"
+      }
+    }
+  },
+  "$defs": {
+    "medication": {
+      "description": "One drug: the sentence that names it, the name, and the dose that sentence gives. Its own definition rather than the shared item, because a drug is the one fact in a formatted note with a second component that must be transcribed rather than summarised.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "quote",
+        "text",
+        "dose"
+      ],
+      "properties": {
+        "quote": {
+          "description": "The span of the note this item comes from, copied character by character. Verified after decoding, exactly as an item's quote is.",
+          "type": "string",
+          "minLength": 3
+        },
+        "text": {
+          "description": "The drug NAME as the note writes it, and nothing else: no dose, no schedule, no verb. Every token must be in the quote, which is what makes the name incorruptible.",
+          "type": "string",
+          "minLength": 2
+        },
+        "dose": {
+          "description": "AMOUNT and FREQUENCY only, as the note writes them ('5 mg daily'), or null when the note names the drug without one ('continue her usual metformin'). It stops there on purpose: the indication ('if febrile'), the timing ('at night'), the duration and the route all belong to the plan item quoting the same sentence whole, so nothing is lost by cutting them and the field stays a column a clinician can read down. Verified against the quote by the same deletion-only rule as `text`, so a dose can be omitted but never invented or altered.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

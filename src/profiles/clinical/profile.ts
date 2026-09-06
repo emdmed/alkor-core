@@ -115,6 +115,12 @@ export const PROFILE: ProfileModule = {
       // to repair. Refused rather than ignored when the run asks for ONLY those tasks: a flag
       // that silently did nothing is a flag somebody reports a number under.
       repair: Boolean(ctx.options.repair),
+      // ON unless turned off, which is the opposite of `repair` and deliberately so: the
+      // medication pass is part of what this pack says reading a dictation means, so an eval
+      // that ran it only on request would measure a reading the application does not ship.
+      // Measured over the seventeen dictations: recall 94% -> 96%, dose errors 3 -> 1,
+      // hallucinations 4 -> 3, every gate clear.
+      medicationPass: ctx.options.medicationPass !== false,
     }
     const tasks = requestedTasks(ctx.options.task, loadSettings(pack).defaultTask)
     if (shared.repair && !tasks.includes('transcript')) {

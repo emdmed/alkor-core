@@ -27,7 +27,12 @@ import type { DerivationRule, QuoteRule } from '../../core/verify.ts'
 // The section lists live with the parsers that read them: one statement of what a task's
 // reply contains, rather than a second copy here that can disagree with it.
 import { FORMAT_LIST_FIELDS, SUMMARY_FIELDS } from './extraction.ts'
-import { DEFAULT_SET_MATCHING, type SetMatchRule } from './set-scorer.ts'
+import {
+  DEFAULT_MEDICATION_NAME,
+  DEFAULT_SET_MATCHING,
+  type MedicationNameRule,
+  type SetMatchRule,
+} from './set-scorer.ts'
 
 /** How a reading is shaped. A blood pressure is one reading with two numbers, not two. */
 export type FieldShape = 'measurement' | 'bloodPressure'
@@ -61,6 +66,12 @@ export const SAMPLING_KEY: Record<Task, string> = {
  * transcript task, and adding it to `TASKS` would put a word in `--task` that nobody can run.
  */
 export const REPAIR_SAMPLING_KEY = 'transcript_repair'
+
+/**
+ * The `[sampling.*]` key the medication pass reads. Not a task, for the same three reasons the
+ * repair is not: no name to invoke, no corpus of its own, no score of its own.
+ */
+export const MEDICATION_SAMPLING_KEY = 'medication'
 
 /**
  * Which `documents` kind a task's input comes from — the manifest table added in spec 3.
@@ -105,6 +116,12 @@ export interface ClinicalSettings {
    * disagree about, for no reason a reader could ever find.
    */
   transcriptRepairSchemaName?: string
+  /**
+   * `json_schema.name` for the medication pass, on the same terms as the repair's: absent means
+   * the pack has no medication contract, and `medicationRequest` refuses to assemble rather
+   * than defaulting to a label the two runtimes would disagree about.
+   */
+  medicationSchemaName?: string
   quoteVerification: QuoteRule
   textDerivation: DerivationRule
   summaryAssembly: AssemblyRule
@@ -125,6 +142,18 @@ export interface ClinicalSettings {
    */
   setMatching?: SetMatchRule
   /**
+   * What a medication item's `text` may contain — a drug name, and nothing else.
+   *
+   * OPTIONAL on `setMatching`'s terms rather than `quoteVerification`'s: an absent table fakes
+   * no passing check, it inherits a list. The list is the part that has to be data, and for the
+   * same reason the negators are — the words that mark a dose are the language's, not this
+   * code's, and a pack in a third language inheriting `mg`/`daily`/`cada` would find none of its
+   * own and pass every dose-laden name.
+   *
+   * See DEFAULT_MEDICATION_NAME in set-scorer.ts, where the argument for the check lives.
+   */
+  medicationName?: MedicationNameRule
+  /**
    * Which language a transcript is in, and which prompt file key that chooses.
    *
    * OPTIONAL, for the reason `setMatching` is optional rather than the reason
@@ -141,6 +170,28 @@ export interface ClinicalSettings {
    * measured before.
    */
   dialogueDetection?: DialogueDetection
+  /**
+   * Which input shapes take the medication pass — see `[clinical.medicationPass]`.
+   *
+   * OPTIONAL, and its absence turns the pass off everywhere: a transcript is read by one call
+   * and this profile behaves exactly as it did before the pass existed. That is the safe
+   * default in the only direction that matters, because the pass costs a second call and
+   * changes what a shipped note contains.
+   */
+  medicationPass?: MedicationPass
+}
+
+/**
+ * Which shapes take the second call. See `[clinical.medicationPass]` in pack.toml, where the
+ * measurement behind the boundary is written out.
+ *
+ * A LIST rather than a boolean, because the question is not "on or off" — it is which of the
+ * two input shapes this pack already distinguishes gains from the pass. Dictations do and
+ * dialogues do not, measured; a pack whose corpus is all dictation writes `["dictation"]` and
+ * gets the same behaviour without having to know why the word is there.
+ */
+export interface MedicationPass {
+  shapes: string[]
 }
 
 /** The detector, as the pack states it. See `[clinical.languageDetection]` in pack.toml. */
@@ -157,6 +208,8 @@ export interface LanguageDetection {
   transcriptRepairPrompt?: Record<string, string>
   /** The same again, for the dialogue prompt, and its own map for the same reason. */
   dialoguePrompt?: Record<string, string>
+  /** And for the medication pass, its own map for the same reason again. */
+  medicationPrompt?: Record<string, string>
 }
 
 /**
@@ -247,7 +300,7 @@ export const loadSettings = (pack: Pack): ClinicalSettings => {
     // Both prompt maps, by the same rule and with the same message: a table naming a language
     // the markers cannot produce is a translation that will never be read, and it is worth
     // more as a load error than as a file nobody notices going unused.
-    for (const table of ['transcriptPrompt', 'transcriptRepairPrompt', 'dialoguePrompt'] as const) {
+    for (const table of ['transcriptPrompt', 'transcriptRepairPrompt', 'dialoguePrompt', 'medicationPrompt'] as const) {
       for (const [lang, key] of Object.entries(d[table] ?? {})) {
         if (!langs.includes(lang)) {
           throw new Error(
@@ -277,6 +330,26 @@ export const loadSettings = (pack: Pack): ClinicalSettings => {
       )
     }
   }
+  // A pack that DECLARES the table must fill it — and an EMPTY `shapes` is the version worth
+  // refusing loudly, because it reads as "the pass is configured" while turning it off. A pack
+  // that wants no pass omits the table or drops the prompt keys.
+  if (s.medicationPass) {
+    const shapes = s.medicationPass.shapes
+    if (!(Array.isArray(shapes) && shapes.length)) {
+      throw new Error(
+        `pack '${pack.name}': [clinical.medicationPass] declares no shapes — ` +
+          'omit the table to run one call per transcript, or name the shapes that take the second one',
+      )
+    }
+    for (const shape of shapes) {
+      if (shape !== 'dictation' && shape !== 'dialogue') {
+        throw new Error(
+          `pack '${pack.name}': [clinical.medicationPass] names shape '${shape}', which is not one this ` +
+            'harness can detect — the shapes are `dictation` and `dialogue`, decided by [clinical.dialogueDetection]',
+        )
+      }
+    }
+  }
   // A pack that DECLARES the table must fill it. An empty `negators` is not a language with no
   // negations, it is a typo, and it scores every "no diabetes" as a find.
   if (s.setMatching && !(Array.isArray(s.setMatching.negators) && s.setMatching.negators.length)) {
@@ -285,11 +358,33 @@ export const loadSettings = (pack: Pack): ClinicalSettings => {
         'omit the table to inherit the English+Spanish default, or state the list this corpus needs',
     )
   }
+  // The same rule for the same reason: an empty `doseTokens` is not a language whose doses have
+  // no words, it is a typo, and it passes "metformin 500 mg twice daily" as a drug name. The
+  // word cap gets a floor of 1 rather than 0, since a name is at least one word.
+  if (s.medicationName) {
+    const m = s.medicationName
+    if (!(Array.isArray(m.doseTokens) && m.doseTokens.length)) {
+      throw new Error(
+        `pack '${pack.name}': [clinical.medicationName] declares no doseTokens — ` +
+          'omit the table to inherit the English+Spanish default, or state the words this corpus needs',
+      )
+    }
+    if (!(typeof m.maxWords === 'number' && m.maxWords >= 1)) {
+      throw new Error(
+        `pack '${pack.name}': [clinical.medicationName] must state maxWords >= 1 — ` +
+          'a drug name is at least one word',
+      )
+    }
+  }
   return s
 }
 
 /** The matching rule for this pack, defaulted in ONE place so no task can pick its own. */
 export const setMatching = (pack: Pack): SetMatchRule => loadSettings(pack).setMatching ?? DEFAULT_SET_MATCHING
+
+/** The medication-name rule for this pack, defaulted in ONE place for the same reason. */
+export const medicationName = (pack: Pack): MedicationNameRule =>
+  loadSettings(pack).medicationName ?? DEFAULT_MEDICATION_NAME
 
 // --- models.default.toml --------------------------------------------------------------
 
@@ -396,6 +491,67 @@ export const transcriptRequest = (pack: Pack, constrain: boolean, transcript?: s
   schemaName: loadSettings(pack).transcriptSchemaName,
   sampling: loadSampling(pack, SAMPLING_KEY.transcript),
 })
+
+export const medicationSchema = (pack: Pack): object => pack.json<object>('medicationSchema')
+export const medicationSchemaGolden = (pack: Pack): string => pack.read('medicationSchemaGolden')
+
+/** The medication prompt, routed by language exactly as the other three families are. */
+export const medicationPrompt = (pack: Pack, transcript?: string): string =>
+  promptForLanguage(pack, 'medicationPrompt', transcript)
+
+/**
+ * Whether this pack declares the medication pass at all.
+ *
+ * All four keys plus the label, on `hasRepairContract`'s argument: a pack half-way through
+ * gaining the contract would otherwise pass a one-key check and fail at assembly, mid-run, on
+ * a transcript. "No medication pass" is a state every caller already handles, because it is
+ * the state every pack was in before the contract existed.
+ */
+export const hasMedicationContract = (pack: Pack): boolean =>
+  pack.has('medicationPrompt') &&
+  pack.has('medicationSchema') &&
+  pack.has('medicationSchemaGolden') &&
+  Boolean(loadSettings(pack).medicationSchemaName)
+
+/**
+ * Does THIS transcript take the second call?
+ *
+ * Shape is decided by the pack's own dialogue detector, and the answer by the pack's own list
+ * of shapes — so the eval and the consuming application ask one question of one contract. A
+ * runtime that decided this for itself would ship the pass over consultations, where it is
+ * measurably worse, while the eval reported the dictation numbers.
+ */
+export const takesMedicationPass = (pack: Pack, transcript: string): boolean => {
+  if (!hasMedicationContract(pack)) return false
+  const shapes = loadSettings(pack).medicationPass?.shapes
+  if (!shapes?.length) return false
+  return shapes.includes(isDialogue(pack, transcript) ? 'dialogue' : 'dictation')
+}
+
+/**
+ * The medication pass: the same transcript, asked for one section.
+ *
+ * Assembled here beside the reading it replaces, by the rule the rest of this file follows —
+ * one assembly, both callers. The eval measures this pass and `extract` runs it, and a pass
+ * whose prompt, schema or cap differed between them would be a call the numbers do not
+ * describe.
+ */
+export const medicationRequest = (pack: Pack, constrain: boolean, transcript?: string): TaskRequest => {
+  const name = loadSettings(pack).medicationSchemaName
+  if (!name) {
+    throw new ProfileError(
+      `pack '${pack.name}' declares medication prompts but no medicationSchemaName — ` +
+        'the label is part of the request body, and two runtimes that guess it differently ' +
+        'pin different bytes for the same contract',
+    )
+  }
+  return {
+    prompt: medicationPrompt(pack, transcript),
+    schema: constrain ? medicationSchema(pack) : undefined,
+    schemaName: name,
+    sampling: loadSampling(pack, MEDICATION_SAMPLING_KEY),
+  }
+}
 
 export const repairSchema = (pack: Pack): object => pack.json<object>('transcriptRepairSchema')
 export const repairSchemaGolden = (pack: Pack): string => pack.read('transcriptRepairSchemaGolden')
@@ -756,6 +912,18 @@ export interface QuotedSetCases {
    * would be the harness inventing a policy. Omitted means only `quoteFloor` gates.
    */
   fabricationFloor?: number
+  /**
+   * Sub-gate, OPTIONAL: the share of emitted medication items whose `text` is a drug name and
+   * nothing else.
+   *
+   * Optional because a pack whose tasks emit no medication has nothing to gate, and because the
+   * three floors above were measured before this axis existed — a corpus that adds it should
+   * measure it before declaring a number, exactly as those were. Omitted, the rate is still
+   * COMPUTED AND PRINTED; it just does not decide the verdict. That asymmetry is deliberate: an
+   * axis nobody can see is an axis nobody fixes, and this one was invisible for long enough to
+   * let four interventions be evaluated against a scorer blind to it.
+   */
+  medicationNameFloor?: number
 }
 
 export interface FormatCases extends QuotedSetCases {
@@ -789,6 +957,9 @@ const checkQuotedFloors = (pack: Pack, file: string, raw: QuotedSetCases): void 
   // Optional, so it is checked only when declared — but a DECLARED floor that is not a number
   // is a typo that would gate on `undefined`, which is false, which fails the run and names
   // nothing.
+  if (raw.medicationNameFloor !== undefined) {
+    checkFloor(pack, file, 'medicationNameFloor', raw.medicationNameFloor)
+  }
   if (raw.fabricationFloor === undefined) return
   checkFloor(pack, file, 'fabricationFloor', raw.fabricationFloor)
   if (raw.fabricationFloor < raw.quoteFloor) {
@@ -869,7 +1040,7 @@ export const transcriptRepairPrompt = (pack: Pack, transcript?: string): string 
  */
 const promptForLanguage = (
   pack: Pack,
-  defaultKey: 'transcriptPrompt' | 'transcriptRepairPrompt' | 'dialoguePrompt',
+  defaultKey: 'transcriptPrompt' | 'transcriptRepairPrompt' | 'dialoguePrompt' | 'medicationPrompt',
   transcript?: string,
 ): string => {
   const byLang = loadSettings(pack).languageDetection?.[defaultKey]

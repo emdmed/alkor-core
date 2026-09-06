@@ -75,3 +75,33 @@ test('an event with no content is passed through unharmed', () => {
   const run = { event: 'run', model: 'qwen', constrained: true }
   assert.deepEqual(redactClinical(run), run)
 })
+
+/**
+ * A SECOND pass writes its reply under a key of its own, and the top-level loop never saw it.
+ *
+ * This was a real gap rather than a hypothetical: `repair.completion` has been written to
+ * every repaired run's trace since the pass existed, and on a pack of real records it went to
+ * disk unredacted in the one file whose whole purpose is to be safe to keep. The medication
+ * pass writes `medication.completion` in the same shape, so the fix is general and this test
+ * is what keeps a third pass from re-opening it.
+ */
+test('a nested pass completion is elided too, not only the top-level one', () => {
+  const event = {
+    event: 'case',
+    completion: 'the first pass said this',
+    repair: { tally: { offered: 1 }, completion: 'the repair said this', error: 'and failed like this' },
+    medication: { ran: true, before: 1, after: 3, completion: 'the medication pass said this' },
+  }
+  const out = redactClinical(event) as any
+
+  assert.match(out.completion, /^\[redacted 24 chars, sha256:/)
+  assert.match(out.repair.completion, /^\[redacted 20 chars, sha256:/, 'a repair reply is note-derived text')
+  assert.match(out.repair.error, /^\[redacted/, 'and so is the error, which quotes the reply')
+  assert.match(out.medication.completion, /^\[redacted 29 chars, sha256:/)
+
+  // Everything that is NOT content survives: a trace redacted into uselessness is one nobody
+  // keeps, and the counts are what a later reader compares runs by.
+  assert.deepEqual(out.repair.tally, { offered: 1 })
+  assert.equal(out.medication.ran, true)
+  assert.equal(out.medication.after, 3)
+})

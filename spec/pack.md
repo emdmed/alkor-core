@@ -185,6 +185,60 @@ above this one has a default, because an absent negator list does not fake a pas
 it is simply wrong in a way a default fixes rather than hides. Declaring the table and leaving
 it empty is refused; that is a typo, not a language without negations.
 
+**A second call is a contract, not an implementation detail.** The clinical pack declares a
+medication pass: the same transcript, asked for one section, replacing that section in the
+reading. It is four file keys, a schema name, a `[sampling.*]` block, and a table saying which
+input shapes take it:
+
+```toml
+[clinical.medicationPass]
+shapes = ["dictation"]
+```
+
+Three things about that table are the general lesson. It is **in the pack**, because the
+consuming application makes the same decision on every recording it handles and two runtimes
+deciding separately grade different pipelines. Its value is **measured** — dictations gain, the
+same pass over two-speaker consultations emits a retracted drug and keeps a superseded dose —
+rather than chosen for safety. And **omitting it turns the pass off**, so a pack that has not
+measured the boundary gets one call per document, which is what every pack did before the
+contract existed.
+
+A second call also changes what a number means, so the eval prints the first-pass gates beside
+the final ones on every run and the two halves stay separable. **Write that block before you
+decide the default, not after.** It is what caught this pass shipping a drug the speaker had
+stopped, and what showed — once fixed — that the pass is worth its call: over the shapes that
+take it, item recall 94% → 96% and dose errors 3 → 1, with every gate clear. A second pass
+measured only on the cases that motivated it will always look better than it is.
+
+**Say which words your corpus doses in.** A medication item's `text` is the drug name and
+nothing else, and that rule is invisible to every other check: `"metformin 500 mg twice daily"`
+verifies as a quote, derives from that quote by deletion alone, and matches the expectation
+`metformin` by containment. Three green axes over an item that breaks the contract. So a third
+check reads `text` as a NAME:
+
+```toml
+[clinical.medicationName]
+maxWords = 3
+doseTokens = ["mg", "g", "daily", "twice", "morning", "night", "required",
+              "miligramos", "cada", "veces", "diario", "noche"]
+```
+
+It is a rule about **shape, not pharmacology**: a token containing a digit is rejected outright,
+a listed dose word is rejected, and a `text` longer than `maxWords` is not a name. A check that
+knew which words are drugs would need a list of every drug, which is exactly what a pack in a
+new specialty must not have to supply.
+
+Omitting the table inherits the English-and-Spanish list, on the same terms as the negators
+above and with the same limit: a pack in a third language inherits words it never uses and
+passes every dose-laden name. The failure is one-directional — an unrecognised dose word makes
+the check MISS a bad item, never reject a good one — which is why this table defaults at all.
+Declaring it and leaving `doseTokens` empty is refused, as is `maxWords` below 1.
+
+The rate is **printed whether or not you gate on it**. Declare `medicationNameFloor` in your
+case file once you have measured a number; until then the axis is visible and advisory. An axis
+nobody can see is an axis nobody fixes — this one was invisible while four separate
+interventions were evaluated against it.
+
 ## Goldens: pin bytes, not structure
 
 If your pack ships a schema for constrained decoding, ship a **golden** beside it: the

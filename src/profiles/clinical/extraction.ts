@@ -216,7 +216,35 @@ export const parseNoteFormat = (raw: string): NoteFormat => {
       }
       // An empty-string dose is normalised to null: it is the model saying there is none, in
       // the wrong spelling, and treating it as a dose would put an empty column in a chart.
-      return { ...base, dose: str(dose)?.trim() || null }
+      //
+      // The literal four letters "null" are the same statement in a worse spelling, and they
+      // arrive often enough to matter — three of seventeen dictations in one measured run. Kept
+      // as a string it is a dose no transcript contains, so it fails derivation and is printed
+      // to a clinician as though the drug were dosed "null". Neither is a reading of what the
+      // model said. This is the ONLY word coerced: any other unquotable dose is a real
+      // derivation failure and stays one.
+      const written = str(dose)?.trim()
+      return { ...base, dose: !written || written.toLowerCase() === 'null' ? null : written }
     }),
   }
+}
+
+/**
+ * Parse a medication-pass reply: the same section, from a call that returns only it.
+ *
+ * Written as a REUSE of `parseNoteFormat` rather than as a second parser, and the empty
+ * sections it supplies are the mechanism. An item this pass produces goes into the section a
+ * four-section reading would have produced, so it must be refused for the same reasons and
+ * normalised in the same way — a second parser would be a second answer to "what is a
+ * medication item", free to drift in exactly the place where the drift is invisible.
+ */
+export const parseMedicationOnly = (raw: string): { current_medication: MedicationItem[] } => {
+  const obj = parseJson(raw, 'medication')
+  if (obj.current_medication === undefined) {
+    throw new Error(`medication reply has no 'current_medication' — an empty list is written []`)
+  }
+  const reading = parseNoteFormat(
+    JSON.stringify({ presenting_complaint: null, history: [], plan: [], current_medication: obj.current_medication }),
+  )
+  return { current_medication: reading.current_medication }
 }

@@ -31,6 +31,7 @@ import { DOCUMENT_KIND, loadSettings, loadTranscriptCases, transcriptRequest } f
 import { parseNoteFormat, type FormatItem, type MedicationItem, type NoteFormat } from './extraction.ts'
 import { verifyDerivation, verifyQuote, type DerivationRule, type DerivationVerdict, type QuoteRule } from '../../core/verify.ts'
 import { repairReading, type RepairTally } from './repair.ts'
+import { applyMedication, medicationReading, type MedicationOutcome } from './medication.ts'
 
 export interface TranscriptReviewOptions {
   pack: Pack
@@ -45,6 +46,11 @@ export interface TranscriptReviewOptions {
    * incomparable with the new ones.
    */
   repair?: boolean
+  /**
+   * Run the medication pass. ON unless turned off, matching the eval exactly — the two paths
+   * make this decision the same way or the eval stops describing the product.
+   */
+  medicationPass?: boolean
 }
 
 /**
@@ -145,6 +151,23 @@ export interface TranscriptReport {
     why?: string
     error?: string
   }
+  /**
+   * Whether the medication pass ran, and what it changed — present on every transcript read
+   * by a pack that declares the contract, INCLUDING the dialogues it declines to run on.
+   *
+   * Recorded rather than inferred, because `reading` alone cannot say. Two runtimes producing
+   * the same four sections, one of which made a second call, are not the same runtime; and a
+   * dialogue whose medication came from the first pass must be distinguishable from a dictation
+   * whose medication came from the second, in a report a clinician's tooling may keep.
+   */
+  medication?: {
+    ran: boolean
+    /** Items in the section before the pass, and after it. Equal whenever it did not run. */
+    before: number
+    after: number
+    why?: string
+    error?: string
+  }
 }
 
 export const reviewTranscript = async (o: TranscriptReviewOptions): Promise<ReviewResult> => {
@@ -190,8 +213,26 @@ export const reviewTranscript = async (o: TranscriptReviewOptions): Promise<Revi
     label: 'transcript',
   })
 
-  const first = outcome.parsed
-    ? verifyReading(outcome.parsed, document, settings.quoteVerification, settings.textDerivation)
+  // The medication pass, before anything is verified: it REPLACES a section rather than
+  // correcting items, so verifying first would produce verdicts about items that are about to
+  // be discarded. Runs on dictations only, by [clinical.medicationPass].shapes — the decision
+  // is the pack's, so this path and the eval make it the same way or the eval measures a
+  // reading the product does not ship. It cannot throw and cannot lose a section.
+  const medication =
+    outcome.parsed && o.medicationPass !== false
+      ? await medicationReading({
+          pack: o.pack,
+          document,
+          reading: outcome.parsed,
+          constrain: o.constrain,
+          baseUrl: o.baseUrl,
+          trace: o.trace,
+        })
+      : null
+  const reading = outcome.parsed && medication ? applyMedication(outcome.parsed, medication) : outcome.parsed
+
+  const first = reading
+    ? verifyReading(reading, document, settings.quoteVerification, settings.textDerivation)
     : []
 
   // The second pass, over the items the first pass failed to cite. It cannot throw and it
@@ -224,9 +265,20 @@ export const reviewTranscript = async (o: TranscriptReviewOptions): Promise<Revi
     ok: Boolean(outcome.parsed),
     error: outcome.error,
     completion: outcome.raw,
-    reading: outcome.parsed ?? null,
+    reading: reading ?? null,
     items,
     totals: tallyReviewed(items),
+    ...(medication
+      ? {
+          medication: {
+            ran: medication.ran,
+            before: medication.before,
+            after: medication.after,
+            why: medication.why,
+            error: medication.error,
+          },
+        }
+      : {}),
     ...(repair
       ? {
           repair: {

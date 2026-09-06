@@ -112,6 +112,55 @@ transcriptCases  = "evals/transcript-cases.json"
 dialoguePrompt   = "prompts/dialogue.md"
 dialoguePromptEs = "prompts/dialogue.es.md"
 
+# --- The medication pass: the same transcript again, asked for one section. -------------
+#
+# A SECOND CALL PER DICTATION, and unlike the repair it is not a correction — it is the section
+# being read for the first time by a model that has nothing else to decode. That is the whole
+# mechanism, and it was measured before it was written: over nine dictations in both languages,
+# the four-section reading returned 23/25 drugs and 22/25 doses, while the same transcripts asked
+# for medication alone returned 25/25 and 25/25. The three recoveries are not cosmetic — an
+# amlodipine whose dose was corrected mid-dictation, a donepezilo, and an amoxicillin whose dose
+# came back as "to complete the course" — and a drug missing from a medication list is a
+# prescription absent from the record.
+#
+# DICTATIONS ONLY, and that is [clinical.medicationPass].shapes below rather than a fact about
+# the code. On the three two-speaker consultations the same pass makes the reading WORSE: it
+# returned six items for three drugs on tr-en-19, emitting the superseded cross-speaker dose
+# beside the corrected one, and derivation over the dialogues fell to 5/12 because a fact split
+# across two turns needs the unbroken run quoted and the pass keeps stitching fragments. The
+# dialogue prompt exists because a consultation is a different input; this pass does not have it.
+#
+# IT RUNS BY DEFAULT on the shapes below, and it was opt-in for exactly one measured run. That
+# run is worth keeping in the comment, because it is what the shapes table and the token cap are
+# both answers to: at a 512-token cap the six-drug dictation truncated and the pass fell back
+# silently, and with no worked example of a DISCONTINUED drug it returned `ibuprofeno` out of
+# "tampoco toma ibuprofeno ... lo suspendimos hace un año" — a drug stopped a year ago, listed as
+# current. The corpus run then failed `not invented`, a gate the first pass clears.
+#
+# Both are fixed and re-measured over the seventeen dictations: item recall 94% -> 96%, dose
+# errors 3 -> 1, hallucinations 4 -> 3, provenance and `not invented` 100%, every gate clear.
+#
+# WHAT IT STILL COSTS, stated because a second call that only advertised its gains would be the
+# thing this file exists to prevent: two DUPLICATE drug items the first pass does not produce
+# (tr-en-05, tr-en-08), each a drug named twice in the transcript and emitted twice, the second
+# without a dose. The scorer counts them — see `duplicateDrugs` — and the prompt's worked example
+# already demonstrates the exact pattern and is being read past. It is the next thing to fix.
+#
+# Absent these keys, a transcript is read by one call and this pack behaves exactly as it did
+# before they existed.
+medicationPrompt       = "prompts/medication.md"
+# Per-language, for the reason every other prompt in this file is: the pass copies spans out of a
+# transcript, and a model instructed in the wrong language starts translating what it copies.
+medicationPromptEs     = "prompts/medication.es.md"
+# Its own schema, because the four-section one cannot express "medication only" — every property
+# there is required, so a model handed it must fill history and plan too, which is precisely the
+# decode competition this pass exists to remove. The ITEM definition inside it is the note-format
+# item byte for byte, and a test compares them: an item this pass produces must be
+# indistinguishable from one the four-section reading produces, or a shipped note answers to two
+# different rules depending on which half of it you read.
+medicationSchema       = "schemas/medication.schema.json"
+medicationSchemaGolden = "schemas/medication.golden.json"
+
 # --- The repair pass: the failed citations of a reading, handed back with the transcript. ---
 # A SECOND contract rather than a second call on the first, because it asks a different
 # question. The transcript task asks what this consultation contained; this one asks where in
@@ -183,6 +232,9 @@ noteFormatSchemaName = "note_format"
 # be indistinguishable in the record of what was sent.
 transcriptSchemaName = "dictated_note"
 transcriptRepairSchemaName = "quote_repair"
+# The medication pass. Its own label like every other task: a server log and a pinned body must
+# be able to tell which of the two calls a dictation makes produced which bytes.
+medicationSchemaName = "current_medication"
 # The literature pass. Its own label like every other task, so a server log and a pinned body
 # can tell which contract produced which bytes.
 literatureSchemaName = "literature_search"
@@ -315,6 +367,11 @@ es = "dialoguePromptEs"
 [clinical.languageDetection.transcriptRepairPrompt]
 es = "transcriptRepairPromptEs"
 
+# And the same for the medication pass, its own table for the same reason: a pack may translate
+# one pass and not the other, and a shared table would make that state inexpressible.
+[clinical.languageDetection.medicationPrompt]
+es = "medicationPromptEs"
+
 # --- Which transcripts are conversations, and therefore take the dialogue prompt. -----
 #
 # OPTIONAL on the same terms as [clinical.languageDetection]: absent, every transcript is read as
@@ -341,8 +398,61 @@ labels = ["dr", "doctor", "pt", "patient", "med", "medico", "pac", "paciente", "
 minTurns = 4
 minSpeakers = 2
 
+# --- Which input shapes take the medication pass. --------------------------------------
+#
+# THE BOUNDARY IS MEASURED, not cautious. Dictations gain three drugs and three doses over nine
+# cases; the same pass over the three dialogues emits a drug the consultation retracted, keeps a
+# superseded cross-speaker dose beside the corrected one, and drops derivation to 5/12. Two
+# different input shapes, two different answers, and the pack already knows which is which —
+# [clinical.dialogueDetection] above decides it, and this table names what that decision buys.
+#
+# It is DATA because the consuming application makes the same decision on every recording it
+# handles. A runtime that ran the pass on everything would ship the tr-en-19 failure to a
+# clinician while this eval reported the dictation numbers.
+#
+# A shape absent from this list takes one call, which is what every shape did before this pass
+# existed. Removing the table entirely turns the pass off everywhere.
+[clinical.medicationPass]
+shapes = ["dictation"]
+
 [clinical.setMatching]
 negators = ["no", "not", "never", "denies", "denied", "without", "sin", "niega", "ningun", "ninguna", "nunca"]
+
+# --- What a medication item's `text` may contain: a drug name, and nothing else. --------
+#
+# The THIRD check on a medication item, and it exists because the other two cannot see this
+# failure. `"metformin five hundred milligrams twice daily"` verifies as a quote, derives from
+# that quote by deletion alone, and matches the expectation `metformin` by containment: three
+# green axes over an item that breaks the plainest rule in prompts/transcript.md. It was found
+# on a dictated transcript where a model, pushed to stop merging three drugs into one item,
+# split it into three items that each still carried their dose — the merge trap in
+# transcript-cases.json went quiet, every number improved, and the reading was still wrong.
+#
+# It is a rule about SHAPE and not a drug dictionary, and it cannot be otherwise: a check that
+# knew which words are drugs would need a list of every drug, which is the thing a pack in a new
+# specialty must never have to supply. A drug name is short and contains no dose. That is enough
+# to catch every failure of this kind measured so far.
+#
+# OPTIONAL, on [clinical.setMatching]'s terms rather than [clinical.quoteVerification]'s: an
+# absent table fakes no passing check, it inherits a list. These are exactly the words the
+# harness would default to, written out for the reason the negators are — a corpus in two
+# languages should say which two.
+[clinical.medicationName]
+# Three: "folic acid" is two words and so is "alendronic acid", while a combination written
+# "co-amoxiclav 500/125" is one. A cap rather than a match, because the failure this catches is
+# a name with a dose stapled to it, and that is always longer than the name.
+maxWords = 3
+# Words that belong in `dose` and can never be part of a drug's name. A token containing a DIGIT
+# is rejected without being listed here, which is what catches "850" and "2,5" in either
+# language. Route words ("oral", "inhalada") are deliberately absent: they are wrong in `text`
+# too, but they appear inside real drug names often enough that a check built on them would fail
+# good items — and this check is only worth having if a failure it reports is always a failure.
+doseTokens = ["mg", "g", "mcg", "ml", "microgram", "micrograms", "milligram", "milligrams",
+              "miligramo", "miligramos", "microgramo", "microgramos", "gramo", "gramos",
+              "daily", "weekly", "once", "twice", "morning", "night", "nightly", "hourly",
+              "hours", "times", "required", "prn",
+              "diario", "diaria", "dia", "noche", "manana", "horas", "veces", "cada",
+              "semanal", "precisa"]
 
 # The summary task's user message is ASSEMBLED from many notes rather than being one
 # document, so the assembly rule is part of the contract. See src/core/assemble.ts.

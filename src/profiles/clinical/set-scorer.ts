@@ -54,6 +54,115 @@ export interface SetMatchRule {
 
 export const DEFAULT_SET_MATCHING: SetMatchRule = { negators: DEFAULT_NEGATORS }
 
+/**
+ * Words that make a string a DOSE rather than a drug name.
+ *
+ * A DEFAULT on the same terms as `DEFAULT_NEGATORS`, and English and Spanish for the same
+ * reason: the reference corpus is. A pack in another language states its own list, and one
+ * that says nothing inherits these — which is safe in the direction that matters, because an
+ * unrecognised dose word makes this check MISS a bad item rather than reject a good one.
+ *
+ * Every entry is a word that belongs in `dose` and can never be part of a drug's name. Route
+ * words ("oral", "inhalada") are deliberately absent: they are wrong in `text` too, but they
+ * appear inside real drug names often enough that a check built on them would fail good items.
+ */
+export const DEFAULT_DOSE_TOKENS = [
+  'mg',
+  'g',
+  'mcg',
+  'ml',
+  'microgram',
+  'micrograms',
+  'milligram',
+  'milligrams',
+  'miligramo',
+  'miligramos',
+  'microgramo',
+  'microgramos',
+  'gramo',
+  'gramos',
+  'daily',
+  'weekly',
+  'once',
+  'twice',
+  'morning',
+  'night',
+  'nightly',
+  'hourly',
+  'hours',
+  'times',
+  'required',
+  'prn',
+  'diario',
+  'diaria',
+  'dia',
+  'noche',
+  'manana',
+  'horas',
+  'veces',
+  'cada',
+  'semanal',
+  'precisa',
+]
+
+/**
+ * What a medication item's `text` may contain.
+ *
+ * THE CHECK EXISTS BECAUSE THE OTHER TWO CANNOT SEE THIS FAILURE. `"metformin five hundred
+ * milligrams twice daily"` verifies as a quote, derives from that quote by deletion alone, and
+ * matches the expectation `metformin` by containment — three green axes over an item that
+ * breaks the contract's plainest medication rule. It was found on a dictated transcript where
+ * the model, pushed to split a merged item, split it into three items that each still carried
+ * their dose: the pack recorded the merge as fixed and the reading was still wrong.
+ *
+ * It is a rule about SHAPE, not a drug dictionary, and it cannot be otherwise: a check that
+ * knew which words are drugs would need a list of every drug, which is the thing a pack in a
+ * new specialty must never have to supply. What it can say is that a drug name is short and
+ * contains no dose — which is enough to catch every failure of this kind seen so far, and
+ * cheap enough that a pack inherits it without asking.
+ */
+export interface MedicationNameRule {
+  /**
+   * How many words a drug name may be. Three, because "folic acid" is two and "alendronic
+   * acid" is two, and a combination written as "co-amoxiclav 500/125" is one. A cap rather
+   * than a match: the failure this catches is a name with a dose stapled to it, which is
+   * always longer than the name.
+   */
+  maxWords: number
+  /** Words that belong in `dose` and never in a name. `DEFAULT_DOSE_TOKENS` if unstated. */
+  doseTokens: string[]
+}
+
+export const DEFAULT_MEDICATION_NAME: MedicationNameRule = {
+  maxWords: 3,
+  doseTokens: DEFAULT_DOSE_TOKENS,
+}
+
+export type NameVerdict =
+  | { ok: true }
+  /** A dose word, or a number, inside the name. The offending token is reported. */
+  | { ok: false; reason: 'dose-in-name'; token: string }
+  /** No dose word, but too many words to be a drug name — a phrase, or two drugs joined. */
+  | { ok: false; reason: 'not-a-name'; token: string }
+
+/**
+ * Is this medication `text` a drug name and nothing else?
+ *
+ * Numbers count as dose tokens whatever they are: no drug name in this corpus contains a
+ * digit, and one that did ("B12") would be caught by nothing else here anyway — the token is
+ * reported, so a pack that hits that case can see exactly what tripped it.
+ */
+export const verifyMedicationName = (text: string, rule: MedicationNameRule): NameVerdict => {
+  const tokens = norm(text).split(/[^\p{L}\p{N}]+/u).filter(Boolean)
+  const dose = new Set(rule.doseTokens.map((w) => norm(w)))
+  for (const t of tokens) {
+    if (/\d/.test(t)) return { ok: false, reason: 'dose-in-name', token: t }
+    if (dose.has(t)) return { ok: false, reason: 'dose-in-name', token: t }
+  }
+  if (tokens.length > rule.maxWords) return { ok: false, reason: 'not-a-name', token: tokens.slice(rule.maxWords).join(' ') }
+  return { ok: true }
+}
+
 /** Where one clause ends and the next begins, for the negation scan below. */
 const CLAUSE_BREAK = /[.;:,]/
 
@@ -152,7 +261,7 @@ export const absorbSet = (into: SetTally, o: SetTally): void => {
 export interface SetMiss {
   case: string
   field: string
-  reason: 'missed' | 'hallucination' | 'not-empty' | 'quote' | 'derivation' | 'dose'
+  reason: 'missed' | 'hallucination' | 'not-empty' | 'quote' | 'derivation' | 'dose' | 'name' | 'duplicate'
   detail: string
 }
 
@@ -239,6 +348,25 @@ export interface FormatTally extends SetTally {
   derivationsOk: number
   /** A dose expectation the model got wrong, or supplied where the note gives none. */
   doseErrors: number
+  /**
+   * Medication `text` fields checked, and how many were a drug name and nothing else. Its own
+   * pair rather than a fold into `derivations`, because the two ask different questions of the
+   * same string and a dose-laden name passes derivation every time.
+   */
+  names: number
+  namesOk: number
+  /**
+   * Medication items naming a drug some earlier item already named — the same prescription
+   * twice, usually once with a dose and once without.
+   *
+   * Counted because NOTHING ELSE SEES IT, and because it does not merely look untidy: on
+   * `tr-en-05` a run emitted `furosemide` with the dose "[inaudible] milligrams in the morning",
+   * which the contract says must be null, and `furosemide` again with null — and the answer
+   * key's doseNull expectation was satisfied by the second item while the first stood. A wrong
+   * dose and a right one, scored as correct. `uniqueItems` in the schema cannot catch this: the
+   * two items differ, in the field that makes one of them wrong.
+   */
+  duplicateDrugs: number
 }
 
 export const emptyFormatTally = (): FormatTally => ({
@@ -249,6 +377,9 @@ export const emptyFormatTally = (): FormatTally => ({
   derivations: 0,
   derivationsOk: 0,
   doseErrors: 0,
+  names: 0,
+  namesOk: 0,
+  duplicateDrugs: 0,
 })
 
 export const absorbFormat = (into: FormatTally, o: FormatTally): void => {
@@ -259,6 +390,9 @@ export const absorbFormat = (into: FormatTally, o: FormatTally): void => {
   into.derivations += o.derivations
   into.derivationsOk += o.derivationsOk
   into.doseErrors += o.doseErrors
+  into.names += o.names
+  into.namesOk += o.namesOk
+  into.duplicateDrugs += o.duplicateDrugs
 }
 
 /** The four sections flattened to `field -> texts`, which is what the set scorer reads. */
@@ -282,7 +416,7 @@ export const scoreFormatCase = (
   fields: SetExpectation[],
   got: NoteFormat,
   note: string,
-  rules: { quote: QuoteRule; derivation: DerivationRule; matching?: SetMatchRule },
+  rules: { quote: QuoteRule; derivation: DerivationRule; matching?: SetMatchRule; medicationName?: MedicationNameRule },
 ): { tally: FormatTally; misses: SetMiss[] } => {
   const set = scoreSet(caseName, fields, formatTexts(got), rules.matching ?? DEFAULT_SET_MATCHING)
   const tally: FormatTally = { ...emptyFormatTally(), ...set.tally }
@@ -331,6 +465,45 @@ export const scoreFormatCase = (
   for (const i of got.history) check('history', i)
   for (const i of got.plan) check('plan', i)
   for (const m of got.current_medication) check('current_medication', m)
+
+  // One drug, one item — checked across the section rather than on an item, which is why it is
+  // not in the loop below. Compared by the SAME normaliser the answer key uses, so "Furosemide"
+  // and "furosemide" are one drug and a pack whose corpus capitalises differently does not read
+  // as duplicate-free by accident.
+  const namedAlready = new Set<string>()
+  for (const m of got.current_medication) {
+    const drug = norm(m.text)
+    if (!drug) continue
+    if (namedAlready.has(drug)) {
+      tally.duplicateDrugs++
+      misses.push({
+        case: caseName,
+        field: 'current_medication',
+        reason: 'duplicate',
+        detail: `'${clip(m.text)}' was already emitted — one drug is one item, and the second carries dose ${m.dose === null ? 'null' : `'${clip(m.dose)}'`}`,
+      })
+    }
+    namedAlready.add(drug)
+  }
+
+  // The third check on a medication item, and the only one that reads `text` as a NAME rather
+  // than as an edit of a span. Run over every item the model emitted, for the same reason
+  // provenance is: an item nobody wrote an expectation for is where this failure hides.
+  for (const m of got.current_medication) {
+    tally.names++
+    const n = verifyMedicationName(m.text, rules.medicationName ?? DEFAULT_MEDICATION_NAME)
+    if (n.ok) tally.namesOk++
+    else
+      misses.push({
+        case: caseName,
+        field: 'current_medication',
+        reason: 'name',
+        detail:
+          n.reason === 'dose-in-name'
+            ? `'${clip(m.text)}' is not a drug name alone — '${n.token}' belongs in dose`
+            : `'${clip(m.text)}' is too long to be a drug name — '${clip(n.token)}' is past the limit`,
+      })
+  }
 
   // Dose expectations: attached to a `present` medication expectation, scored apart from it.
   // A drug found with the wrong dose is a different failure from a drug not found, and one

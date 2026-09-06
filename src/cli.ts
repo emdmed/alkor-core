@@ -44,6 +44,15 @@ const { values } = parseArgs({
     // Spelled as the negative because ON is the default and the reason to type it is to give
     // the reuse up. `parseArgs` has no negation convention, so this is a plain flag.
     'no-cache-prompt': { type: 'boolean', default: false },
+    // The medication pass over a dictation, ON by default — unlike the repair, because it is
+    // part of what this pack says reading a dictation means, and an eval that ran it only when
+    // asked would measure a reading the application does not ship.
+    //
+    // It was opt-in for exactly one measured run, and the history is the point: at a 512-token
+    // cap and without a worked example of a discontinued drug it failed `not invented` and put
+    // a STOPPED drug on a medication list. Both are fixed and re-measured. This flag reproduces
+    // a figure pinned before the pass existed. See src/profiles/clinical/medication.ts.
+    'no-medication-pass': { type: 'boolean', default: false },
     // Re-score a recorded run instead of producing a new one. No server is contacted.
     'from-trace': { type: 'string' },
     'strip-fences': { type: 'boolean', default: false },
@@ -59,8 +68,8 @@ const { values } = parseArgs({
 const usage = (msg?: string) => {
   if (msg) console.error(`${msg}\n`)
   console.error('usage:')
-  console.error('  node src/cli.ts extract --profile NAME (--note FILE | --case NAME | --note -) [--task NAME] [--constrain] [--repair] [--json] [--url URL] [--pack DIR]')
-  console.error('  node src/cli.ts eval    --profile NAME [--runs N] [--constrain] [--task NAME] [--repair] [--difficulty N|N-M] [--no-cache-prompt] [--url URL] [--pack DIR]')
+  console.error('  node src/cli.ts extract --profile NAME (--note FILE | --case NAME | --note -) [--task NAME] [--constrain] [--repair] [--no-medication-pass] [--json] [--url URL] [--pack DIR]')
+  console.error('  node src/cli.ts eval    --profile NAME [--runs N] [--constrain] [--task NAME] [--repair] [--difficulty N|N-M] [--no-cache-prompt] [--no-medication-pass] [--url URL] [--pack DIR]')
   console.error('  node src/cli.ts eval    --profile NAME --from-trace FILE [--strip-fences] [--pack DIR]   (re-score a recorded run, no server)')
   console.error('  node src/cli.ts agent   --profile NAME --task "..." --workspace DIR [--url URL] [--steps N]')
   console.error('  node src/cli.ts profiles')
@@ -165,7 +174,12 @@ if (command === 'extract') {
     // `--task` selects the contract, for a profile whose pack holds more than one. A profile
     // that reads a single contract ignores it, which is why it is passed unconditionally
     // rather than being made conditional on something this file would have to know.
-    options: { constrain: values.constrain, task: values.task, repair: values.repair },
+    options: {
+      constrain: values.constrain,
+      task: values.task,
+      repair: values.repair,
+      medicationPass: !values['no-medication-pass'],
+    },
   })
   trace.close()
 
@@ -245,6 +259,7 @@ try {
       fromTrace: values['from-trace'],
       stripFences: values['strip-fences'],
       repair: values.repair,
+      medicationPass: !values['no-medication-pass'],
     },
   })
 } catch (e) {

@@ -24,7 +24,14 @@
  */
 import type { Pack } from '../../core/pack.ts'
 import { eventOf, eventsOf, isRedacted, readTrace, TraceError, type TraceEvent } from '../../core/trace-read.ts'
-import { loadSettings, loadVitalCases, setMatching, vitalRequest, type VitalCase } from './contracts.ts'
+import {
+  loadSettings,
+  loadVitalCases,
+  medicationName,
+  setMatching,
+  vitalRequest,
+  type VitalCase,
+} from './contracts.ts'
 import { parseNoteFormat, parsePatientSummary, parseVitalSigns } from './extraction.ts'
 import { absorb, emptyTally, pct, ratio, scoreCase, scoreFailure, type VitalTally } from './scorer.ts'
 import { DOCUMENT_KIND, loadFormatCases, loadSummaryCases, loadTranscriptCases, type SetExpectation } from './contracts.ts'
@@ -272,6 +279,7 @@ const rescoreQuoted = <C extends { name: string; fields: SetExpectation[] }>(
     quote: settings.quoteVerification,
     derivation: settings.textDerivation,
     matching: setMatching(o.pack),
+    medicationName: medicationName(o.pack),
   }
   const total = emptyFormatTally()
   const changed: string[] = []
@@ -303,7 +311,12 @@ const rescoreQuoted = <C extends { name: string; fields: SetExpectation[] }>(
     lines: [
       `=== ${t.heading} ===`,
       `  item recall ${pct(total.found, total.required)}   provenance ${pct(total.quotesVerified, total.quotes)}   ` +
-        `derivation ${pct(total.derivationsOk, total.derivations)}`,
+        `derivation ${pct(total.derivationsOk, total.derivations)}` +
+        // Only when the task emitted medication, so the three tasks without it read exactly as
+        // they did before this axis existed. Re-scoring a RECORDED run against a new check is
+        // most of the point of having one: the trace holds the completions, so an axis added
+        // today can be measured over every run this pack has already stored.
+        (total.names ? `   drug name ${pct(total.namesOk, total.names)}` : ''),
       changed.length ? `  ${changed.length} case(s) moved` : '  every case scored what the run recorded',
     ],
   }

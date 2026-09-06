@@ -35,6 +35,7 @@ import {
   loadTranscriptCases,
   parseDifficultyRange,
   requiredSetExpectations,
+  medicationName,
   setMatching,
   summaryRequest,
   transcriptRequest,
@@ -48,8 +49,10 @@ import {
 import { ProfileError } from '../../core/profile.ts'
 import { UNIDENTIFIED, type ServerIdentity } from '../../core/client.ts'
 import { parseNoteFormat, parsePatientSummary } from './extraction.ts'
+import type { NoteFormat } from './extraction.ts'
 import { readingFromItems, verifyReading, type ReviewedItem } from './review-transcript.ts'
 import { repairReading, type RepairOutcome, type RepairTally } from './repair.ts'
+import { applyMedication, medicationReading, type MedicationOutcome } from './medication.ts'
 import { pct, ratio } from './scorer.ts'
 import {
   absorbFormat,
@@ -86,6 +89,17 @@ export interface TaskEvalOptions {
    * alone would be a two-call pipeline quoting a one-call number.
    */
   repair?: boolean
+  /**
+   * Run the medication pass on the shapes the pack names for it.
+   *
+   * ON unless explicitly false, which is the opposite of `repair` above: the pass is part of
+   * the contract rather than an experiment, and a default-off contract is one the application
+   * ships unmeasured. False reproduces a number pinned before the pass existed.
+   *
+   * It leaves ONE defect of its own, counted rather than described: two duplicate drug items
+   * over the corpus, which the first pass does not produce. See `duplicateDrugs`.
+   */
+  medicationPass?: boolean
 }
 
 /**
@@ -358,6 +372,14 @@ interface QuotedSetTask<C extends { name: string; class: string; difficulty: num
    * makes a `--repair` run and a plain one comparable at all.
    */
   repair?: (document: string, items: ReviewedItem[]) => Promise<RepairOutcome>
+  /**
+   * The medication pass, run BEFORE the repair and on the first pass's reading.
+   *
+   * Optional and per-task like the repair, and ordered before it deliberately: the pass replaces
+   * a whole section, so a repair that ran first would be re-citing items about to be discarded,
+   * and its accepted/refused counts would describe work thrown away.
+   */
+  medication?: (document: string, reading: NoteFormat) => Promise<MedicationOutcome>
 }
 
 export const runNoteFormatEval = async (o: TaskEvalOptions): Promise<TaskResult> => {
@@ -407,6 +429,19 @@ export const runTranscriptEval = async (o: TaskEvalOptions): Promise<TaskResult>
     // The case IS the document here: there is no written note to point at.
     document: (c) => o.pack.document(c.name, DOCUMENT_KIND.transcript),
     provenance: () => ({}),
+    medication:
+      o.medicationPass === false
+        ? undefined
+        : (document, reading) =>
+            medicationReading({
+              pack: o.pack,
+              document,
+              reading,
+              constrain: o.constrain,
+              baseUrl: o.baseUrl,
+              trace: o.trace,
+              cachePrompt: o.cachePrompt,
+            }),
     repair: o.repair
       ? (document, items) =>
           repairReading({
@@ -431,13 +466,14 @@ const runQuotedSetEval = async <C extends { name: string; class: string; difficu
 ): Promise<TaskResult> => {
   // Sampling and schema are properties of the TASK; only the prompt can vary per document.
   const shape = def.request('')
-  const { itemRecallFloor, quoteFloor, derivationFloor, fabricationFloor } = def.floors
+  const { itemRecallFloor, quoteFloor, derivationFloor, fabricationFloor, medicationNameFloor } = def.floors
   const cases = def.cases
   const settings = loadSettings(o.pack)
   const rules = {
     quote: settings.quoteVerification,
     derivation: settings.textDerivation,
     matching: setMatching(o.pack),
+    medicationName: medicationName(o.pack),
   }
   const runs = Math.max(1, o.runs ?? 1)
 
@@ -448,6 +484,10 @@ const runQuotedSetEval = async <C extends { name: string; class: string; difficu
   // would be a number that no run produced.
   const totalBefore = emptyFormatTally()
   const repairTally: RepairTally = { offered: 0, accepted: 0, refused: 0, confessed: 0, unanswered: 0 }
+  // How many transcripts actually took the second call. Counted rather than assumed from the
+  // case count: a corpus of dictations and dialogues takes it on some and not others, and a
+  // report that said "a second call per transcript" over a mixed corpus would be wrong.
+  let medicationRan = 0
   const misses: SetMiss[] = []
   const samples: BenchSample[] = []
 
@@ -480,17 +520,28 @@ const runQuotedSetEval = async <C extends { name: string; class: string; difficu
         : scoreFailedFormat(c.name, c.fields)
       absorbFormat(totalBefore, firstScored.tally)
 
+      // The medication pass, on the first reading and before the repair. It cannot throw and
+      // cannot lose a section: a reply that does not parse leaves `current_medication` exactly
+      // as the first pass wrote it, and `applyMedication` is then the identity.
+      let medication: MedicationOutcome | null = null
+      let read = outcome.parsed
+      if (def.medication && read) {
+        medication = await def.medication(note, read)
+        if (medication.ran) medicationRan++
+        read = applyMedication(read, medication)
+      }
+
       // The repair, and the reading it produced. `repairReading` cannot throw and cannot lose
       // items, so `repair.items` is either an improved reading or the one it was handed.
       let repair: RepairOutcome | null = null
-      if (def.repair && outcome.parsed) {
-        const items = verifyReading(outcome.parsed, note, rules.quote, rules.derivation)
+      if (def.repair && read) {
+        const items = verifyReading(read, note, rules.quote, rules.derivation)
         repair = await def.repair(note, items)
         for (const k of ['offered', 'accepted', 'refused', 'confessed', 'unanswered'] as const) {
           repairTally[k] += repair.tally[k]
         }
       }
-      const reading = repair ? readingFromItems(repair.items) : outcome.parsed
+      const reading = repair ? readingFromItems(repair.items) : read
 
       const scored = reading
         ? scoreFormatCase(c.name, c.fields, reading, note, rules)
@@ -506,6 +557,10 @@ const runQuotedSetEval = async <C extends { name: string; class: string; difficu
       // describing half its own cost.
       const repairSample = repair ? sampleOf(`${c.name} (repair)`, repair) : undefined
       if (repairSample) samples.push(repairSample)
+      // And the medication call, on the same argument: it is a second call this run paid for,
+      // so it belongs in the cost block rather than beside it.
+      const medicationSample = medication?.ran ? sampleOf(`${c.name} (medication)`, medication) : undefined
+      if (medicationSample) samples.push(medicationSample)
 
       o.trace.write({
         event: 'case',
@@ -527,6 +582,24 @@ const runQuotedSetEval = async <C extends { name: string; class: string; difficu
               tallyBeforeRepair: firstScored.tally,
             }
           : {}),
+        ...(medication
+          ? {
+              // `ran: false` lines are written too, and carry the reason: a dialogue that
+              // declined the pass and a dictation whose pass failed are different runs, and a
+              // trace that recorded only the successes could not tell them apart later.
+              medication: {
+                ran: medication.ran,
+                why: medication.why,
+                error: medication.error,
+                before: medication.before,
+                after: medication.after,
+                completion: medication.completion,
+              },
+              // Only when the pass actually replaced the section — otherwise this tally is the
+              // one above under a name suggesting something changed.
+              ...(medication.ran ? { tallyBeforeMedication: firstScored.tally } : {}),
+            }
+          : {}),
       })
 
       const t = scored.tally
@@ -540,7 +613,11 @@ const runQuotedSetEval = async <C extends { name: string; class: string; difficu
       console.log(
         `${c.name.padEnd(22)} ${c.class.padEnd(14)} d${c.difficulty} ` +
           `items ${pct(t.found, t.required)} quote ${pct(t.quotesVerified, t.quotes)} ` +
-          `deriv ${pct(t.derivationsOk, t.derivations)} halluc ${t.hallucinations} dose ${t.doseErrors}${fixed}${flag}`,
+          `deriv ${pct(t.derivationsOk, t.derivations)} halluc ${t.hallucinations} dose ${t.doseErrors}` +
+          // Only when the case emitted medication. A column reading `name n/a` on every
+          // summary case would be three tasks paying to look at a fourth task's axis.
+          (t.names ? ` name ${pct(t.namesOk, t.names)}` : '') +
+          `${fixed}${flag}`,
       )
     }
   }
@@ -548,6 +625,7 @@ const runQuotedSetEval = async <C extends { name: string; class: string; difficu
   const recall = ratio(total.found, total.required)
   const quoteRate = ratio(total.quotesVerified, total.quotes)
   const derivationRate = ratio(total.derivationsOk, total.derivations)
+  const nameRate = ratio(total.namesOk, total.names)
   // Quotes that are somewhere in the note, under some relaxation of case or accents — so the
   // complement of this is the model INVENTING a span, which is a different accusation from the
   // model tidying one. Derived rather than counted: a strictly-verified quote and an
@@ -577,10 +655,50 @@ const runQuotedSetEval = async <C extends { name: string; class: string; difficu
         (total.quotes ? '' : unmeasured),
     )
   }
+  // Printed whenever the task emitted medication, gate or no gate. A pack that has not yet
+  // measured this axis still gets to SEE it, which is the whole reason it exists.
+  if (total.names) {
+    console.log(
+      `drug name   ${pct(total.namesOk, total.names)}  <- ` +
+        (medicationNameFloor === undefined
+          ? 'measured, not gated — `text` is the drug name and nothing else'
+          : `sub-gate, floor ${(medicationNameFloor * 100).toFixed(0)}% — \`text\` is the drug name and nothing else`),
+    )
+  }
   console.log(
     `items emitted ${total.items}   hallucinations ${total.hallucinations}   dose errors ${total.doseErrors}   ` +
+      (total.duplicateDrugs ? `duplicate drugs ${total.duplicateDrugs}   ` : '') +
       `edited-only quote failures (a capital or an accent) ${total.quotesEditedOnly}   failed runs ${total.failedRuns}`,
   )
+
+  // What the medication pass was worth, against the same first reading.
+  //
+  // Printed whenever it ran on anything, and it names HOW MANY transcripts took it rather than
+  // implying every one did: on a mixed corpus the dialogues do not, by
+  // [clinical.medicationPass].shapes, and a block reading "a second call per transcript" over
+  // twenty cases where seventeen made one would be describing a run that did not happen.
+  //
+  // The four gates are printed before and after together ONLY when no repair also ran. With
+  // both passes on, the difference between `totalBefore` and `total` is the two of them
+  // together and attributing it to either would be a number nobody measured.
+  if (medicationRan) {
+    const b = totalBefore
+    console.log(
+      `\nthe medication pass (a SECOND call on ${medicationRan} of ${cases.length * runs} transcript reading(s) — ` +
+        'the numbers above include it):',
+    )
+    if (def.repair) {
+      console.log('  a repair also ran, so the first-pass comparison below covers both passes together')
+    }
+    console.log(
+      `  first pass alone:  item recall ${pct(b.found, b.required)}  provenance ${pct(b.quotesVerified, b.quotes)}  ` +
+        `derivation ${pct(b.derivationsOk, b.derivations)}  drug name ${pct(b.namesOk, b.names)}`,
+    )
+    console.log(
+      `  with the pass:     item recall ${pct(total.found, total.required)}  provenance ${pct(total.quotesVerified, total.quotes)}  ` +
+        `derivation ${pct(total.derivationsOk, total.derivations)}  drug name ${pct(total.namesOk, total.names)}`,
+    )
+  }
 
   // What the second pass was worth, in the same four gates, against the first pass alone.
   //
@@ -640,6 +758,11 @@ const runQuotedSetEval = async <C extends { name: string; class: string; difficu
       ...(fabricationFloor === undefined
         ? []
         : [{ name: 'not-invented', score: fabricationRate, floor: fabricationFloor, measured: total.quotes > 0 }]),
+      // Optional on the same terms, and for the additional reason that this axis is newer than
+      // the floors beside it: a pack declares a number here once it has measured one.
+      ...(medicationNameFloor === undefined
+        ? []
+        : [{ name: 'drug-name', score: nameRate, floor: medicationNameFloor, measured: total.names > 0 }]),
     ],
     summary:
       `item recall ${measuredPct(recall, total.required)} vs floor ${(itemRecallFloor * 100).toFixed(0)}% ` +

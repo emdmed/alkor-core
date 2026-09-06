@@ -110,6 +110,27 @@ temperature = 0.0
 max_tokens = 1024
 timeout_secs = 300
 
+# --- The medication pass over a dictated transcript. ---
+# The INPUT is the whole transcript again — the same prefill the first pass paid for, and mostly
+# reused, since `cache_prompt` sees the same user message behind a different system prompt. The
+# OUTPUT is one bounded array of short items, which is why the cap is a quarter of the reading's:
+# fifteen drugs at a quote, a name and a dose each fits several times over in 512, and a cap that
+# cannot bind on a legal answer is a cap that reports nothing about the pass it governs.
+#
+# The deadline is the transcript task's, not the short one. This call reads the same speech, and
+# the six-drug Spanish dictation took 77 s of generation on a loaded iGPU — a backstop that binds
+# on a legitimate polypharmacy list is a transport limit wearing a model result's clothing.
+[sampling.medication]
+temperature = 0.0
+# 1024, and it was 512 for one measured run. `tr-es-14-polimedicado` names six drugs, and six
+# items of quote-plus-name-plus-dose do not fit: the completion stopped at the cap mid-string,
+# the reply would not parse, and the pass fell back to the first reading — silently, because
+# falling back is what this pass does when it cannot answer. A polypharmacy list is exactly the
+# case the pass exists for, so a cap that binds there is a cap that turns it off where it is
+# needed most, and reports nothing while doing it.
+max_tokens = 1024
+timeout_secs = 900
+
 # --- The literature pass over a finished note. ---
 # The smallest output in the pack: three short objects, no quotes longer than a line. 512 is
 # several times a maximal legal reply, which is the same ratio vital signs runs at — a cap that

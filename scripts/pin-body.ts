@@ -8,6 +8,7 @@
  * checked once and thereafter assumed. This makes the comparison a string diff.
  *
  *   node scripts/pin-body.ts --pack packs/clinical --case tr-en-02-self-correction
+ *   node scripts/pin-body.ts --pack packs/clinical --case tr-en-02-self-correction --medication
  *   node scripts/pin-body.ts --pack packs/clinical --note FILE
  *
  * Output is the exact bytes `JSON.stringify(body)` produces, and nothing else, so it can be
@@ -17,7 +18,7 @@ import { readFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { chatBody } from '../src/core/client.ts'
 import { loadPack } from '../src/core/pack.ts'
-import { DOCUMENT_KIND, transcriptRequest } from '../src/profiles/clinical/contracts.ts'
+import { DOCUMENT_KIND, medicationRequest, takesMedicationPass, transcriptRequest } from '../src/profiles/clinical/contracts.ts'
 
 const { values } = parseArgs({
   options: {
@@ -26,6 +27,10 @@ const { values } = parseArgs({
     note: { type: 'string' },
     model: { type: 'string', default: 'local' },
     unconstrained: { type: 'boolean', default: false },
+    // The SECOND call a dictation makes, pinned by the same script because it is part of what
+    // reading a dictation costs and sends. A runtime that matched the first body byte for byte
+    // and sent something else on the second would be a runtime this pin declared identical.
+    medication: { type: 'boolean', default: false },
   },
 })
 
@@ -40,7 +45,16 @@ const document = values.case
   : readFileSync(values.note!, 'utf8')
 // AFTER the document, because the prompt is chosen by the transcript's language. A pin
 // assembled before reading the transcript would pin a body the eval never sends.
-const req = transcriptRequest(pack, !values.unconstrained, document)
+if (values.medication && !takesMedicationPass(pack, document)) {
+  console.error(
+    'this document does not take the medication pass: it is a dialogue, or the pack does not ' +
+      'declare the contract. There is no second body to pin, which is itself the thing to check.',
+  )
+  process.exit(2)
+}
+const req = values.medication
+  ? medicationRequest(pack, !values.unconstrained, document)
+  : transcriptRequest(pack, !values.unconstrained, document)
 
 // Exactly the call `extract` makes, with the same fields in the same order. A script that
 // assembled its own would be pinning itself.
@@ -55,7 +69,7 @@ process.stdout.write(
       temperature: req.sampling.temperature,
       timeoutMs: req.sampling.timeout_secs * 1000,
       model: values.model,
-      label: 'transcript',
+      label: values.medication ? 'medication' : 'transcript',
     }),
   ),
 )

@@ -37,9 +37,28 @@ import {
   TASKS,
   loadSampling,
   setMatching as setMatching_,
+  hasMedicationContract,
+  medicationPrompt,
+  medicationSchema,
+  medicationSchemaGolden,
+  takesMedicationPass,
 } from '../src/profiles/clinical/contracts.ts'
-import { FORMAT_LIST_FIELDS, SUMMARY_FIELDS, parseNoteFormat, parsePatientSummary } from '../src/profiles/clinical/extraction.ts'
-import { DEFAULT_NEGATORS, matchesAny, scoreFormatCase, scoreSet } from '../src/profiles/clinical/set-scorer.ts'
+import {
+  FORMAT_LIST_FIELDS,
+  SUMMARY_FIELDS,
+  parseMedicationOnly,
+  parseNoteFormat,
+  parsePatientSummary,
+} from '../src/profiles/clinical/extraction.ts'
+import { applyMedication } from '../src/profiles/clinical/medication.ts'
+import {
+  DEFAULT_MEDICATION_NAME,
+  DEFAULT_NEGATORS,
+  matchesAny,
+  scoreFormatCase,
+  scoreSet,
+  verifyMedicationName,
+} from '../src/profiles/clinical/set-scorer.ts'
 import { gatePasses } from '../src/profiles/clinical/set-eval.ts'
 import { assembleDocument } from '../src/core/assemble.ts'
 
@@ -492,6 +511,71 @@ test('a dose the note does not give is an error, counted apart from the drug', (
 })
 
 /**
+ * The three checks on a medication item ask three different questions, and this is the one
+ * that was missing. Every assertion below is a MEASURED reading: a dictated transcript where
+ * the model, pushed to stop merging its medication into one item, split it into three items
+ * that each still carried their dose — and the pack called the merge fixed.
+ */
+test('a dose left inside the drug name is caught, where the other two checks pass it', () => {
+  const note = 'her usual medication is metformin 500 mg twice daily and atorvastatin 20 mg at night'
+  const got = {
+    presenting_complaint: null,
+    history: [],
+    plan: [],
+    current_medication: [
+      { quote: note, text: 'metformin 500 mg twice daily', dose: '500 mg twice daily' },
+      { quote: note, text: 'atorvastatin', dose: '20 mg at night' },
+    ],
+  }
+  const expect = [{ field: 'current_medication', expect: { kind: 'present' as const, match: [['metformin']], dose: [['500 mg']] } }]
+  const { tally, misses } = scoreFormatCase('c', expect, got, note, RULES)
+
+  // The three axes that already existed all pass on the bad item, which is why the check had
+  // to be added rather than derived from them.
+  assert.equal(tally.quotesVerified, 2, 'both quotes are in the note')
+  assert.equal(tally.derivationsOk, tally.derivations, 'a dose-laden name is still its quote with words deleted')
+  assert.equal(tally.found, 1, 'and containment finds `metformin` inside it')
+  assert.equal(tally.doseErrors, 0, 'and the dose field itself is right')
+
+  assert.equal(tally.names, 2, 'every emitted medication item is checked, expectation or not')
+  assert.equal(tally.namesOk, 1, 'only the second item is a drug name and nothing else')
+  const miss = misses.find((m) => m.reason === 'name')
+  assert.ok(miss, 'the failure is reported as its own reason, not folded into derivation')
+  assert.match(miss!.detail, /'500'/, 'and it names the token that made it a dose')
+})
+
+test('a name too long to be a name is a different failure from a dose in the name', () => {
+  assert.deepEqual(verifyMedicationName('amlodipine', DEFAULT_MEDICATION_NAME), { ok: true })
+  assert.deepEqual(verifyMedicationName('folic acid', DEFAULT_MEDICATION_NAME), { ok: true }, 'two words is a drug name')
+  assert.deepEqual(verifyMedicationName('alendronic acid', DEFAULT_MEDICATION_NAME), { ok: true })
+  assert.deepEqual(
+    verifyMedicationName('metformina 850 dos veces al día', DEFAULT_MEDICATION_NAME),
+    { ok: false, reason: 'dose-in-name', token: '850' },
+    'the default list is English AND Spanish, because the reference corpus is',
+  )
+  assert.deepEqual(
+    verifyMedicationName('salbutamol inhaler as required', DEFAULT_MEDICATION_NAME),
+    { ok: false, reason: 'dose-in-name', token: 'required' },
+    'a schedule with no number in it is still a schedule',
+  )
+  // Five words, none of them a dose word: not a dose in a name, just not a name. The token
+  // reported is everything past the cap, so a reader sees what overflowed rather than one word.
+  assert.deepEqual(verifyMedicationName('her usual water tablet please', DEFAULT_MEDICATION_NAME), {
+    ok: false,
+    reason: 'not-a-name',
+    token: 'tablet please',
+  })
+})
+
+test('a pack states its own dose words, because they are the language\'s and not the code\'s', () => {
+  const german = { maxWords: 3, doseTokens: ['taglich', 'morgens'] }
+  assert.deepEqual(verifyMedicationName('ramipril morgens', german), { ok: false, reason: 'dose-in-name', token: 'morgens' })
+  // And the inherited list finds nothing of its own — the failure mode the negator list already
+  // taught this pack, in the direction that MISSES a bad item rather than rejecting a good one.
+  assert.deepEqual(verifyMedicationName('ramipril morgens', DEFAULT_MEDICATION_NAME), { ok: true })
+})
+
+/**
  * Containment was `String.includes`, and it credited two things it should not have. Both are
  * measured false positives rather than hypotheticals — see set-scorer.ts.
  */
@@ -598,4 +682,158 @@ test('a gate with nothing to measure does not pass', () => {
   assert.equal(gatePasses({ score: 0.5, floor: 0.9, measured: true }), false)
   // The floor itself may be 0 and the gate still has to have measured something.
   assert.equal(gatePasses({ score: 1, floor: 0, measured: false }), false)
+})
+
+// --- The medication pass ----------------------------------------------------------------
+//
+// A SECOND CALL on a dictation, and the checks below are the ones that would let it ship
+// something the eval never measured: a schema that drifted from the one it replaces items in,
+// a shape boundary decided in code rather than in the pack, and a parser that accepted an item
+// the four-section parser would have refused.
+
+test('the medication schema serializes to its golden', () => {
+  assert.equal(JSON.stringify(medicationSchema(pack)), medicationSchemaGolden(pack).trim())
+})
+
+/**
+ * The item definition is SHARED, and nothing but this test says so. An item the pass produces
+ * goes into the section a four-section reading would have produced, so a drift here is a
+ * shipped note whose two halves answer to different rules — invisible in either file.
+ */
+test('a medication item is defined identically in both schemas', () => {
+  const one = (medicationSchema(pack) as any).$defs.medication
+  const two = (formatSchema(pack) as any).$defs.medication
+  assert.deepEqual(one, two, 'the pass replaces note-format items and must produce the same kind')
+  const section = (medicationSchema(pack) as any).properties.current_medication
+  assert.deepEqual(section, (formatSchema(pack) as any).properties.current_medication)
+})
+
+test('the pack declares the whole medication contract, or the pass does not run', () => {
+  assert.equal(hasMedicationContract(pack), true)
+  assert.ok(medicationPrompt(pack).length > 500)
+  // Routed by language exactly as the other three families are.
+  const es = medicationPrompt(pack, pack.document('tr-es-14-polimedicado', 'transcript'))
+  assert.ok(es.includes('UN ÍTEM POR FÁRMACO'), 'a Spanish dictation takes the Spanish prompt')
+  const en = medicationPrompt(pack, pack.document('tr-en-01-rambling', 'transcript'))
+  assert.ok(en.includes('ONE ITEM PER DRUG'), 'an English one takes the English prompt')
+})
+
+/**
+ * The boundary is MEASURED and it is the pack's: dictations gain three drugs and three doses
+ * over nine cases, and the same pass over the three dialogues emits a retracted drug and keeps
+ * a superseded cross-speaker dose. A runtime deciding this for itself would ship that failure.
+ */
+test('dictations take the medication pass and dialogues do not', () => {
+  for (const name of ['tr-en-01-rambling', 'tr-en-02-self-correction', 'tr-es-14-polimedicado']) {
+    assert.equal(takesMedicationPass(pack, pack.document(name, 'transcript')), true, `${name} is a dictation`)
+  }
+  for (const name of ['tr-en-18-dialogue', 'tr-en-19-dialogue-correction', 'tr-es-20-dialogo']) {
+    assert.equal(takesMedicationPass(pack, pack.document(name, 'transcript')), false, `${name} is a consultation`)
+  }
+})
+
+test('the medication parser refuses exactly what the note-format parser refuses', () => {
+  const ok = parseMedicationOnly('{"current_medication":[{"quote":"on ramipril 5 mg","text":"ramipril","dose":"5 mg"}]}')
+  assert.deepEqual(ok.current_medication, [{ quote: 'on ramipril 5 mg', text: 'ramipril', dose: '5 mg' }])
+  // An empty-string dose is the model saying there is none, in the wrong spelling.
+  const blank = parseMedicationOnly('{"current_medication":[{"quote":"her usual metformin","text":"metformin","dose":""}]}')
+  assert.equal(blank.current_medication[0]!.dose, null)
+  // An item with no quote cannot be verified, so it is refused rather than dropped: a section
+  // that silently lost its unquotable items would score better for citing less.
+  assert.throws(() => parseMedicationOnly('{"current_medication":[{"text":"ramipril","dose":"5 mg"}]}'), /quote/)
+  assert.throws(() => parseMedicationOnly('{"current_medication":null}'), /\[\]/)
+  assert.throws(() => parseMedicationOnly('{}'), /current_medication/)
+})
+
+/**
+ * Every failure path returns the reading untouched. This pass can improve a reading and must
+ * never be a new way to lose one — the same rule the repair pass follows.
+ */
+test('a medication outcome that did not run leaves the reading exactly as it was', () => {
+  const reading = {
+    presenting_complaint: null,
+    history: [],
+    plan: [],
+    current_medication: [{ quote: 'on ramipril 5 mg', text: 'ramipril', dose: '5 mg' }],
+  }
+  const skipped = { ran: false, items: null, cost: [], attempts: 0, lostMs: 0, before: 1, after: 1 }
+  assert.equal(applyMedication(reading, skipped), reading, 'the identity, not a copy')
+
+  const replaced = {
+    ran: true,
+    items: [{ quote: 'on ramipril 5 mg and metformin 1 g', text: 'metformin', dose: '1 g' }],
+    cost: [],
+    attempts: 0,
+    lostMs: 0,
+    before: 1,
+    after: 1,
+  }
+  const after = applyMedication(reading, replaced)
+  assert.deepEqual(after.current_medication, replaced.items, 'the section is replaced wholesale')
+  assert.equal(after.history, reading.history, 'and nothing else is touched')
+})
+
+/**
+ * The literal string "null" as a dose, which is not a hypothesis: three of seventeen dictations
+ * in one measured run of the medication pass returned it. Kept as a string it is a dose no
+ * transcript contains — so it fails derivation, and it reaches a clinician as a drug dosed
+ * "null". Coerced, and ONLY this word: any other unquotable dose is a real failure.
+ */
+test('a dose of "null" is the model saying there is none, in the worst spelling', () => {
+  const one = parseMedicationOnly('{"current_medication":[{"quote":"on her usual furosemide","text":"furosemide","dose":"null"}]}')
+  assert.equal(one.current_medication[0]!.dose, null)
+  const two = parseMedicationOnly('{"current_medication":[{"quote":"on her usual furosemide","text":"furosemide","dose":"NULL"}]}')
+  assert.equal(two.current_medication[0]!.dose, null)
+  // Not a general amnesty: a dose the quote does not support is still a derivation failure.
+  const real = parseMedicationOnly('{"current_medication":[{"quote":"on her usual furosemide","text":"furosemide","dose":"40 mg"}]}')
+  assert.equal(real.current_medication[0]!.dose, '40 mg')
+  // And the same rule reaches the four-section parser, because it is one contract.
+  const reading = parseNoteFormat(
+    '{"presenting_complaint":null,"history":[],"plan":[],"current_medication":[{"quote":"on her usual furosemide","text":"furosemide","dose":"null"}]}',
+  )
+  assert.equal(reading.current_medication[0]!.dose, null)
+})
+
+/**
+ * One drug, one item. MEASURED on `tr-en-05`: the medication pass emitted `furosemide` with the
+ * dose "[inaudible] milligrams in the morning" — which the contract says must be null — and
+ * `furosemide` again with null. The key's doseNull expectation was satisfied by the second item
+ * while the first stood, so a wrong dose and a right one scored as correct. `uniqueItems` in the
+ * schema cannot catch it: the two items differ, in the field that makes one of them wrong.
+ */
+test('a drug emitted twice is counted, because nothing else can see it', () => {
+  const note = 'she takes furosemide [inaudible] milligrams in the morning and her water tablet is the furosemide'
+  const got = {
+    presenting_complaint: null,
+    history: [],
+    plan: [],
+    current_medication: [
+      { quote: note, text: 'furosemide', dose: '[inaudible] milligrams in the morning' },
+      { quote: note, text: 'Furosemide', dose: null },
+    ],
+  }
+  const expect = [{ field: 'current_medication', expect: { kind: 'present' as const, match: [['furosemide']], doseNull: true } }]
+  const { tally, misses } = scoreFormatCase('c', expect, got, note, RULES)
+
+  assert.equal(tally.duplicateDrugs, 1, 'the second mention of one drug is one duplicate, not two items')
+  const miss = misses.find((m) => m.reason === 'duplicate')
+  assert.ok(miss, 'reported as its own reason')
+  assert.match(miss!.detail, /already emitted/)
+
+  // Compared by the answer key's own normaliser, so a capital does not buy a clean score.
+  assert.equal(tally.names, 2, 'both are still checked as names')
+})
+
+test('two different drugs in one section are not duplicates', () => {
+  const note = 'on ramipril 5 mg and metformin 1 g twice daily'
+  const got = {
+    presenting_complaint: null,
+    history: [],
+    plan: [],
+    current_medication: [
+      { quote: note, text: 'ramipril', dose: '5 mg' },
+      { quote: note, text: 'metformin', dose: '1 g twice daily' },
+    ],
+  }
+  assert.equal(scoreFormatCase('c', [], got, note, RULES).tally.duplicateDrugs, 0)
 })

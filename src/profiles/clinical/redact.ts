@@ -52,6 +52,27 @@ export const redactClinical = (event: Record<string, unknown>): Record<string, u
         : m,
     )
   }
+  // NESTED completions, and this is the part that was missing rather than an extra.
+  //
+  // A second call's reply is written under a key of its own — `repair.completion`, and now
+  // `medication.completion` — which is model output from the same document by a different
+  // path, and the top-level loop above never saw it. On a pack of real records that was PHI
+  // on disk in a file whose whole purpose is to be safe to keep.
+  //
+  // One level deep, deliberately: every trace event this profile writes puts a pass's reply
+  // exactly there, and a general deep walk would be a redactor whose behaviour on a shape
+  // nobody has written is anybody's guess. A THIRD pass nesting deeper must extend this and
+  // will be caught by the test that reads every event a run writes.
+  for (const [key, value] of Object.entries(out)) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue
+    const nested = value as Record<string, unknown>
+    if (!CONTENT_FIELDS.some((f) => typeof nested[f] === 'string')) continue
+    const copy: Record<string, unknown> = { ...nested }
+    for (const field of CONTENT_FIELDS) {
+      if (typeof copy[field] === 'string') copy[field] = elide(copy[field] as string)
+    }
+    out[key] = copy
+  }
   return out
 }
 
