@@ -62,13 +62,14 @@ const { values } = parseArgs({
     // anything. See src/profiles/clinical/repair.ts.
     repair: { type: 'boolean', default: false },
     json: { type: 'boolean', default: false },
+    calculate: { type: 'boolean', default: false },
   },
 })
 
 const usage = (msg?: string) => {
   if (msg) console.error(`${msg}\n`)
   console.error('usage:')
-  console.error('  node src/cli.ts extract --profile NAME (--note FILE | --case NAME | --note -) [--task NAME] [--constrain] [--repair] [--no-medication-pass] [--json] [--url URL] [--pack DIR]')
+  console.error('  node src/cli.ts extract --profile NAME (--note FILE | --case NAME | --note -) [--task NAME] [--constrain] [--repair] [--no-medication-pass] [--calculate] [--json] [--url URL] [--pack DIR]')
   console.error('  node src/cli.ts eval    --profile NAME [--runs N] [--constrain] [--task NAME] [--repair] [--difficulty N|N-M] [--no-cache-prompt] [--no-medication-pass] [--url URL] [--pack DIR]')
   console.error('  node src/cli.ts eval    --profile NAME --from-trace FILE [--strip-fences] [--pack DIR]   (re-score a recorded run, no server)')
   console.error('  node src/cli.ts agent   --profile NAME --task "..." --workspace DIR [--url URL] [--steps N]')
@@ -179,6 +180,7 @@ if (command === 'extract') {
       task: values.task,
       repair: values.repair,
       medicationPass: !values['no-medication-pass'],
+      calculate: values.calculate,
     },
   })
   trace.close()

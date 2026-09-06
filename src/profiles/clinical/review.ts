@@ -25,6 +25,7 @@ import { extract } from '../../modes/extract.ts'
 import { gradedFields, loadSettings, loadVitalCases, vitalRequest, type GradedField } from './contracts.ts'
 import { isBloodPressure, parseVitalSigns, type Reading, type VitalSigns } from './extraction.ts'
 import { verifyQuote, type QuoteRule } from '../../core/verify.ts'
+import { calculateDerived, renderDerived } from './calculations.ts'
 
 export interface VitalReviewOptions {
   pack: Pack
@@ -33,6 +34,8 @@ export interface VitalReviewOptions {
   constrain: boolean
   /** A named case from the pack, or a document the caller supplied. */
   input: { kind: 'case'; name: string } | { kind: 'text'; text: string; label?: string }
+  /** When true, compute derived values (BMI, PaO2/FiO2, categories) from the extracted readings. */
+  calculate?: boolean
 }
 
 /** Case names this pack can be asked for by name, in the order the answer key lists them. */
@@ -81,9 +84,16 @@ export const reviewVitalSigns = async (o: VitalReviewOptions): Promise<ReviewRes
     `${o.constrain ? 'constrained' : 'unconstrained'} · ` +
     `temp ${req.sampling.temperature} · max_tokens ${req.sampling.max_tokens}\n`
 
-  const text = outcome.parsed
-    ? `${header}\n${renderReading(req.fields, outcome.parsed, document, loadSettings(o.pack).quoteVerification)}`
-    : `${header}\nno reading: ${outcome.error}`
+  const readingText = outcome.parsed
+    ? renderReading(req.fields, outcome.parsed, document, loadSettings(o.pack).quoteVerification)
+    : `no reading: ${outcome.error}`
+
+  const derivedText =
+    outcome.parsed && o.calculate
+      ? '\n--- derived calculations ---\n' + renderDerived(calculateDerived(outcome.parsed)).join('\n')
+      : ''
+
+  const text = `${header}\n${readingText}${derivedText}`
 
   o.trace.write({
     event: 'review',

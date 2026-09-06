@@ -64,6 +64,7 @@ export const PROFILE: ProfileModule = {
       trace: ctx.trace,
       constrain: Boolean(ctx.options.constrain),
       input: ctx.input,
+      calculate: Boolean(ctx.options.calculate),
     }
     const task = reviewTask(ctx.options.task)
     // `--repair` reaches only the transcript task, and reads as unsupported rather than as
