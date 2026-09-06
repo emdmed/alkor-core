@@ -80,6 +80,10 @@ src/modes/    extract.ts   single-shot constrained extraction; one retry, transp
               agentic.ts   the tool loop, for one task run to completion
               session.ts   the same loop, multi-turn, with a consent gate
 src/profiles/ clinical/    the reference profile: four tasks, names no vital sign
+                           settings.ts  what the pack declares, and the refusals that make
+                                        a declaration worth trusting
+                           contracts.ts what one pass SENDS: prompt, schema, cap, routing
+                           cases.ts     what the reply is graded against: the answer keys
                            review.ts    one note in, one reading out, provenance checked
                            eval.ts      vital signs over the corpus, scored and gated
                            set-eval.ts  summary, note-format, transcript: set extraction, cited

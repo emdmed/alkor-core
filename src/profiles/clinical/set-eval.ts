@@ -24,28 +24,22 @@ import type { Trace } from '../../core/trace.ts'
 import { formatBench, summarizeBench, type BenchSample, type BenchSummary } from '../../core/bench.ts'
 import { assembleDocument } from '../../core/assemble.ts'
 import { extract, type ExtractOutcome } from '../../modes/extract.ts'
+import { loadSettings, medicationName, setMatching } from './settings.ts'
 import {
   DIFFICULTY_MAX,
   DIFFICULTY_MIN,
-  DOCUMENT_KIND,
-  formatRequest,
   loadFormatCases,
-  loadSettings,
   loadSummaryCases,
   loadTranscriptCases,
   parseDifficultyRange,
   requiredSetExpectations,
-  medicationName,
-  setMatching,
-  summaryRequest,
-  transcriptRequest,
   type FormatCase,
   type QuotedSetCases,
   type SetExpectation,
   type SummaryCase,
-  type TaskRequest,
-  type TranscriptCase,
-} from './contracts.ts'
+  type TranscriptCase
+} from './cases.ts'
+import { DOCUMENT_KIND, formatRequest, summaryRequest, transcriptRequest, type TaskRequest } from './contracts.ts'
 import { ProfileError } from '../../core/profile.ts'
 import { UNIDENTIFIED, type ServerIdentity } from '../../core/client.ts'
 import { parseNoteFormat, parsePatientSummary } from './extraction.ts'

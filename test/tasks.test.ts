@@ -17,31 +17,38 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadPack, type Pack } from '../src/core/pack.ts'
 import {
+  loadSettings,
+  isDialogue,
+  loadSampling,
+  setMatching as setMatching_
+} from '../src/profiles/clinical/settings.ts'
+import {
+  loadFormatCases,
+  loadTranscriptCases,
+  loadSummaryCases,
+  loadVitalCases,
+  requiredSetExpectations
+} from '../src/profiles/clinical/cases.ts'
+import {
   formatPrompt,
   formatSchema,
   formatSchemaGolden,
-  loadFormatCases,
-  loadTranscriptCases,
-  loadSettings,
-  loadSummaryCases,
-  loadVitalCases,
   gradedFields,
-  requiredSetExpectations,
   summaryPrompt,
-  isDialogue,
   transcriptPrompt,
   transcriptRequest,
   summarySchema,
   summarySchemaGolden,
   SAMPLING_KEY,
   TASKS,
-  loadSampling,
-  setMatching as setMatching_,
+  CONTRACTS,
+  DOCUMENT_KIND,
+  type ContractSpec,
   hasMedicationContract,
   medicationPrompt,
   medicationSchema,
   medicationSchemaGolden,
-  takesMedicationPass,
+  takesMedicationPass
 } from '../src/profiles/clinical/contracts.ts'
 import {
   FORMAT_LIST_FIELDS,
@@ -626,6 +633,11 @@ test('a pack that declares the matching table must fill it', () => {
     writeFileSync(
       join(root, 'pack.toml'),
       `spec = 2\nname = "m"\n[clinical]\ndefaultTask = "vital-signs"\n` +
+        // The four required labels. Noise for a test about negators, but a pack that loads has
+        // to be a loadable pack: `loadSettings` refuses a missing one, because the label is
+        // part of the request body.
+        'vitalSignsSchemaName = "v"\nsummarySchemaName = "s"\n' +
+        'noteFormatSchemaName = "f"\ntranscriptSchemaName = "t"\n' +
         '[clinical.quoteVerification]\ncollapseWhitespace = true\ncaseSensitive = true\naccentSensitive = true\n' +
         '[clinical.textDerivation]\ndeletionOnly = true\n[clinical.summaryAssembly]\ntotalChars = 10000\n' +
         (setMatching === undefined ? '' : `[clinical.setMatching]\nnegators = ${JSON.stringify(setMatching)}\n`),
@@ -706,6 +718,58 @@ test('a medication item is defined identically in both schemas', () => {
   assert.deepEqual(one, two, 'the pass replaces note-format items and must produce the same kind')
   const section = (medicationSchema(pack) as any).properties.current_medication
   assert.deepEqual(section, (formatSchema(pack) as any).properties.current_medication)
+})
+
+/**
+ * The contract table is only worth having if a bad row fails loudly.
+ *
+ * Every fact a pass is assembled from now lives in one `CONTRACTS` row, which removed five
+ * places a contract could be half-wired. It did not remove the possibility of MIS-wiring one,
+ * and a mis-wired row is quiet in the way that matters: a contract pointed at another's
+ * `[sampling.*]` runs at the wrong cap and reports a number for it, and a contract pointed at
+ * another's label pins a body a server log cannot attribute. Neither is a type error — the
+ * fields are all strings.
+ */
+test('every contract names keys that resolve, and names them alone', () => {
+  // Typed as the interface rather than the literal rows: `as const satisfies` narrows each
+  // row to exactly the fields it has, so an optional one is unreachable on the union.
+  const specs: ContractSpec[] = Object.values(CONTRACTS)
+
+  // The row's own name matches the key it is filed under, so a refusal quoting `spec.id`
+  // names the contract a reader can find.
+  for (const [key, spec] of Object.entries(CONTRACTS)) assert.equal(spec.id, key)
+
+  // Sampling table and schema label are one-to-one with the contract. A shared one is the
+  // silent mis-wiring: the run succeeds and describes the wrong cap or the wrong contract.
+  for (const field of ['samplingKey', 'schemaNameField'] as const) {
+    const seen = specs.map((s) => s[field])
+    assert.equal(new Set(seen).size, seen.length, `two contracts share a ${field}: ${seen.join(', ')}`)
+  }
+
+  // Schema and golden, by contrast, MAY be shared — transcript sends the note-format schema
+  // under its own label, on purpose. What may not happen is the two coming apart: a contract
+  // reading one contract's schema and another's golden pins bytes it never sends.
+  for (const s of specs) {
+    const owner = specs.find((o) => o.schemaKey === s.schemaKey)
+    assert.equal(s.goldenKey, owner?.goldenKey, `${s.id} pairs ${s.schemaKey} with a golden from elsewhere`)
+  }
+
+  // And every key resolves in the reference pack, which declares all six contracts.
+  for (const s of specs) {
+    for (const key of [s.promptKey, s.schemaKey, s.goldenKey]) {
+      assert.ok(pack.has(key), `${s.id} names '${key}', which this pack does not declare`)
+    }
+    if (s.dialoguePromptKey) assert.ok(pack.has(s.dialoguePromptKey), `${s.id} names a dialogue prompt it lacks`)
+    assert.ok(loadSampling(pack, s.samplingKey).max_tokens > 0, `${s.id} has no [sampling.${s.samplingKey}]`)
+  }
+
+  // The graded tasks are exactly the rows with a corpus, and the two passes exactly those
+  // without: a pass that gained a `documentKind` would appear in `--task` with nothing to read.
+  assert.deepEqual(
+    specs.filter((s) => 'documentKind' in s).map((s) => s.id).sort(),
+    [...TASKS].sort(),
+  )
+  for (const t of TASKS) assert.equal(DOCUMENT_KIND[t], CONTRACTS[t].documentKind)
 })
 
 test('the pack declares the whole medication contract, or the pass does not run', () => {

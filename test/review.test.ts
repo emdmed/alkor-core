@@ -16,10 +16,10 @@ import { join } from 'node:path'
 import { loadPack } from '../src/core/pack.ts'
 import { requireDocumentName, ProfileError, type ProfileModule } from '../src/core/profile.ts'
 import { gradedFields, vitalRequest } from '../src/profiles/clinical/contracts.ts'
+import { loadSettings } from '../src/profiles/clinical/settings.ts'
 import type { VitalSigns } from '../src/profiles/clinical/extraction.ts'
 import { PROFILE } from '../src/profiles/clinical/profile.ts'
 import { checkQuote, renderReading, vitalDocumentNames } from '../src/profiles/clinical/review.ts'
-import { loadSettings } from '../src/profiles/clinical/contracts.ts'
 
 const pack = loadPack(join(import.meta.dirname, '..', 'packs', 'clinical'))
 const fields = gradedFields(pack)

@@ -1,14 +1,30 @@
 /**
- * The clinical profile's reading of its contract pack.
+ * The clinical profile's contracts: what one pass SENDS, assembled from the pack.
  *
  * Everything vital-signs-shaped lives here rather than in `src/core/`: the gradeable slot
- * list, the case format, the per-task sampling. Core hands this module a `Pack` and knows
- * nothing else about the domain.
+ * list, the per-task sampling key, the prompt-and-schema pairing each task is run under.
+ * Core hands this module a `Pack` and knows nothing else about the domain.
  *
- * **The slot list is derived from the schema, not written down here.** That is the one
- * structural difference from how this task was first built, and it is deliberate. A
- * hardcoded list of nine field names is a second statement of something the schema already
- * says — in the one order that is load-bearing for the grammar — and two statements that
+ * This file is one third of what the pack reading used to be, and the split is by question
+ * rather than by size. `settings.ts` holds what the pack DECLARES and the refusals that make
+ * a declaration trustworthy; this file assembles requests out of what survived; `cases.ts`
+ * loads the answer keys those requests are graded against. The dependency runs one way —
+ * cases may know about a slot list, contracts never know about a case.
+ *
+ * **A contract is a row in `CONTRACTS`, not a function.** That is the one structural
+ * difference from how this file was first built. Six contracts each used to spell out their
+ * own prompt key, schema key, golden key, label field and sampling key across five separate
+ * places — a `SAMPLING_KEY` map, a `DOCUMENT_KIND` map, an accessor triple, a `*Request`
+ * builder and, for the two optional ones, a hand-copied refusal. Adding a seventh meant
+ * finding all five, and the failure mode of missing one is not a compile error: a contract
+ * wired to another's sampling key runs at the wrong cap and reports a number for it.
+ *
+ * It is the same argument the slot list below already makes one level down. A hardcoded list
+ * of nine field names is a second statement of something the schema already says; six
+ * hand-written builders are a second statement of something the manifest already says.
+ *
+ * **The slot list is derived from the schema, not written down here.** A hardcoded list is
+ * the one order that is load-bearing for the grammar, stated twice, and two statements that
  * can disagree is how a denominator goes quietly wrong: the eval keeps reporting a
  * percentage, just of the wrong total. Deriving it also means a pack can add a tenth vital
  * sign by editing its schema and its cases, without touching this repository.
@@ -17,22 +33,18 @@
  * schema is `anyOf` with a `$ref` in it. `extraction_confidence` is a bare number and
  * `notes` is a nullable string, so both fall out as metadata without either being named.
  */
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { parse as parseToml } from 'smol-toml'
-import { specGap, SPEC_VERSION, type Pack } from '../../core/pack.ts'
+import { type Pack } from '../../core/pack.ts'
 import { ProfileError } from '../../core/profile.ts'
-import type { AssemblyRule } from '../../core/assemble.ts'
-import type { DerivationRule, QuoteRule } from '../../core/verify.ts'
-// The section lists live with the parsers that read them: one statement of what a task's
-// reply contains, rather than a second copy here that can disagree with it.
-import { FORMAT_LIST_FIELDS, SUMMARY_FIELDS } from './extraction.ts'
 import {
-  DEFAULT_MEDICATION_NAME,
-  DEFAULT_SET_MATCHING,
-  type MedicationNameRule,
-  type SetMatchRule,
-} from './set-scorer.ts'
+  detectLanguage,
+  isDialogue,
+  isRoutedPromptKey,
+  loadSampling,
+  loadSettings,
+  type RoutedPromptKey,
+  type Sampling,
+  type SchemaNameField,
+} from './settings.ts'
 
 /** How a reading is shaped. A blood pressure is one reading with two numbers, not two. */
 export type FieldShape = 'measurement' | 'bloodPressure'
@@ -42,377 +54,162 @@ export interface GradedField {
   shape: FieldShape
 }
 
-// --- [clinical] settings --------------------------------------------------------------
+// --- The contract table -------------------------------------------------------------------
+
+/**
+ * One contract, as the five manifest facts a pass needs to be assembled from.
+ *
+ * Everything a contract IS lives in one row: which prompt it reads, which schema constrains
+ * it, which golden pins that schema's bytes, which label goes in the request body, and which
+ * `[sampling.*]` table sets its cap. Nothing else in this file may name those keys.
+ */
+export interface ContractSpec {
+  /** The contract's own name, used in refusals. Four of the six are also `--task` words. */
+  id: string
+  /**
+   * Pack file key of the default prompt — and, when the format has a table for it, the name
+   * of that table too. `isRoutedPromptKey` is what decides which, so the routing a contract
+   * gets is a property of the pack format rather than a second declaration here.
+   */
+  promptKey: string
+  /**
+   * The prompt this contract takes when its input is a two-speaker consultation rather than a
+   * dictation. Only the transcript contract has one: a dialogue is not a separate contract —
+   * same schema, same label, same cap — it is the same contract asked in a different voice.
+   */
+  dialoguePromptKey?: RoutedPromptKey
+  /** Pack file key of the JSON Schema. Two contracts legitimately name the same one. */
+  schemaKey: string
+  /** Pack file key of the golden serialization that pins that schema's bytes. */
+  goldenKey: string
+  /** Which `[clinical].*SchemaName` supplies `json_schema.name` for this contract. */
+  schemaNameField: SchemaNameField
+  /** The `[sampling.*]` table. A manifest key, deliberately not the same word as `id`. */
+  samplingKey: string
+  /**
+   * Which `documents` kind this contract's input comes from. Absent for the two passes that
+   * have no corpus of their own — they read the transcript their caller already had.
+   */
+  documentKind?: string
+  /**
+   * A contract a pack may legitimately not have. Absence is reported as "no such pass",
+   * which is a state every caller already handles, because it is the state every pack was in
+   * before the contract existed. A REQUIRED contract's label is checked by `loadSettings`
+   * instead, at load, so a pack missing one never reaches assembly.
+   */
+  optional?: boolean
+}
+
+/**
+ * Every contract this profile knows how to send, keyed by name.
+ *
+ * The four with a `documentKind` are the graded tasks; the two without are second calls
+ * inside the transcript task. Neither of those is in `TASKS`, because nothing invokes them by
+ * name, they have no corpus of their own and they produce no score of their own — putting
+ * them there would add words to `--task` that nobody can run.
+ */
+export const CONTRACTS = {
+  'vital-signs': {
+    id: 'vital-signs',
+    promptKey: 'vitalSignsPrompt',
+    schemaKey: 'vitalSignsSchema',
+    goldenKey: 'vitalSignsSchemaGolden',
+    schemaNameField: 'vitalSignsSchemaName',
+    samplingKey: 'vital_signs',
+    documentKind: 'default',
+  },
+  summary: {
+    id: 'summary',
+    promptKey: 'summaryPrompt',
+    schemaKey: 'summarySchema',
+    goldenKey: 'summarySchemaGolden',
+    schemaNameField: 'summarySchemaName',
+    samplingKey: 'patient_summary',
+    documentKind: 'default',
+  },
+  'note-format': {
+    id: 'note-format',
+    promptKey: 'noteFormatPrompt',
+    schemaKey: 'noteFormatSchema',
+    goldenKey: 'noteFormatSchemaGolden',
+    schemaNameField: 'noteFormatSchemaName',
+    samplingKey: 'note_format',
+    documentKind: 'default',
+  },
+  /**
+   * The dictated-transcript task: its own prompt, label and cap, the note-format SCHEMA.
+   *
+   * Sharing the schema is the design rather than a saving. The two tasks answer the same
+   * question about the same encounter — what are the four sections a clinician reads — and the
+   * only thing that differs is whether the source was typed or spoken. A second schema would be
+   * a second statement of one contract, free to drift in property order, which is the one part
+   * of it that is compiled into a grammar. The LABEL is its own, so a server log can still say
+   * which of the two tasks produced a completion.
+   */
+  transcript: {
+    id: 'transcript',
+    promptKey: 'transcriptPrompt',
+    dialoguePromptKey: 'dialoguePrompt',
+    schemaKey: 'noteFormatSchema',
+    goldenKey: 'noteFormatSchemaGolden',
+    schemaNameField: 'transcriptSchemaName',
+    samplingKey: 'transcript',
+    documentKind: 'transcript',
+  },
+  /** The medication pass: the same transcript, asked for one section. */
+  medication: {
+    id: 'medication',
+    promptKey: 'medicationPrompt',
+    schemaKey: 'medicationSchema',
+    goldenKey: 'medicationSchemaGolden',
+    schemaNameField: 'medicationSchemaName',
+    samplingKey: 'medication',
+    optional: true,
+  },
+  /** The repair pass: the failed items of a reading, handed back with the transcript. */
+  'transcript-repair': {
+    id: 'transcript-repair',
+    promptKey: 'transcriptRepairPrompt',
+    schemaKey: 'transcriptRepairSchema',
+    goldenKey: 'transcriptRepairSchemaGolden',
+    schemaNameField: 'transcriptRepairSchemaName',
+    samplingKey: 'transcript_repair',
+    optional: true,
+  },
+} as const satisfies Record<string, ContractSpec>
+
+// --- The tasks, as a view of the table ----------------------------------------------------
 
 /** The four graded tasks, in the order a pack author meets them. */
 export type Task = 'vital-signs' | 'summary' | 'note-format' | 'transcript'
 export const TASKS: Task[] = ['vital-signs', 'summary', 'note-format', 'transcript']
 
-/** The `[sampling.*]` key each task reads. Separate from the task name because one is a
+/**
+ * The `[sampling.*]` key each task reads. Separate from the task name because one is a
  * command-line word and the other is a manifest key, and a rename of either is not a rename
- * of the other. */
-export const SAMPLING_KEY: Record<Task, string> = {
-  'vital-signs': 'vital_signs',
-  summary: 'patient_summary',
-  'note-format': 'note_format',
-  transcript: 'transcript',
-}
-
-/**
- * The `[sampling.*]` key the repair pass reads.
- *
- * NOT in the map above, because the repair is not a task: nothing invokes it by name, it has
- * no corpus of its own and it produces no score of its own. It is a second call inside the
- * transcript task, and adding it to `TASKS` would put a word in `--task` that nobody can run.
+ * of the other — but read off the contract rather than restated, so the two cannot drift.
  */
-export const REPAIR_SAMPLING_KEY = 'transcript_repair'
+export const SAMPLING_KEY: Record<Task, string> = Object.fromEntries(
+  TASKS.map((t) => [t, CONTRACTS[t].samplingKey]),
+) as Record<Task, string>
 
-/**
- * The `[sampling.*]` key the medication pass reads. Not a task, for the same three reasons the
- * repair is not: no name to invoke, no corpus of its own, no score of its own.
- */
-export const MEDICATION_SAMPLING_KEY = 'medication'
+/** The `[sampling.*]` key the repair pass reads. */
+export const REPAIR_SAMPLING_KEY = CONTRACTS['transcript-repair'].samplingKey
+
+/** The `[sampling.*]` key the medication pass reads. */
+export const MEDICATION_SAMPLING_KEY = CONTRACTS.medication.samplingKey
 
 /**
  * Which `documents` kind a task's input comes from — the manifest table added in spec 3.
  *
  * Three tasks read written notes and one reads dictated transcripts, and the two corpora are
- * not interchangeable. Stated as a map rather than decided inside each eval so that a task
- * cannot quietly read the wrong corpus: a transcript case whose name collides with a note
+ * not interchangeable. Read off the contract rather than decided inside each eval so that a
+ * task cannot quietly read the wrong corpus: a transcript case whose name collides with a note
  * would otherwise grade a written note against a dictation answer key and report a number.
  */
-export const DOCUMENT_KIND: Record<Task, string> = {
-  'vital-signs': 'default',
-  summary: 'default',
-  'note-format': 'default',
-  transcript: 'transcript',
-}
-
-export interface ClinicalSettings {
-  defaultTask: string
-  /**
-   * Does this pack's corpus consist of documents written FOR it?
-   *
-   * Read by the profile to decide whether trace lines may hold the completion verbatim. It
-   * is deliberately not defaulted to true and deliberately not an environment variable: it is
-   * a fact about the corpus, it travels with the pack to whoever runs it next, and a pack
-   * that does not say is treated as real records. See profiles/clinical/redact.ts.
-   */
-  corpusSynthetic?: boolean
-  vitalSignsSchemaName: string
-  summarySchemaName: string
-  noteFormatSchemaName: string
-  /**
-   * `json_schema.name` for the transcript task, which sends the note-format SCHEMA under a
-   * label of its own. The schema is shared on purpose — a clinician reads one structure — but
-   * a pinned request body that could not tell the two tasks apart would make a server log
-   * useless for saying which of them produced a completion.
-   */
-  transcriptSchemaName: string
-  /**
-   * `json_schema.name` for the repair pass. OPTIONAL, and its absence is how a pack says it
-   * has no repair contract: `repairRequest` refuses to assemble without it rather than
-   * defaulting, because a label the two runtimes disagree about is a pinned body they
-   * disagree about, for no reason a reader could ever find.
-   */
-  transcriptRepairSchemaName?: string
-  /**
-   * `json_schema.name` for the medication pass, on the same terms as the repair's: absent means
-   * the pack has no medication contract, and `medicationRequest` refuses to assemble rather
-   * than defaulting to a label the two runtimes would disagree about.
-   */
-  medicationSchemaName?: string
-  quoteVerification: QuoteRule
-  textDerivation: DerivationRule
-  summaryAssembly: AssemblyRule
-  /**
-   * How a set item is matched against the answer key. OPTIONAL, unlike the three rules above,
-   * and the asymmetry is deliberate.
-   *
-   * Those three default to nothing because a defaulted verification rule is a check nobody
-   * ran — a pack whose `deletionOnly` silently came out false would report a perfect
-   * derivation rate having checked nothing. This one is different: its only member is a list
-   * of negators, and an ABSENT list does not fake a passing check, it makes the scan find
-   * nothing and every negated item score as a find. Which is bad, but it is bad in a way a
-   * default fixes rather than hides.
-   *
-   * So the list has a default and the default is stated in the pack format. It is English and
-   * Spanish because the reference corpus is, and a pack in another language must say so —
-   * see DEFAULT_NEGATORS in set-scorer.ts, where the whole argument lives.
-   */
-  setMatching?: SetMatchRule
-  /**
-   * What a medication item's `text` may contain — a drug name, and nothing else.
-   *
-   * OPTIONAL on `setMatching`'s terms rather than `quoteVerification`'s: an absent table fakes
-   * no passing check, it inherits a list. The list is the part that has to be data, and for the
-   * same reason the negators are — the words that mark a dose are the language's, not this
-   * code's, and a pack in a third language inheriting `mg`/`daily`/`cada` would find none of its
-   * own and pass every dose-laden name.
-   *
-   * See DEFAULT_MEDICATION_NAME in set-scorer.ts, where the argument for the check lives.
-   */
-  medicationName?: MedicationNameRule
-  /**
-   * Which language a transcript is in, and which prompt file key that chooses.
-   *
-   * OPTIONAL, for the reason `setMatching` is optional rather than the reason
-   * `quoteVerification` is not: an absent table fakes no check. Every transcript resolves to
-   * `transcriptPrompt` and this harness measures exactly what it measured before.
-   */
-  languageDetection?: LanguageDetection
-  /**
-   * Which transcripts are conversations rather than dictations.
-   *
-   * OPTIONAL on the same terms as `languageDetection`, and orthogonal to it: this decides which
-   * FAMILY of prompt an input takes, the language table decides which member of that family.
-   * Absent, every transcript is read as a dictation and this harness measures exactly what it
-   * measured before.
-   */
-  dialogueDetection?: DialogueDetection
-  /**
-   * Which input shapes take the medication pass — see `[clinical.medicationPass]`.
-   *
-   * OPTIONAL, and its absence turns the pass off everywhere: a transcript is read by one call
-   * and this profile behaves exactly as it did before the pass existed. That is the safe
-   * default in the only direction that matters, because the pass costs a second call and
-   * changes what a shipped note contains.
-   */
-  medicationPass?: MedicationPass
-}
-
-/**
- * Which shapes take the second call. See `[clinical.medicationPass]` in pack.toml, where the
- * measurement behind the boundary is written out.
- *
- * A LIST rather than a boolean, because the question is not "on or off" — it is which of the
- * two input shapes this pack already distinguishes gains from the pass. Dictations do and
- * dialogues do not, measured; a pack whose corpus is all dictation writes `["dictation"]` and
- * gets the same behaviour without having to know why the word is there.
- */
-export interface MedicationPass {
-  shapes: string[]
-}
-
-/** The detector, as the pack states it. See `[clinical.languageDetection]` in pack.toml. */
-export interface LanguageDetection {
-  markers: Record<string, string[]>
-  thresholds: { minHits: number; minRatio: number }
-  /** language -> the FILE KEY of the prompt that language gets. */
-  transcriptPrompt: Record<string, string>
-  /**
-   * The same, for the repair pass. Its own map rather than a reuse of the one above: the two
-   * prompts are separate files, and a pack that has translated the first pass but not the
-   * repair should run the repair in the default language rather than not run it at all.
-   */
-  transcriptRepairPrompt?: Record<string, string>
-  /** The same again, for the dialogue prompt, and its own map for the same reason. */
-  dialoguePrompt?: Record<string, string>
-  /** And for the medication pass, its own map for the same reason again. */
-  medicationPrompt?: Record<string, string>
-}
-
-/**
- * How a two-speaker transcript is told from a dictation. See `[clinical.dialogueDetection]`.
- *
- * The signal is turn LABELS rather than anything about the prose, because that is the one mark a
- * transcriber puts on a conversation and never on a dictation — and because the labels a given
- * transcriber writes are a property of that project, not of this code.
- */
-export interface DialogueDetection {
-  labels: string[]
-  /** How many labelled turns before the answer is worth giving. */
-  minTurns: number
-  /** How many DISTINCT labels. One voice is a dictation however it is punctuated. */
-  minSpeakers: number
-}
-
-export const loadSettings = (pack: Pack): ClinicalSettings => {
-  // `[clinical]` is inert to core/pack.ts, which acts only on spec/name/files/documents/
-  // include. Reading it here rather than adding a core concept keeps the harness free of
-  // this domain's vocabulary, which is the arrangement's whole rule.
-  const manifest = parseToml(readFileSync(join(pack.root, 'pack.toml'), 'utf8')) as { clinical?: ClinicalSettings }
-  if (!manifest.clinical) throw new Error(`pack '${pack.name}' has no [clinical] table in its manifest`)
-  const s = manifest.clinical
-  // The verification rules are REQUIRED rather than defaulted, and this is the one place a
-  // default would be actively dangerous: a pack whose `deletionOnly` silently defaulted to
-  // false would report a perfect derivation rate having checked nothing, and the number
-  // would look exactly like a model that never paraphrases.
-  for (const [key, present] of [
-    [
-      'quoteVerification',
-      s.quoteVerification &&
-        typeof s.quoteVerification.collapseWhitespace === 'boolean' &&
-        typeof s.quoteVerification.caseSensitive === 'boolean' &&
-        // Required for the same reason the other two are, and added after the two quoting
-        // tasks were found to be applying opposite unstated answers to it.
-        typeof s.quoteVerification.accentSensitive === 'boolean',
-    ],
-    ['textDerivation', s.textDerivation && typeof s.textDerivation.deletionOnly === 'boolean'],
-    ['summaryAssembly', s.summaryAssembly && typeof s.summaryAssembly.totalChars === 'number'],
-  ] as const) {
-    if (!present) {
-      // Name the FORMAT VERSION, not only the key. A pack written the day before
-      // `accentSensitive` became required fails here, and "a table is incomplete" leaves its
-      // author to guess whether they mistyped something or whether the harness moved
-      // underneath them. `specGap` answers that in the pack format's own words.
-      const gap = specGap(pack.spec)
-      throw new Error(
-        `pack '${pack.name}': [clinical.${key}] is missing or incomplete — ` +
-          'a verification rule that defaults is a check nobody ran' +
-          (gap.length
-            ? `\n  this pack declares spec ${pack.spec} and this harness reads spec ${SPEC_VERSION}; since then:\n` +
-              gap.map((c) => `    - ${c}`).join('\n') +
-              `\n  set 'spec = ${SPEC_VERSION}' in pack.toml once the keys above are present`
-            : ''),
-      )
-    }
-  }
-  // A pack that DECLARES the table must fill it — the same argument as `setMatching` below.
-  // Two marker sets that OVERLAP are the specific typo worth refusing: a word that scores for
-  // both sides scores for neither, so the ratio it feeds is measuring nothing, and the
-  // detector goes on answering.
-  if (s.languageDetection) {
-    const d = s.languageDetection
-    const langs = Object.keys(d.markers ?? {})
-    if (langs.length < 2) {
-      throw new Error(
-        `pack '${pack.name}': [clinical.languageDetection.markers] declares ${langs.length} language(s) — ` +
-          'a detector needs at least two sides to have a lead over, or omit the table',
-      )
-    }
-    if (!(d.thresholds && typeof d.thresholds.minHits === 'number' && typeof d.thresholds.minRatio === 'number')) {
-      throw new Error(
-        `pack '${pack.name}': [clinical.languageDetection.thresholds] must state minHits and minRatio — ` +
-          'a detector with no floor calls a two-word fragment for whichever side it grazed',
-      )
-    }
-    for (const [a, b] of langs.flatMap((a, i) => langs.slice(i + 1).map((b) => [a, b] as const))) {
-      const bs = (d.markers[b] ?? []).map(foldMarker)
-      const overlap = (d.markers[a] ?? []).map(foldMarker).filter((w) => bs.includes(w))
-      if (overlap.length) {
-        throw new Error(
-          `pack '${pack.name}': [clinical.languageDetection.markers] '${a}' and '${b}' share ` +
-            `${overlap.map((w) => `'${w}'`).join(', ')} — a marker that scores for both sides scores for neither`,
-        )
-      }
-    }
-    // Both prompt maps, by the same rule and with the same message: a table naming a language
-    // the markers cannot produce is a translation that will never be read, and it is worth
-    // more as a load error than as a file nobody notices going unused.
-    for (const table of ['transcriptPrompt', 'transcriptRepairPrompt', 'dialoguePrompt', 'medicationPrompt'] as const) {
-      for (const [lang, key] of Object.entries(d[table] ?? {})) {
-        if (!langs.includes(lang)) {
-          throw new Error(
-            `pack '${pack.name}': [clinical.languageDetection.${table}] names language '${lang}', ` +
-              `which has no markers — the detector can never return it, so the prompt at '${key}' would never be read`,
-          )
-        }
-      }
-    }
-  }
-  // A pack that DECLARES the table must fill it, and here the empty version is worse than
-  // useless: no labels means no line is ever a turn, so every consultation is read as a
-  // dictation while the pack's manifest says it has a dialogue contract. A floor of zero is the
-  // same failure from the other side — every dictation becomes a dialogue on a stray colon.
-  if (s.dialogueDetection) {
-    const d = s.dialogueDetection
-    if (!(Array.isArray(d.labels) && d.labels.length)) {
-      throw new Error(
-        `pack '${pack.name}': [clinical.dialogueDetection] declares no labels — ` +
-          'no label means no line is ever a turn, and every consultation would be read as a dictation',
-      )
-    }
-    if (!(typeof d.minTurns === 'number' && d.minTurns > 0 && typeof d.minSpeakers === 'number' && d.minSpeakers > 1)) {
-      throw new Error(
-        `pack '${pack.name}': [clinical.dialogueDetection] must state minTurns > 0 and minSpeakers > 1 — ` +
-          'one voice is a dictation however it is punctuated',
-      )
-    }
-  }
-  // A pack that DECLARES the table must fill it — and an EMPTY `shapes` is the version worth
-  // refusing loudly, because it reads as "the pass is configured" while turning it off. A pack
-  // that wants no pass omits the table or drops the prompt keys.
-  if (s.medicationPass) {
-    const shapes = s.medicationPass.shapes
-    if (!(Array.isArray(shapes) && shapes.length)) {
-      throw new Error(
-        `pack '${pack.name}': [clinical.medicationPass] declares no shapes — ` +
-          'omit the table to run one call per transcript, or name the shapes that take the second one',
-      )
-    }
-    for (const shape of shapes) {
-      if (shape !== 'dictation' && shape !== 'dialogue') {
-        throw new Error(
-          `pack '${pack.name}': [clinical.medicationPass] names shape '${shape}', which is not one this ` +
-            'harness can detect — the shapes are `dictation` and `dialogue`, decided by [clinical.dialogueDetection]',
-        )
-      }
-    }
-  }
-  // A pack that DECLARES the table must fill it. An empty `negators` is not a language with no
-  // negations, it is a typo, and it scores every "no diabetes" as a find.
-  if (s.setMatching && !(Array.isArray(s.setMatching.negators) && s.setMatching.negators.length)) {
-    throw new Error(
-      `pack '${pack.name}': [clinical.setMatching] declares no negators — ` +
-        'omit the table to inherit the English+Spanish default, or state the list this corpus needs',
-    )
-  }
-  // The same rule for the same reason: an empty `doseTokens` is not a language whose doses have
-  // no words, it is a typo, and it passes "metformin 500 mg twice daily" as a drug name. The
-  // word cap gets a floor of 1 rather than 0, since a name is at least one word.
-  if (s.medicationName) {
-    const m = s.medicationName
-    if (!(Array.isArray(m.doseTokens) && m.doseTokens.length)) {
-      throw new Error(
-        `pack '${pack.name}': [clinical.medicationName] declares no doseTokens — ` +
-          'omit the table to inherit the English+Spanish default, or state the words this corpus needs',
-      )
-    }
-    if (!(typeof m.maxWords === 'number' && m.maxWords >= 1)) {
-      throw new Error(
-        `pack '${pack.name}': [clinical.medicationName] must state maxWords >= 1 — ` +
-          'a drug name is at least one word',
-      )
-    }
-  }
-  return s
-}
-
-/** The matching rule for this pack, defaulted in ONE place so no task can pick its own. */
-export const setMatching = (pack: Pack): SetMatchRule => loadSettings(pack).setMatching ?? DEFAULT_SET_MATCHING
-
-/** The medication-name rule for this pack, defaulted in ONE place for the same reason. */
-export const medicationName = (pack: Pack): MedicationNameRule =>
-  loadSettings(pack).medicationName ?? DEFAULT_MEDICATION_NAME
-
-// --- models.default.toml --------------------------------------------------------------
-
-export interface Sampling {
-  temperature: number
-  max_tokens: number
-  timeout_secs: number
-}
-
-/**
- * Per-task sampling, from the same declaration a consuming application would seed from.
- *
- * Not defaulted: the harness's own cap is a backstop sized for an unbounded array, and a
- * pack whose application runs a smaller one must be measured at the cap it runs, or a
- * truncation that happens in production cannot happen in the eval. Reading it is the
- * difference between measuring the product and measuring something near it.
- */
-export const loadSampling = (pack: Pack, task: string): Sampling => {
-  const models = pack.toml<{ sampling?: Record<string, Partial<Sampling>> }>('models')
-  const s = models.sampling?.[task]
-  if (!s || typeof s.max_tokens !== 'number') {
-    throw new Error(
-      `pack '${pack.name}' declares no [sampling.${task}] with a max_tokens in its models file — ` +
-        'the harness will not guess a cap the application does not run',
-    )
-  }
-  return { temperature: s.temperature ?? 0, max_tokens: s.max_tokens, timeout_secs: s.timeout_secs ?? 300 }
-}
+export const DOCUMENT_KIND: Record<Task, string> = Object.fromEntries(
+  TASKS.map((t) => [t, CONTRACTS[t].documentKind]),
+) as Record<Task, string>
 
 // --- The schema, and the slots it defines ---------------------------------------------
 
@@ -420,21 +217,39 @@ interface SchemaShape {
   properties?: Record<string, { anyOf?: { $ref?: string }[] }>
 }
 
-export const vitalSchema = (pack: Pack): object => pack.json<object>('vitalSignsSchema')
-export const vitalSchemaGolden = (pack: Pack): string => pack.read('vitalSignsSchemaGolden')
-export const vitalPrompt = (pack: Pack): string => pack.read('vitalSignsPrompt')
+/**
+ * The gradeable slots, in SCHEMA order — which is the order the grammar makes the model
+ * emit them, so it is also the order everything downstream should read them in.
+ */
+export const gradedFields = (pack: Pack): GradedField[] => {
+  const schema = pack.json<SchemaShape>(CONTRACTS['vital-signs'].schemaKey)
+  const props = schema.properties
+  if (!props) throw new Error(`pack '${pack.name}': the vital-signs schema declares no properties`)
+
+  const fields: GradedField[] = []
+  for (const [name, spec] of Object.entries(props)) {
+    const ref = spec.anyOf?.find((a) => a.$ref)?.$ref
+    if (!ref) continue // metadata: a bare number, or a nullable string
+    fields.push({ name, shape: ref.endsWith('bloodPressure') ? 'bloodPressure' : 'measurement' })
+  }
+  if (!fields.length) {
+    throw new Error(`pack '${pack.name}': no gradeable slots in the vital-signs schema — every property is metadata`)
+  }
+  return fields
+}
+
+// --- Assembly -------------------------------------------------------------------------
 
 /**
- * Everything one vital-signs pass needs, assembled in ONE place.
+ * Everything one pass needs, assembled in ONE place.
  *
- * Both callers go through this: the eval that produces a number and the review that
- * produces a reading for a note somebody actually has. That is the point of it existing.
- * If the two assembled their own prompt, schema and cap, the measured path and the used
- * path could drift apart by a line — and the harness's whole claim is that the number
- * describes the thing production runs, not something near it.
+ * Both callers go through this: the eval that produces a number and the review that produces
+ * a reading for a document somebody actually has. That is the point of it existing. If the
+ * two assembled their own prompt, schema and cap, the measured path and the used path could
+ * drift apart by a line — and the harness's whole claim is that the number describes the
+ * thing production runs, not something near it.
  */
-export interface VitalRequest {
-  fields: GradedField[]
+export interface TaskRequest {
   prompt: string
   /** Absent when the caller asked for the unconstrained arm. */
   schema?: object
@@ -442,76 +257,162 @@ export interface VitalRequest {
   sampling: Sampling
 }
 
-export const vitalRequest = (pack: Pack, constrain: boolean): VitalRequest => ({
-  fields: gradedFields(pack),
-  prompt: vitalPrompt(pack),
-  schema: constrain ? vitalSchema(pack) : undefined,
-  schemaName: loadSettings(pack).vitalSignsSchemaName,
-  sampling: loadSampling(pack, SAMPLING_KEY['vital-signs']),
-})
-
-/**
- * The same assembly, for the other two tasks. One shape rather than three ad-hoc ones: a
- * task that built its own prompt/schema/cap trio would be free to differ from what an
- * application runs, which is the drift this indirection exists to prevent.
- */
-export interface TaskRequest {
-  prompt: string
-  schema?: object
-  schemaName: string
-  sampling: Sampling
+/** The vital-signs pass, which also carries the slot list its scorer grades against. */
+export interface VitalRequest extends TaskRequest {
+  fields: GradedField[]
 }
 
-export const summaryRequest = (pack: Pack, constrain: boolean): TaskRequest => ({
-  prompt: summaryPrompt(pack),
-  schema: constrain ? summarySchema(pack) : undefined,
-  schemaName: loadSettings(pack).summarySchemaName,
-  sampling: loadSampling(pack, SAMPLING_KEY.summary),
-})
-
-export const formatRequest = (pack: Pack, constrain: boolean): TaskRequest => ({
-  prompt: formatPrompt(pack),
-  schema: constrain ? formatSchema(pack) : undefined,
-  schemaName: loadSettings(pack).noteFormatSchemaName,
-  sampling: loadSampling(pack, SAMPLING_KEY['note-format']),
+/**
+ * Assemble one contract into one request.
+ *
+ * `constrain` is honoured rather than assumed, for every contract including the two passes.
+ * An unconstrained arm exists to measure what the grammar is worth, and a pass that quietly
+ * forced a schema would make that arm report a number about a run nobody can reproduce
+ * without it.
+ *
+ * `text` is the input the prompt may be routed by — a transcript, for the contracts whose
+ * prompt has a language or a shape variant. Omitted, every contract resolves to its default
+ * prompt, which is what this profile did before routing existed.
+ */
+export const buildRequest = (
+  spec: ContractSpec,
+  pack: Pack,
+  constrain: boolean,
+  text?: string,
+): TaskRequest => ({
+  prompt: promptFor(spec, pack, text),
+  schema: constrain ? pack.json<object>(spec.schemaKey) : undefined,
+  schemaName: schemaNameFor(spec, pack),
+  sampling: loadSampling(pack, spec.samplingKey),
 })
 
 /**
- * The dictated-transcript task: its own prompt and cap, the note-format SCHEMA.
+ * The label that goes in the request body, or a refusal naming the contract that wanted it.
  *
- * Sharing the schema is the design rather than a saving. The two tasks answer the same
- * question about the same encounter — what are the four sections a clinician reads — and the
- * only thing that differs is whether the source was typed or spoken. A second schema would be
- * a second statement of one contract, free to drift in property order, which is the one part
- * of it that is compiled into a grammar.
+ * A required contract cannot reach this without a label — `loadSettings` refuses the pack at
+ * load — so in practice this fires for the two optional ones, where a pack has committed the
+ * prompts and not the label. Refused rather than defaulted, because a label the two runtimes
+ * guess differently is a pinned body they disagree about, for no reason a reader could find.
  */
-export const transcriptRequest = (pack: Pack, constrain: boolean, transcript?: string): TaskRequest => ({
-  prompt: transcriptPrompt(pack, transcript),
-  schema: constrain ? formatSchema(pack) : undefined,
-  schemaName: loadSettings(pack).transcriptSchemaName,
-  sampling: loadSampling(pack, SAMPLING_KEY.transcript),
+const schemaNameFor = (spec: ContractSpec, pack: Pack): string => {
+  const name = loadSettings(pack)[spec.schemaNameField]
+  if (!name) {
+    throw new ProfileError(
+      `pack '${pack.name}' declares ${spec.id} prompts but no ${spec.schemaNameField} — ` +
+        'the label is part of the request body, and two runtimes that guess it differently ' +
+        'pin different bytes for the same contract',
+    )
+  }
+  return name
+}
+
+/**
+ * The prompt a contract takes for this input: shape first, then language.
+ *
+ * A consultation with two speakers is a different input from a dictation — the facts are not
+ * all in the record-keeper's voice — and the two families of prompt say different things about
+ * corrections, questions and what a turn is worth. The language table then picks a member of
+ * whichever family the shape chose.
+ *
+ * Both fall back rather than fail. A pack that declares the dialogue detector without shipping
+ * the prompt gets the dictation one; a language table naming a file the pack ships without gets
+ * the default. The fallback for everything this routing cannot answer is what the contract did
+ * before it had any.
+ */
+const promptFor = (spec: ContractSpec, pack: Pack, text?: string): string => {
+  if (spec.dialoguePromptKey && text !== undefined && isDialogue(pack, text) && pack.has(spec.dialoguePromptKey)) {
+    return promptForLanguage(pack, spec.dialoguePromptKey, text)
+  }
+  return isRoutedPromptKey(spec.promptKey) ? promptForLanguage(pack, spec.promptKey, text) : pack.read(spec.promptKey)
+}
+
+/**
+ * A prompt file key, resolved through the language table that names it.
+ *
+ * `defaultKey` is both the fallback and the name of the table: the pack keys its per-language
+ * variants under the same word the default file is filed under, so one string answers "which
+ * table" and "what if it says nothing", and the two cannot be wired to disagree.
+ */
+const promptForLanguage = (pack: Pack, defaultKey: RoutedPromptKey, text?: string): string => {
+  const byLang = loadSettings(pack).languageDetection?.[defaultKey]
+  if (!byLang || text === undefined) return pack.read(defaultKey)
+  const lang = detectLanguage(pack, text)
+  const key = lang ? byLang[lang] : undefined
+  // `has` rather than a bare read: a language table may name a key whose file a pack ships
+  // without, and falling back is the behaviour the table's comment promises.
+  return pack.read(key && pack.has(key) ? key : defaultKey)
+}
+
+/**
+ * Whether a pack has an OPTIONAL contract at all.
+ *
+ * All three file keys plus the label, not one: a pack half-way through gaining the contract —
+ * prompt committed, schema not — would otherwise pass a one-key check and fail at assembly, in
+ * the middle of a run, on a transcript.
+ */
+export const hasContract = (spec: ContractSpec, pack: Pack): boolean =>
+  pack.has(spec.promptKey) &&
+  pack.has(spec.schemaKey) &&
+  pack.has(spec.goldenKey) &&
+  Boolean(loadSettings(pack)[spec.schemaNameField])
+
+// --- The named entry points -----------------------------------------------------------
+//
+// One line each, over the table above. They exist because a caller reaching for the repair
+// pass should not have to know it is spelled `transcript-repair`, and because a name in a
+// stack trace is worth more than a key lookup — not because any of them does anything the
+// row does not already say.
+
+export const vitalSchema = (pack: Pack): object => pack.json<object>(CONTRACTS['vital-signs'].schemaKey)
+export const vitalSchemaGolden = (pack: Pack): string => pack.read(CONTRACTS['vital-signs'].goldenKey)
+export const vitalPrompt = (pack: Pack): string => pack.read(CONTRACTS['vital-signs'].promptKey)
+
+export const vitalRequest = (pack: Pack, constrain: boolean): VitalRequest => ({
+  ...buildRequest(CONTRACTS['vital-signs'], pack, constrain),
+  fields: gradedFields(pack),
 })
 
-export const medicationSchema = (pack: Pack): object => pack.json<object>('medicationSchema')
-export const medicationSchemaGolden = (pack: Pack): string => pack.read('medicationSchemaGolden')
+export const summarySchema = (pack: Pack): object => pack.json<object>(CONTRACTS.summary.schemaKey)
+export const summarySchemaGolden = (pack: Pack): string => pack.read(CONTRACTS.summary.goldenKey)
+export const summaryPrompt = (pack: Pack): string => pack.read(CONTRACTS.summary.promptKey)
+
+export const summaryRequest = (pack: Pack, constrain: boolean): TaskRequest =>
+  buildRequest(CONTRACTS.summary, pack, constrain)
+
+export const formatSchema = (pack: Pack): object => pack.json<object>(CONTRACTS['note-format'].schemaKey)
+export const formatSchemaGolden = (pack: Pack): string => pack.read(CONTRACTS['note-format'].goldenKey)
+export const formatPrompt = (pack: Pack): string => pack.read(CONTRACTS['note-format'].promptKey)
+
+export const formatRequest = (pack: Pack, constrain: boolean): TaskRequest =>
+  buildRequest(CONTRACTS['note-format'], pack, constrain)
+
+/**
+ * The transcript prompt, chosen by the shape and the language of the transcript itself.
+ *
+ * A prompt is instructions in some language, and a small model under pressure answers in the
+ * language it was instructed in. The rule "the transcript decides the language" holds while
+ * every item is a quote with words DELETED — and stops holding the moment the model invents an
+ * item, because invented text has no quote to stay in the language of. `tr-es-13-control` is
+ * that case: the observed failure is a plan item nobody dictated, arriving in English out of a
+ * Spanish consultation.
+ */
+export const transcriptPrompt = (pack: Pack, transcript?: string): string =>
+  promptFor(CONTRACTS.transcript, pack, transcript)
+
+export const transcriptRequest = (pack: Pack, constrain: boolean, transcript?: string): TaskRequest =>
+  buildRequest(CONTRACTS.transcript, pack, constrain, transcript)
+
+export const medicationSchema = (pack: Pack): object => pack.json<object>(CONTRACTS.medication.schemaKey)
+export const medicationSchemaGolden = (pack: Pack): string => pack.read(CONTRACTS.medication.goldenKey)
 
 /** The medication prompt, routed by language exactly as the other three families are. */
 export const medicationPrompt = (pack: Pack, transcript?: string): string =>
-  promptForLanguage(pack, 'medicationPrompt', transcript)
+  promptFor(CONTRACTS.medication, pack, transcript)
 
-/**
- * Whether this pack declares the medication pass at all.
- *
- * All four keys plus the label, on `hasRepairContract`'s argument: a pack half-way through
- * gaining the contract would otherwise pass a one-key check and fail at assembly, mid-run, on
- * a transcript. "No medication pass" is a state every caller already handles, because it is
- * the state every pack was in before the contract existed.
- */
-export const hasMedicationContract = (pack: Pack): boolean =>
-  pack.has('medicationPrompt') &&
-  pack.has('medicationSchema') &&
-  pack.has('medicationSchemaGolden') &&
-  Boolean(loadSettings(pack).medicationSchemaName)
+export const hasMedicationContract = (pack: Pack): boolean => hasContract(CONTRACTS.medication, pack)
+
+export const medicationRequest = (pack: Pack, constrain: boolean, transcript?: string): TaskRequest =>
+  buildRequest(CONTRACTS.medication, pack, constrain, transcript)
 
 /**
  * Does THIS transcript take the second call?
@@ -528,497 +429,8 @@ export const takesMedicationPass = (pack: Pack, transcript: string): boolean => 
   return shapes.includes(isDialogue(pack, transcript) ? 'dialogue' : 'dictation')
 }
 
-/**
- * The medication pass: the same transcript, asked for one section.
- *
- * Assembled here beside the reading it replaces, by the rule the rest of this file follows —
- * one assembly, both callers. The eval measures this pass and `extract` runs it, and a pass
- * whose prompt, schema or cap differed between them would be a call the numbers do not
- * describe.
- */
-export const medicationRequest = (pack: Pack, constrain: boolean, transcript?: string): TaskRequest => {
-  const name = loadSettings(pack).medicationSchemaName
-  if (!name) {
-    throw new ProfileError(
-      `pack '${pack.name}' declares medication prompts but no medicationSchemaName — ` +
-        'the label is part of the request body, and two runtimes that guess it differently ' +
-        'pin different bytes for the same contract',
-    )
-  }
-  return {
-    prompt: medicationPrompt(pack, transcript),
-    schema: constrain ? medicationSchema(pack) : undefined,
-    schemaName: name,
-    sampling: loadSampling(pack, MEDICATION_SAMPLING_KEY),
-  }
-}
-
-export const repairSchema = (pack: Pack): object => pack.json<object>('transcriptRepairSchema')
-export const repairSchemaGolden = (pack: Pack): string => pack.read('transcriptRepairSchemaGolden')
-
-/**
- * Whether this pack declares the repair pass at all.
- *
- * All four keys, not one: a pack half-way through gaining the contract — prompt committed,
- * schema not — would otherwise pass this check and fail at assembly, in the middle of a run,
- * on a transcript. Reported as "no repair" instead, which is a state every caller already
- * handles because it is the state every pack was in before the contract existed.
- */
-export const hasRepairContract = (pack: Pack): boolean =>
-  pack.has('transcriptRepairPrompt') &&
-  pack.has('transcriptRepairSchema') &&
-  pack.has('transcriptRepairSchemaGolden') &&
-  Boolean(loadSettings(pack).transcriptRepairSchemaName)
-
-/**
- * The repair pass: the failed items of a reading, handed back with the transcript.
- *
- * Assembled here beside the pass it corrects, and by the same rule as everything else in this
- * file — one assembly, both callers. The eval measures the repair and the review runs it, and
- * a repair whose prompt or cap differed between those two would be a second pass the numbers
- * do not describe, which is the specific objection src/core/profile.ts raises against second
- * passes. Meeting it is the point: the repair is measured or it does not run.
- *
- * `constrain` is honoured rather than assumed. An unconstrained arm exists to measure what the
- * grammar is worth, and a repair that quietly forced a schema would make that arm report a
- * number about a run nobody can reproduce without it.
- */
-export const repairRequest = (pack: Pack, constrain: boolean, transcript?: string): TaskRequest => {
-  const name = loadSettings(pack).transcriptRepairSchemaName
-  if (!name) {
-    throw new ProfileError(
-      `pack '${pack.name}' declares repair prompts but no transcriptRepairSchemaName — ` +
-        'the label is part of the request body, and two runtimes that guess it differently ' +
-        'pin different bytes for the same contract',
-    )
-  }
-  return {
-    prompt: transcriptRepairPrompt(pack, transcript),
-    schema: constrain ? repairSchema(pack) : undefined,
-    schemaName: name,
-    sampling: loadSampling(pack, REPAIR_SAMPLING_KEY),
-  }
-}
-
-/** Lower-case and drop combining marks, so `está` and `esta` are one marker. */
-const foldMarker = (s: string): string => s.normalize('NFD').replace(/\p{Mn}/gu, '').toLowerCase()
-
-/**
- * The language of a transcript, or `null` when it is too short or too mixed to call.
- *
- * `null` is a real answer and the caller falls back to the default prompt rather than to a
- * guess: a harness that named a language for a two-word fragment would pick a prompt on a coin
- * flip and then pin the completion it produced.
- *
- * The markers and the floors come from the PACK, not from this file, because the consuming
- * application detects too — and two runtimes that detect separately grade different inputs
- * while appearing to share a contract.
- */
-export const detectLanguage = (pack: Pack, text: string): string | null => {
-  const d = loadSettings(pack).languageDetection
-  if (!d) return null
-
-  const hits: Record<string, number> = {}
-  const folded = new Map<string, string[]>()
-  for (const [lang, words] of Object.entries(d.markers)) {
-    hits[lang] = 0
-    folded.set(lang, words.map(foldMarker))
-  }
-  for (const raw of text.split(/[^\p{L}\p{N}]+/u)) {
-    if (!raw) continue
-    const w = foldMarker(raw)
-    // A word can only score once per side, and the sides are disjoint by construction (the
-    // loader refuses an overlap), so this is a plain count rather than a first-match chain.
-    for (const [lang, words] of folded) if (words.includes(w)) hits[lang] = (hits[lang] ?? 0) + 1
-  }
-
-  const ranked = Object.entries(hits).sort((a, b) => b[1] - a[1])
-  const top = ranked[0]
-  if (!top) return null
-  const [lang, hi] = top
-  const lo = ranked[1]?.[1] ?? 0
-  if (hi < d.thresholds.minHits || hi < Math.max(lo, 1) * d.thresholds.minRatio) return null
-  return lang
-}
-
-/**
- * Is this transcript a conversation between two people, rather than one person dictating?
- *
- * Counts LABELLED TURNS: a line whose first token, up to a colon, is one of the labels the pack
- * declares. Both floors have to clear — enough turns that a stray `plan:` cannot carry it, and
- * enough distinct speakers that a labelled monologue stays a dictation.
- *
- * `false` is the fallback for everything it cannot call, and that is the safe direction: an
- * unrecognised transcript takes the prompt this pack has always used for transcripts.
- */
-export const isDialogue = (pack: Pack, text: string): boolean => {
-  const d = loadSettings(pack).dialogueDetection
-  if (!d) return false
-  const labels = d.labels.map(foldMarker)
-  const seen = new Set<string>()
-  let turns = 0
-  for (const line of text.split('\n')) {
-    // The label is what precedes the FIRST colon on the line, and only when nothing but the
-    // label precedes it. `dr: and the citalopram` is a turn; `plan: repeat the hba1c in three
-    // months, colon` inside a dictated sentence is not, because the words before the colon are
-    // a sentence rather than a name.
-    const m = /^\s*([^\s:]{1,12})\s*:/.exec(line)
-    if (!m) continue
-    const label = foldMarker(m[1] ?? '')
-    if (!labels.includes(label)) continue
-    turns++
-    seen.add(label)
-  }
-  return turns >= d.minTurns && seen.size >= d.minSpeakers
-}
-
-/**
- * The gradeable slots, in SCHEMA order — which is the order the grammar makes the model
- * emit them, so it is also the order everything downstream should read them in.
- */
-export const gradedFields = (pack: Pack): GradedField[] => {
-  const schema = pack.json<SchemaShape>('vitalSignsSchema')
-  const props = schema.properties
-  if (!props) throw new Error(`pack '${pack.name}': the vital-signs schema declares no properties`)
-
-  const fields: GradedField[] = []
-  for (const [name, spec] of Object.entries(props)) {
-    const ref = spec.anyOf?.find((a) => a.$ref)?.$ref
-    if (!ref) continue // metadata: a bare number, or a nullable string
-    fields.push({ name, shape: ref.endsWith('bloodPressure') ? 'bloodPressure' : 'measurement' })
-  }
-  if (!fields.length) {
-    throw new Error(`pack '${pack.name}': no gradeable slots in the vital-signs schema — every property is metadata`)
-  }
-  return fields
-}
-
-// --- Cases ------------------------------------------------------------------------------
-
-export type VitalExpect =
-  | { kind: 'value'; value: number; unit: string }
-  | { kind: 'bp'; systolic: number; diastolic: number; unit: string }
-  | { kind: 'unresolved' }
-  | { kind: 'absent' }
-
-export interface VitalExpectation {
-  field: string
-  expect: VitalExpect
-}
-
-export interface VitalCase {
-  name: string
-  class: string
-  /**
-   * How hard the NOTE is to read, 1-5. The rubric lives in the case file, where a corpus
-   * author reads it; what matters here is that it rates the text rather than the model, so
-   * it does not move when the weights do and a per-tier score stays comparable across runs.
-   */
-  difficulty: number
-  note?: string
-  fields: VitalExpectation[]
-}
-
-/** The tiers a pack may use. Fixed, because a scale that grows is a scale nobody can read. */
-export const DIFFICULTY_MIN = 1
-export const DIFFICULTY_MAX = 5
-
-/**
- * `--difficulty 4` or `--difficulty 3-5`, as a predicate over tiers.
- *
- * A malformed spec is an error rather than a silently ignored filter: a run that was meant
- * to be the hard tier and quietly graded all 21 notes reports a number for a corpus nobody
- * asked about, and nothing in its output would say so. `ProfileError` rather than a bare
- * throw, so a mistyped flag prints one line and exits 2 like every other setup mistake
- * instead of arriving as a stack trace.
- */
-export const parseDifficultyRange = (spec: string): ((d: number) => boolean) => {
-  const m = /^\s*([1-5])\s*(?:-\s*([1-5])\s*)?$/.exec(spec)
-  if (!m) {
-    throw new ProfileError(`--difficulty expects N or N-M within ${DIFFICULTY_MIN}-${DIFFICULTY_MAX}, got '${spec}'`)
-  }
-  const lo = Number(m[1])
-  const hi = m[2] === undefined ? lo : Number(m[2])
-  if (hi < lo) throw new ProfileError(`--difficulty range '${spec}' is empty: ${lo} is above ${hi}`)
-  return (d: number) => d >= lo && d <= hi
-}
-
-export interface VitalCases {
-  fieldRecallFloor: number
-  /**
-   * Sub-gate: of what was detected, the share whose NUMBER was right.
-   *
-   * Detection alone stopped discriminating. Measured on this pack: 87/88 and 88/88 across
-   * two models, saturated at every tier including 5, while value sat at 82/88 against 86/87
-   * and unit at 81/88 against 86/87 — so the axis that gated agreed about the models and the
-   * two axes that told them apart did not gate at all. A run that reads a fifth of a
-   * flowsheet wrong used to pass.
-   *
-   * Detection stays the headline floor. It is the floor it always was; it is no longer
-   * asked to be the discriminator it stopped being.
-   */
-  valueFloor: number
-  /** Sub-gate: of what was detected, the share whose UNIT was right. Counted apart from
-   * `valueFloor` for the reason the scorer counts them apart — a right number in the wrong
-   * unit is a different bug from a wrong number, and one combined floor would hide which. */
-  unitFloor: number
-  cases: VitalCase[]
-}
-
-/**
- * Load the cases, materialising the implicit `absent` expectations.
- *
- * The case file states the rule (`_implicitAbsent`): a gradeable field a case does not
- * list is expected absent. Expanding it here rather than at grading time is what makes
- * hallucination counting TOTAL rather than sampled — every slot is accounted for in every
- * case — and it is why the scorer never has to know the field list at all.
- *
- * An expectation naming a field the schema does not define is an error rather than a
- * skipped line. It means the two halves of the contract have drifted, and the run that
- * followed would report a percentage of a denominator nobody intended.
- *
- * A missing or out-of-range `difficulty` is an error for the same reason. It is not a
- * decoration: the eval reports detection per tier, and a case that defaulted to some tier
- * would land its slots in a bucket its author never chose.
- */
-export const loadVitalCases = (pack: Pack, fields: GradedField[]): VitalCases => {
-  const raw = pack.json<VitalCases>('vitalSignsCases')
-  for (const [key, value] of [
-    ['fieldRecallFloor', raw.fieldRecallFloor],
-    ['valueFloor', raw.valueFloor],
-    ['unitFloor', raw.unitFloor],
-  ] as const) {
-    checkFloor(pack, 'vitalSignsCases', key, value)
-  }
-  const known = new Set(fields.map((f) => f.name))
-  const cases = raw.cases.map((c) => {
-    checkDifficulty(c.name, c.difficulty)
-    for (const e of c.fields) {
-      if (!known.has(e.field)) {
-        throw new Error(
-          `case '${c.name}' expects field '${e.field}', which the schema does not define ` +
-            `(gradeable slots: ${[...known].join(', ')})`,
-        )
-      }
-    }
-    const listed = new Set(c.fields.map((f) => f.field))
-    const implicit = fields
-      .filter((f) => !listed.has(f.name))
-      .map((f): VitalExpectation => ({ field: f.name, expect: { kind: 'absent' } }))
-    return { ...c, fields: [...c.fields, ...implicit] }
-  })
-  return { fieldRecallFloor: raw.fieldRecallFloor, valueFloor: raw.valueFloor, unitFloor: raw.unitFloor, cases }
-}
-
-// --- Set extraction: the shape the summary and note-format tasks share ------------------
-
-/**
- * One expectation over a SET of free-text items.
- *
- * `match` is a list of ALTERNATIVES, each an AND-group of terms. Both levels are load-bearing
- * and both were paid for on a sibling pack. The AND level: `['metformin','850']` matches
- * "metformin 850 mg twice daily" while a bare `['metformin']` would also match "metformin
- * stopped" — the opposite fact. The OR level: a fact has more than one correct spelling, and
- * scoring "essential hypertension" as a miss because the key said "high blood pressure" is a
- * scorer defect wearing a model result's clothing, which is precisely what a floor must never
- * be tuned around.
- */
-export type SetExpect =
-  | { kind: 'present'; match: string[][]; dose?: string[][]; doseNull?: boolean }
-  | { kind: 'absent'; match: string[][] }
-  | { kind: 'empty' }
-
-export interface SetExpectation {
-  field: string
-  expect: SetExpect
-}
-
-// --- Patient summary --------------------------------------------------------------------
-
-export interface SummaryCase {
-  name: string
-  class: string
-  difficulty: number
-  /** The record, in order. Several notes, because that is the shape of the call. */
-  notes: string[]
-  note?: string
-  fields: SetExpectation[]
-}
-
-export interface SummaryCases {
-  itemRecallFloor: number
-  cases: SummaryCase[]
-}
-
-export const summarySchema = (pack: Pack): object => pack.json<object>('summarySchema')
-export const summarySchemaGolden = (pack: Pack): string => pack.read('summarySchemaGolden')
-export const summaryPrompt = (pack: Pack): string => pack.read('summaryPrompt')
-
-export const loadSummaryCases = (pack: Pack): SummaryCases => {
-  const raw = pack.json<SummaryCases>('summaryCases')
-  checkFloor(pack, 'summaryCases', 'itemRecallFloor', raw.itemRecallFloor)
-  for (const c of raw.cases) {
-    checkDifficulty(c.name, c.difficulty)
-    if (!c.notes?.length) {
-      throw new Error(`summary case '${c.name}' names no notes — this task's input is a record, not a document`)
-    }
-    checkSetFields(c.name, c.fields, SUMMARY_FIELDS)
-  }
-  return raw
-}
-
-// --- Note formatting ---------------------------------------------------------------------
-
-export interface FormatCase {
-  name: string
-  class: string
-  difficulty: number
-  /** The vital-signs case whose note this reads. The corpus is shared, never duplicated. */
-  source: string
-  note?: string
-  fields: SetExpectation[]
-}
-
-/**
- * The floors every QUOTED set task gates on — note formatting and dictated transcripts.
- *
- * One declaration for both because the two tasks make the same four claims about an answer,
- * and a second copy would be free to drift in exactly the place a drift is invisible: a task
- * whose `fabricationFloor` was optional in one loader and ignored in the other would report a
- * gate it never applied.
- */
-export interface QuotedSetCases {
-  itemRecallFloor: number
-  /** Sub-gate: the share of emitted quotes that are genuinely in the note. */
-  quoteFloor: number
-  /** Sub-gate: the share of emitted texts derivable from their quote by deletion. */
-  derivationFloor: number
-  /**
-   * Sub-gate, OPTIONAL: the share of emitted quotes that are not FABRICATIONS — spans found in
-   * the note under some relaxation of case or accents, even if the strict rule rejects them.
-   *
-   * `quoteFloor` covers two accusations at one number, and they are not the same accusation. A
-   * quote that differs from the note in a capital is a model tidying while claiming to copy; a
-   * quote absent under any relaxation is a model inventing a sentence and attaching evidence
-   * to it. Measured on this corpus: of one model's provenance failures, all of them on
-   * `vs-en-03` were the first kind, while another model's five failures on the flowsheet note
-   * were all the second — every citation invented, with every value correct. One floor scores
-   * those runs the same way and describes neither.
-   *
-   * So a pack may say "tidying may cost me five per cent, fabrication may cost me nothing",
-   * which is the sentence most packs actually mean. It is optional because the one-floor
-   * reading is legitimate too: a pack whose application shows the quote to a clinician has a
-   * real objection to an edited span, and forcing it to declare two numbers where it means one
-   * would be the harness inventing a policy. Omitted means only `quoteFloor` gates.
-   */
-  fabricationFloor?: number
-  /**
-   * Sub-gate, OPTIONAL: the share of emitted medication items whose `text` is a drug name and
-   * nothing else.
-   *
-   * Optional because a pack whose tasks emit no medication has nothing to gate, and because the
-   * three floors above were measured before this axis existed — a corpus that adds it should
-   * measure it before declaring a number, exactly as those were. Omitted, the rate is still
-   * COMPUTED AND PRINTED; it just does not decide the verdict. That asymmetry is deliberate: an
-   * axis nobody can see is an axis nobody fixes, and this one was invisible for long enough to
-   * let four interventions be evaluated against a scorer blind to it.
-   */
-  medicationNameFloor?: number
-}
-
-export interface FormatCases extends QuotedSetCases {
-  cases: FormatCase[]
-}
-
-export const formatSchema = (pack: Pack): object => pack.json<object>('noteFormatSchema')
-export const formatSchemaGolden = (pack: Pack): string => pack.read('noteFormatSchemaGolden')
-export const formatPrompt = (pack: Pack): string => pack.read('noteFormatPrompt')
-
-export const loadFormatCases = (pack: Pack): FormatCases => {
-  const raw = pack.json<FormatCases>('noteFormatCases')
-  checkQuotedFloors(pack, 'noteFormatCases', raw)
-  for (const c of raw.cases) {
-    checkDifficulty(c.name, c.difficulty)
-    if (!c.source) throw new Error(`note-format case '${c.name}' names no source note`)
-    checkSetFields(c.name, c.fields, FORMAT_FIELDS)
-  }
-  return raw
-}
-
-/** The four floors a quoted set task gates on, checked once for both tasks that have them. */
-const checkQuotedFloors = (pack: Pack, file: string, raw: QuotedSetCases): void => {
-  for (const [key, value] of [
-    ['itemRecallFloor', raw.itemRecallFloor],
-    ['quoteFloor', raw.quoteFloor],
-    ['derivationFloor', raw.derivationFloor],
-  ] as const) {
-    checkFloor(pack, file, key, value)
-  }
-  // Optional, so it is checked only when declared — but a DECLARED floor that is not a number
-  // is a typo that would gate on `undefined`, which is false, which fails the run and names
-  // nothing.
-  if (raw.medicationNameFloor !== undefined) {
-    checkFloor(pack, file, 'medicationNameFloor', raw.medicationNameFloor)
-  }
-  if (raw.fabricationFloor === undefined) return
-  checkFloor(pack, file, 'fabricationFloor', raw.fabricationFloor)
-  if (raw.fabricationFloor < raw.quoteFloor) {
-    // Not a matter of taste. Every strictly-verified quote is also un-fabricated, so the
-    // fabrication rate is always at least the verification rate: a fabrication floor BELOW
-    // the quote floor can never be the binding one, and a pack that wrote the two numbers
-    // that way meant the opposite of what it said.
-    throw new Error(
-      `pack '${pack.name}': ${file} sets fabricationFloor ${raw.fabricationFloor} below quoteFloor ` +
-        `${raw.quoteFloor} — the fabrication rate is always at least the verification rate, so this gate could never bind`,
-    )
-  }
-}
-
-// --- Dictated transcripts -----------------------------------------------------------------
-
-/**
- * One dictation. Same expectations as a format case and no `source`, because the document IS
- * the case: transcripts are read through the `transcript` documents kind by the case's own
- * name, and there is no written note they correspond to.
- */
-export interface TranscriptCase {
-  name: string
-  class: string
-  difficulty: number
-  note?: string
-  fields: SetExpectation[]
-}
-
-export interface TranscriptCases extends QuotedSetCases {
-  cases: TranscriptCase[]
-}
-
-/**
- * The transcript prompt, chosen by the language of the transcript itself.
- *
- * A prompt is instructions in some language, and a small model under pressure answers in the
- * language it was instructed in. The rule "the transcript decides the language" holds while
- * every item is a quote with words DELETED — and stops holding the moment the model invents an
- * item, because invented text has no quote to stay in the language of. `tr-es-13-control` is
- * that case: the observed failure is a plan item nobody dictated, arriving in English out of a
- * Spanish consultation.
- *
- * With no transcript, or no language the pack has a prompt for, this is what it always was.
- */
-export const transcriptPrompt = (pack: Pack, transcript?: string): string => {
-  // SHAPE first, then language. A consultation with two speakers is a different input from a
-  // dictation — the facts are not all in the record-keeper's voice — and the two families of
-  // prompt say different things about corrections, questions and what a turn is worth. The
-  // language table then picks a member of whichever family the shape chose.
-  //
-  // `has` rather than a bare read, so a pack that declares the detector without shipping the
-  // prompt falls back to the dictation one instead of failing: the fallback for everything this
-  // routing cannot answer is what this task has always done.
-  if (transcript !== undefined && isDialogue(pack, transcript) && pack.has('dialoguePrompt')) {
-    return promptForLanguage(pack, 'dialoguePrompt', transcript)
-  }
-  return promptForLanguage(pack, 'transcriptPrompt', transcript)
-}
+export const repairSchema = (pack: Pack): object => pack.json<object>(CONTRACTS['transcript-repair'].schemaKey)
+export const repairSchemaGolden = (pack: Pack): string => pack.read(CONTRACTS['transcript-repair'].goldenKey)
 
 /**
  * The repair prompt, chosen by the same detector over the same transcript.
@@ -1029,86 +441,9 @@ export const transcriptPrompt = (pack: Pack, transcript?: string): string => {
  * language of the translation, which is the one way to make the fault permanent.
  */
 export const transcriptRepairPrompt = (pack: Pack, transcript?: string): string =>
-  promptForLanguage(pack, 'transcriptRepairPrompt', transcript)
+  promptFor(CONTRACTS['transcript-repair'], pack, transcript)
 
-/**
- * A prompt file key, resolved through the language table that names it.
- *
- * `defaultKey` is both the fallback and the name of the table: the pack keys its per-language
- * variants under the same word the default file is filed under, so one string answers "which
- * table" and "what if it says nothing", and the two cannot be wired to disagree.
- */
-const promptForLanguage = (
-  pack: Pack,
-  defaultKey: 'transcriptPrompt' | 'transcriptRepairPrompt' | 'dialoguePrompt' | 'medicationPrompt',
-  transcript?: string,
-): string => {
-  const byLang = loadSettings(pack).languageDetection?.[defaultKey]
-  if (!byLang || transcript === undefined) return pack.read(defaultKey)
-  const lang = detectLanguage(pack, transcript)
-  const key = lang ? byLang[lang] : undefined
-  // `has` rather than a bare read: a language table may name a key whose file a pack ships
-  // without, and falling back is the behaviour the table's comment promises.
-  return pack.read(key && pack.has(key) ? key : defaultKey)
-}
+export const hasRepairContract = (pack: Pack): boolean => hasContract(CONTRACTS['transcript-repair'], pack)
 
-export const loadTranscriptCases = (pack: Pack): TranscriptCases => {
-  const raw = pack.json<TranscriptCases>('transcriptCases')
-  checkQuotedFloors(pack, 'transcriptCases', raw)
-  for (const c of raw.cases) {
-    checkDifficulty(c.name, c.difficulty)
-    checkSetFields(c.name, c.fields, FORMAT_FIELDS)
-  }
-  return raw
-}
-
-/**
- * Every expectation must name a section the contract actually has.
- *
- * The vital-signs loader has always refused an unknown field, and these two did not — a gap
- * that was quiet in exactly the wrong direction. `scoreSet` reads `got[e.field] ?? []`, so a
- * mistyped field on a `present` expectation merely fails, which someone would notice; on an
- * `absent` or `empty` one it is scored as SATISFIED, for ever, in silence. The hallucination
- * check the pack author wrote simply never runs, and the report says the model behaved.
- */
-const checkSetFields = (name: string, fields: SetExpectation[], known: readonly string[]): void => {
-  for (const e of fields) {
-    if (!known.includes(e.field)) {
-      throw new Error(
-        `case '${name}' expects field '${e.field}', which this task's contract does not define ` +
-          `(sections: ${known.join(', ')})`,
-      )
-    }
-  }
-}
-
-/** The sections each set task grades, from the parser that reads its replies. */
-const FORMAT_FIELDS: readonly string[] = ['presenting_complaint', ...FORMAT_LIST_FIELDS]
-
-/**
- * A floor is the whole point of a case file, so a missing one is a setup error rather than a
- * comparison against `undefined` — which is false, fails the run, and names nothing.
- */
-const checkFloor = (pack: Pack, file: string, key: string, value: unknown): void => {
-  if (typeof value !== 'number' || !(value >= 0 && value <= 1)) {
-    throw new Error(`pack '${pack.name}': ${file} declares ${key} as ${JSON.stringify(value)}; a floor is a number 0-1`)
-  }
-}
-
-/** Shared by all three case loaders, so a task cannot quietly opt out of being rated. */
-const checkDifficulty = (name: string, difficulty: unknown): void => {
-  if (!Number.isInteger(difficulty) || (difficulty as number) < DIFFICULTY_MIN || (difficulty as number) > DIFFICULTY_MAX) {
-    throw new Error(
-      `case '${name}' has difficulty ${JSON.stringify(difficulty)}; ` +
-        `every case needs an integer ${DIFFICULTY_MIN}-${DIFFICULTY_MAX} rating how hard its NOTE is to read`,
-    )
-  }
-}
-
-/** The gated denominator for a set-extraction task: `present` expectations. */
-export const requiredSetExpectations = (cases: { fields: SetExpectation[] }[]): number =>
-  cases.reduce((n, c) => n + c.fields.filter((f) => f.expect.kind === 'present').length, 0)
-
-/** The gated denominator: expectations the model must extract (`value` or `bp`). */
-export const gradedExpectations = (cases: VitalCase[]): number =>
-  cases.reduce((n, c) => n + c.fields.filter((f) => f.expect.kind === 'value' || f.expect.kind === 'bp').length, 0)
+export const repairRequest = (pack: Pack, constrain: boolean, transcript?: string): TaskRequest =>
+  buildRequest(CONTRACTS['transcript-repair'], pack, constrain, transcript)

@@ -18,7 +18,12 @@ import { readFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { chatBody } from '../src/core/client.ts'
 import { loadPack } from '../src/core/pack.ts'
-import { DOCUMENT_KIND, medicationRequest, takesMedicationPass, transcriptRequest } from '../src/profiles/clinical/contracts.ts'
+import {
+  DOCUMENT_KIND,
+  medicationRequest,
+  takesMedicationPass,
+  transcriptRequest
+} from '../src/profiles/clinical/contracts.ts'
 
 const { values } = parseArgs({
   options: {

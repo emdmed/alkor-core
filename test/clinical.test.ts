@@ -15,17 +15,9 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadPack, specGap, SPEC_VERSION } from '../src/core/pack.ts'
-import {
-  gradedExpectations,
-  gradedFields,
-  loadSampling,
-  loadSettings,
-  loadVitalCases,
-  parseDifficultyRange,
-  vitalPrompt,
-  vitalSchema,
-  vitalSchemaGolden,
-} from '../src/profiles/clinical/contracts.ts'
+import { loadSampling, loadSettings } from '../src/profiles/clinical/settings.ts'
+import { gradedExpectations, loadVitalCases, parseDifficultyRange } from '../src/profiles/clinical/cases.ts'
+import { gradedFields, vitalPrompt, vitalSchema, vitalSchemaGolden } from '../src/profiles/clinical/contracts.ts'
 import { parseVitalSigns } from '../src/profiles/clinical/extraction.ts'
 import { scoreCase, norm } from '../src/profiles/clinical/scorer.ts'
 
@@ -322,6 +314,40 @@ test('sampling comes from the pack, not from a default', () => {
 
 test('the schema label the request carries is declared, not invented', () => {
   assert.equal(loadSettings(pack).vitalSignsSchemaName, 'vital_signs')
+})
+
+/**
+ * And a pack that omits one is refused at LOAD, not at assembly.
+ *
+ * `ClinicalSettings` types the four required labels `string`, but a manifest is TOML read at
+ * runtime and that type is a promise nothing checked. A pack missing one used to typecheck,
+ * load, and send `json_schema.name: undefined` — which llama-server accepts. The label is
+ * part of the pinned request body, so that is a run whose body cannot be reproduced from the
+ * pack that produced it, and nothing in its trace would say so.
+ */
+test('a required schema label is refused at load, not sent as undefined', () => {
+  const root = mkdtempSync(join(tmpdir(), 'medextract-label-'))
+  const manifest = (names: string) =>
+    `spec = 2\nname = "n"\n[clinical]\ndefaultTask = "vital-signs"\n${names}` +
+    '[clinical.quoteVerification]\ncollapseWhitespace = true\ncaseSensitive = true\naccentSensitive = true\n' +
+    '[clinical.textDerivation]\ndeletionOnly = true\n[clinical.summaryAssembly]\ntotalChars = 10000\n'
+  const stub = { name: 'n', spec: 2, root } as unknown as Parameters<typeof loadSettings>[0]
+
+  const all = 'vitalSignsSchemaName = "v"\nsummarySchemaName = "s"\nnoteFormatSchemaName = "f"\ntranscriptSchemaName = "t"\n'
+  writeFileSync(join(root, 'pack.toml'), manifest(all))
+  assert.equal(loadSettings(stub).transcriptSchemaName, 't')
+
+  // Each of the four, named in its own refusal — a message that said "a label is missing"
+  // would leave an author to diff four keys against the format.
+  for (const key of ['vitalSignsSchemaName', 'summarySchemaName', 'noteFormatSchemaName', 'transcriptSchemaName']) {
+    writeFileSync(join(root, 'pack.toml'), manifest(all.replace(new RegExp(`^${key} = .*\n`, 'm'), '')))
+    assert.throws(() => loadSettings(stub), new RegExp(`${key} is missing`), `${key} must be refused`)
+  }
+
+  // Declared and EMPTY is the same failure wearing a value: it reaches the body as `""`.
+  writeFileSync(join(root, 'pack.toml'), manifest(all.replace('vitalSignsSchemaName = "v"', 'vitalSignsSchemaName = ""')))
+  assert.throws(() => loadSettings(stub), /vitalSignsSchemaName is missing/)
+  rmSync(root, { recursive: true, force: true })
 })
 
 // --- the parser ------------------------------------------------------------------------

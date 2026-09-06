@@ -24,17 +24,18 @@
  */
 import type { Pack } from '../../core/pack.ts'
 import { eventOf, eventsOf, isRedacted, readTrace, TraceError, type TraceEvent } from '../../core/trace-read.ts'
+import { loadSettings, medicationName, setMatching } from './settings.ts'
 import {
-  loadSettings,
   loadVitalCases,
-  medicationName,
-  setMatching,
-  vitalRequest,
   type VitalCase,
-} from './contracts.ts'
+  loadFormatCases,
+  loadSummaryCases,
+  loadTranscriptCases,
+  type SetExpectation
+} from './cases.ts'
+import { vitalRequest, DOCUMENT_KIND } from './contracts.ts'
 import { parseNoteFormat, parsePatientSummary, parseVitalSigns } from './extraction.ts'
 import { absorb, emptyTally, pct, ratio, scoreCase, scoreFailure, type VitalTally } from './scorer.ts'
-import { DOCUMENT_KIND, loadFormatCases, loadSummaryCases, loadTranscriptCases, type SetExpectation } from './contracts.ts'
 import {
   absorbFormat,
   absorbSet,

@@ -13,7 +13,7 @@ import { loadPack } from '../src/core/pack.ts'
 import { redactor } from '../src/core/profile.ts'
 import { PROFILE } from '../src/profiles/clinical/profile.ts'
 import { clinicalRedactor, redactClinical } from '../src/profiles/clinical/redact.ts'
-import { loadSettings } from '../src/profiles/clinical/contracts.ts'
+import { loadSettings } from '../src/profiles/clinical/settings.ts'
 
 const pack = loadPack(join(import.meta.dirname, '..', 'packs', 'clinical'))
 

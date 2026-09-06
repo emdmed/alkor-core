@@ -19,7 +19,7 @@ import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { loadPack } from '../src/core/pack.ts'
-import { loadSettings } from '../src/profiles/clinical/contracts.ts'
+import { loadSettings } from '../src/profiles/clinical/settings.ts'
 import { readingFromItems, verifyReading, tallyReviewed } from '../src/profiles/clinical/review-transcript.ts'
 import { applyRepair, needsRepair, repairBriefing, type Repair } from '../src/profiles/clinical/repair.ts'
 

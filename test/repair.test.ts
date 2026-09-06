@@ -18,7 +18,13 @@ import {
   verifyReading,
   type ReviewedItem,
 } from '../src/profiles/clinical/review-transcript.ts'
-import { hasRepairContract, loadSettings, repairSchema, repairSchemaGolden, repairRequest } from '../src/profiles/clinical/contracts.ts'
+import { loadSettings } from '../src/profiles/clinical/settings.ts'
+import {
+  hasRepairContract,
+  repairSchema,
+  repairSchemaGolden,
+  repairRequest
+} from '../src/profiles/clinical/contracts.ts'
 import type { DerivationRule, QuoteRule } from '../src/core/verify.ts'
 
 const pack = loadPack('packs/clinical')

@@ -25,7 +25,7 @@
  * - **Failed runs.** Scored as total misses, never skipped, so a model that fails outright
  *   cannot look merely quiet.
  */
-import type { VitalCase, VitalExpectation } from './contracts.ts'
+import type { VitalCase, VitalExpectation } from './cases.ts'
 import { isBloodPressure, type Reading, type VitalSigns } from './extraction.ts'
 import { verifyQuote, type QuoteRule } from '../../core/verify.ts'
 

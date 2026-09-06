@@ -17,15 +17,9 @@ import { formatBench, summarizeBench, type BenchSample, type BenchSummary } from
 import { formatStability, summarizeStability, type Observation, type StabilitySummary } from '../../core/stability.ts'
 import { HARNESS_VERSION } from '../../core/version.ts'
 import { extract } from '../../modes/extract.ts'
-import {
-  DIFFICULTY_MAX,
-  DIFFICULTY_MIN,
-  gradedExpectations,
-  loadSettings,
-  loadVitalCases,
-  parseDifficultyRange,
-  vitalRequest,
-} from './contracts.ts'
+import { loadSettings } from './settings.ts'
+import { DIFFICULTY_MAX, DIFFICULTY_MIN, gradedExpectations, loadVitalCases, parseDifficultyRange } from './cases.ts'
+import { vitalRequest } from './contracts.ts'
 import { parseVitalSigns } from './extraction.ts'
 import { absorb, emptyTally, pct, ratio, scoreCase, scoreFailure, type Miss, type VitalTally } from './scorer.ts'
 

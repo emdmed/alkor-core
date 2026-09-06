@@ -13,7 +13,7 @@
  * while fabricating the spans it cites has not passed, and one averaged number would let a
  * good recall hide it.
  */
-import type { SetExpect, SetExpectation } from './contracts.ts'
+import type { SetExpect, SetExpectation } from './cases.ts'
 import { norm } from './scorer.ts'
 import { verifyDerivation, verifyQuote, type DerivationRule, type QuoteRule } from '../../core/verify.ts'
 import type { FormatItem, MedicationItem, NoteFormat, PatientSummary } from './extraction.ts'
@@ -46,7 +46,7 @@ export const DEFAULT_NEGATORS = [
   'nunca',
 ]
 
-/** How items are matched against an answer key. Supplied by the pack; see contracts.ts. */
+/** How items are matched against an answer key. Supplied by the pack; see settings.ts. */
 export interface SetMatchRule {
   /** Words that reverse the clause they open. `DEFAULT_NEGATORS` when the pack says nothing. */
   negators: string[]
