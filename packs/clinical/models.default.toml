@@ -144,3 +144,31 @@ timeout_secs = 900
 temperature = 0.0
 max_tokens = 512
 timeout_secs = 120
+
+# --- The shock-category pass over a fixed examination payload. ---
+# The SMALLEST cap in this file, and the input is the smallest too: seven lines in, one closed
+# object of eight short fields out. Two of the fields are enum members, two are arrays bounded
+# at five enum members each, and the only free text is two sentences. 512 is roughly four times
+# a maximal legal response, on the same reasoning as vital_signs.
+#
+# A tight cap is worth more here than elsewhere because of what overrunning it would MEAN. This
+# contract's whole subject is whether the model reasons from the payload or narrates around it,
+# and a model that needs more than 512 tokens for seven lines of input has answered the wrong
+# question — a cap that never binds would let that happen silently and report the category.
+# THE DEADLINE IS NOT THE CAP, and this file said otherwise for exactly one run. `max_tokens`
+# above is sized to the ANSWER, which is tiny and stays tiny. `timeout_secs` is sized to the
+# slowest MACHINE anyone points this pack at, and those are unrelated quantities — the first is
+# a property of the contract, the second is a property of somebody's hardware. Setting the
+# deadline to 120 "because the output is small" conflated them, and the whole corpus came back
+# as twenty parse failures on a CPU-only box: one cold case there measured 324 s wall, 1990
+# tokens of prefill at 11 tok/s and 85 tokens of generation at 0.6 tok/s. Every case reported
+# `cannot reach llama-server`, which reads as a server that is down rather than a deadline that
+# is short — the gates correctly refused to pass on nothing, and nothing in the output said the
+# number was the harness's own fault.
+#
+# 900 matches the transcript task's and is chosen the same way: comfortably above a COLD case on
+# hardware where nothing is offloaded to a GPU. On a machine with one it is never approached.
+[sampling.shock]
+temperature = 0.0
+max_tokens = 512
+timeout_secs = 900

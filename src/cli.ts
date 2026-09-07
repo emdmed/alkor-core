@@ -167,22 +167,36 @@ if (command === 'extract') {
   }
 
   const trace = openTrace(profile!.name, redactor(profile!, pack))
-  const result = await profile!.review!({
-    pack,
-    baseUrl,
-    trace,
-    input: input!,
-    // `--task` selects the contract, for a profile whose pack holds more than one. A profile
-    // that reads a single contract ignores it, which is why it is passed unconditionally
-    // rather than being made conditional on something this file would have to know.
-    options: {
-      constrain: values.constrain,
-      task: values.task,
-      repair: values.repair,
-      medicationPass: !values['no-medication-pass'],
-      calculate: values.calculate,
-    },
-  })
+  // Wrapped in the same try/`die` the `eval` verb below has always had, and this was a real
+  // gap rather than a tidy-up. A profile refuses an unusable `--task` with a ProfileError
+  // whose message names the task and says what to run instead — a sentence written to be the
+  // whole of what the user sees. Unwrapped, it arrived as a nine-line stack trace with that
+  // sentence buried in the middle, so the one verb where a refusal is the NORMAL outcome was
+  // the one verb that reported it as a crash.
+  let result: Awaited<ReturnType<NonNullable<NonNullable<typeof profile>['review']>>> | undefined
+  try {
+    result = await profile!.review!({
+      pack,
+      baseUrl,
+      trace,
+      input: input!,
+      // `--task` selects the contract, for a profile whose pack holds more than one. A profile
+      // that reads a single contract ignores it, which is why it is passed unconditionally
+      // rather than being made conditional on something this file would have to know.
+      options: {
+        constrain: values.constrain,
+        task: values.task,
+        repair: values.repair,
+        medicationPass: !values['no-medication-pass'],
+        calculate: values.calculate,
+      },
+    })
+  } catch (e) {
+    // Closed before dying, exactly as the eval path does: a refusal that left the trace open
+    // would drop whatever the run had already written about why it refused.
+    trace.close()
+    die(e)
+  }
   trace.close()
 
   // --json puts machine-readable output on stdout and NOTHING else, so the verb can be piped
@@ -199,15 +213,15 @@ if (command === 'extract') {
   // of the same contract. Two runtimes emitting identical bytes while disagreeing about which
   // quotes verify are not the same runtime, and the completion does not show it.
   if (values.json) {
-    console.error(result.text)
-    if (result.report !== undefined) console.log(JSON.stringify(result.report, null, 2))
-    else if (result.raw !== undefined) console.log(result.raw)
+    console.error(result!.text)
+    if (result!.report !== undefined) console.log(JSON.stringify(result!.report, null, 2))
+    else if (result!.raw !== undefined) console.log(result!.raw)
   } else {
-    console.log(result.text)
+    console.log(result!.text)
   }
   // An unreadable reply is a failure. A reading with an unverified quote is not — it is a
   // finding, and it is printed rather than hidden behind an exit code.
-  process.exit(result.ok ? 0 : 1)
+  process.exit(result!.ok ? 0 : 1)
 }
 
 if (command === 'agent') {

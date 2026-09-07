@@ -62,6 +62,11 @@ export interface ClinicalSettings {
    * than defaulting to a label the two runtimes would disagree about.
    */
   medicationSchemaName?: string
+  /**
+   * `json_schema.name` for the shock-category pass, on the same terms again: absent means the
+   * pack has no shock contract, and assembly refuses rather than guessing a label.
+   */
+  shockSchemaName?: string
   quoteVerification: QuoteRule
   textDerivation: DerivationRule
   summaryAssembly: AssemblyRule
@@ -148,6 +153,7 @@ export type SchemaNameField =
   | 'transcriptSchemaName'
   | 'transcriptRepairSchemaName'
   | 'medicationSchemaName'
+  | 'shockSchemaName'
 
 /**
  * The four names a pack must state, as data rather than as four type annotations.

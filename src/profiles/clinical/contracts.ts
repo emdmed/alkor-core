@@ -166,6 +166,29 @@ export const CONTRACTS = {
     samplingKey: 'medication',
     optional: true,
   },
+  /**
+   * The shock-category pass: a fixed examination payload in, a category out.
+   *
+   * The first contract in this table that extracts nothing, and the row is unremarkable
+   * because of it — which is the argument for the table. A contract whose input is a closed
+   * set of findings rather than prose, whose reply is graded against a rule in code rather
+   * than a hand-written key, and whose corpus is JSON rather than notes, still declares the
+   * same five facts in the same five columns, and needed no new concept anywhere in assembly.
+   *
+   * Its `documentKind` is `exam`, so the harness reads exams/{case}.exam.json; what reaches the
+   * model is `renderExam`'s rendering of that file, not the file. The rendering lives in
+   * shock.ts for the reason [clinical.summaryAssembly] exists — two runtimes that render the
+   * same findings differently grade different inputs while appearing to share a prompt.
+   */
+  shock: {
+    id: 'shock',
+    promptKey: 'shockPrompt',
+    schemaKey: 'shockSchema',
+    goldenKey: 'shockSchemaGolden',
+    schemaNameField: 'shockSchemaName',
+    samplingKey: 'shock',
+    documentKind: 'exam',
+  },
   /** The repair pass: the failed items of a reading, handed back with the transcript. */
   'transcript-repair': {
     id: 'transcript-repair',
@@ -180,9 +203,16 @@ export const CONTRACTS = {
 
 // --- The tasks, as a view of the table ----------------------------------------------------
 
-/** The four graded tasks, in the order a pack author meets them. */
-export type Task = 'vital-signs' | 'summary' | 'note-format' | 'transcript'
-export const TASKS: Task[] = ['vital-signs', 'summary', 'note-format', 'transcript']
+/**
+ * The graded tasks, in the order a pack author meets them.
+ *
+ * `shock` is last and is the only one that is not an extraction. It is in this list rather
+ * than beside it because `--task all` has to reach it: a graded task nobody can run is a
+ * contract that sits looking complete and reports nothing, which is the state it was in for
+ * exactly as long as it took to write an eval mode for it.
+ */
+export type Task = 'vital-signs' | 'summary' | 'note-format' | 'transcript' | 'shock'
+export const TASKS: Task[] = ['vital-signs', 'summary', 'note-format', 'transcript', 'shock']
 
 /**
  * The `[sampling.*]` key each task reads. Separate from the task name because one is a

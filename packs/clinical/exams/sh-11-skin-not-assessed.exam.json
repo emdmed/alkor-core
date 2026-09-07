@@ -1,0 +1,13 @@
+{
+  "hypotension": {
+    "systolic": 81,
+    "diastolic": 56,
+    "duration_minutes": 60
+  },
+  "heart_rate": 114,
+  "skin_temperature": "not_assessed",
+  "jugular_venous_pressure": "elevated",
+  "capillary_refill": "delayed",
+  "pulse_volume": "normal",
+  "lung_exam": "bilateral_crackles"
+}

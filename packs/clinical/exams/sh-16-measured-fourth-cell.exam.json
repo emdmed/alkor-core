@@ -1,0 +1,14 @@
+{
+  "hypotension": {
+    "systolic": 79,
+    "diastolic": 42,
+    "duration_minutes": 50
+  },
+  "heart_rate": 116,
+  "skin_temperature": "warm",
+  "jugular_venous_pressure": "not_assessed",
+  "jugular_venous_pressure_cm_h2o": 8,
+  "capillary_refill": "brisk",
+  "pulse_volume": "bounding",
+  "lung_exam": "clear"
+}

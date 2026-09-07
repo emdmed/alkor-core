@@ -14,6 +14,7 @@ import { ProfileError, type EvalContext, type EvalVerdict, type ProfileModule, t
 import { identifyServer } from '../../core/client.ts'
 import type { Pack } from '../../core/pack.ts'
 import { runVitalSignsEval } from './eval.ts'
+import { runShockEval } from './shock-eval.ts'
 import { gatePasses, runNoteFormatEval, runSummaryEval, runTranscriptEval, type TaskResult } from './set-eval.ts'
 import { loadSettings } from './settings.ts'
 import { TASKS, type Task } from './contracts.ts'
@@ -136,6 +137,12 @@ export const PROFILE: ProfileModule = {
       if (task === 'vital-signs') results.push(await vitalSignsResult(shared))
       else if (task === 'summary') results.push(await runSummaryEval(shared))
       else if (task === 'note-format') results.push(await runNoteFormatEval(shared))
+      // Handed the same `shared` as the rest, minus nothing: it honours --constrain, --runs,
+      // --difficulty and --no-cache-prompt exactly as the extraction tasks do, and ignores
+      // --repair and --medication-pass because it has no second call to make. A task that
+      // quietly dropped a flag would report a number under conditions the header names and
+      // the run did not use.
+      else if (task === 'shock') results.push(await runShockEval(shared))
       else results.push(await runTranscriptEval(shared))
     }
 
@@ -178,11 +185,25 @@ const reviewTask = (requested: unknown): 'vital-signs' | 'transcript' => {
   const s = String(requested)
   if ((REVIEW_TASKS as readonly string[]).includes(s)) return s as 'vital-signs' | 'transcript'
   if ((TASKS as string[]).includes(s)) {
+    // A reason PER TASK rather than one sentence with a default. Written as a map because the
+    // fallback arm of a ternary is how a fourth task inherits the third's excuse: `shock` did
+    // exactly that for as long as it took to run the command — it was told it reads the same
+    // notes vital signs reads, which is false about the one task in this pack that reads no
+    // notes at all. An unreachable task that misdescribes itself is worse than one that says
+    // nothing, because the sentence is what the reader acts on.
+    const why: Record<string, string> = {
+      summary:
+        'its input is a whole record assembled from many notes, not one document — ' +
+        'run `eval --task summary` instead',
+      'note-format':
+        'it reads the same notes vital signs reads, and `extract --task vital-signs --case NAME` reaches them',
+      shock:
+        'its input is a physical-examination payload rather than a document, so there is nothing ' +
+        'for --note or --stdin to carry — run `eval --task shock` over the corpus in packs/*/exams/',
+    }
     throw new ProfileError(
       `--task '${s}' is a graded task but not a reviewable one: ` +
-        (s === 'summary'
-          ? 'its input is a whole record assembled from many notes, not one document — run `eval --task summary` instead'
-          : 'it reads the same notes vital signs reads, and `extract --task vital-signs --case NAME` reaches them'),
+        (why[s] ?? 'it has no single-document input this command can be pointed at'),
     )
   }
   throw new ProfileError(`unknown --task '${s}' for extract (expected ${REVIEW_TASKS.join(', ')})`)

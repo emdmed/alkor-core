@@ -218,6 +218,193 @@ under `$XDG_STATE_HOME/medextract/traces/clinical/`, which is outside this repos
 purpose. They hold completions verbatim because `pack.toml` declares `corpusSynthetic = true`;
 a pack that does not say gets its trace content elided to a digest.
 
+## Shock category — 2026-09-07
+
+The first contract in this pack that extracts nothing. A fixed physical-examination payload in,
+one of four categories out, graded against a published bedside rule implemented in code
+(Vazquez R, Gheorghe C, Kaufman D, Manthous CA, *J Hosp Med* 2010;5(8):471-4, PMID 20945471).
+
+**WHAT THE HEADLINE NUMBER IS.** Agreement with that rule — **not diagnostic accuracy**. The
+rule itself was 76% accurate against the discharge diagnosis in its own derivation cohort, and
+this corpus contains no patients: it is twenty payloads written to exercise twenty routes
+through the rule. A model at 95% here has shown that it applies a published heuristic faithfully
+and declines where the heuristic does not reach. That is the whole claim.
+
+**The reference arm is code and scores 100% by construction.** `classify()` in
+`src/profiles/clinical/shock.ts` IS the answer key, it costs no tokens and no server, and every
+run below is printed beside it. The honest question this task asks is not "did the model clear
+the floor" but "did the model earn its place over twelve lines of TypeScript". What it has that
+the rule does not is `indeterminate_reason`: narration ran 100% on every run that scored
+anything, and a 2x2 cannot produce a sentence.
+
+Model: **Qwen3-4B-Q4_K_M** (server-reported, and the same weights `models.default.toml`
+declares). Constrained arm only. Corpus: 20 payloads in `exams/`, 11 the rule decides and 9 it
+declines.
+
+### The four runs
+
+| # | what changed | scored | agreement | echo | not inv. | abstention | restraint | verdict |
+|---|---|---|---|---|---|---|---|---|
+| 1 | first measured run, contended machine | 11/20 | 82% (9/11) | 100% | 100% | 60% (3/5) | 100% | **FAIL** |
+| 2 | full corpus, prompt v1 | 20/20 | 80% (16/20) | 100% | 100% | 67% (6/9) | 91% | **FAIL** |
+| 3 | prompt v2 — ordered gates, 5th example | 20/20 | 85% (17/20) | 100% | 100% | 78% (7/9) | 100% | **FAIL** |
+| 4 | **numbers delegated to medprotocol** | 20/20 | **95% (19/20)** | 100% | 100% | **89% (8/9)** | 100% | **PASS** |
+
+Floors: agreement 0.84, echo 1.0, notInvented 1.0, abstention 0.80, restraint 0.85.
+
+**Run 2 and run 4 are not measured against the same corpus difficulty, and run 4 is the harder
+one.** Three of the prompt's worked examples were byte-identical to `sh-01`, `sh-04` and
+`sh-05` — an error made when the prompt and the corpus were written in one sitting. Those three
+cases were scoring off an answer printed in their own instructions until run 3, where all five
+examples were re-authored to distinct payloads and each was checked mechanically against every
+corpus case. So the 80% is flattered and the 15-point gain understates the change.
+
+### Which cases failed, run by run
+
+| case | run 2 | run 3 | run 4 |
+|---|---|---|---|
+| `sh-06-normotensive` (systolic 104) | septic | ok | ok |
+| `sh-07-brief-hypotension` (10 min) | cardiogenic | cardiogenic | **cardiogenic** |
+| `sh-08-hypovolemic-crackles` | ok | cardiogenic | ok |
+| `sh-14-cardiogenic-warm-signs` | indeterminate | ok | ok |
+| `sh-17-systolic-at-cut` (systolic 90) | cardiogenic | cardiogenic | ok |
+
+### Run 0 — a deadline, reported as a dead server, and the gate that caught it
+
+Before run 1 there was a run that scored **nothing**: `[sampling.shock].timeout_secs` was set to
+120 on the reasoning that the output is small. That conflated the CAP (a property of the
+contract; 512 tokens is still right) with the DEADLINE (a property of whoever's hardware runs
+it). On this CPU-only box one cold case measures 324 s. All twenty came back as
+`cannot reach llama-server`, which reads as a server that is down rather than a deadline that is
+short.
+
+It is kept because of what the gates did with it: `cases: 0`, every rate a vacuous 1.0, and
+`pass: false` — because `measured` was false. A floor cleared by scoring nothing is not a pass,
+and this is the first time that machinery has fired on a real run rather than a stub. The
+deadline is now 900 s. Trace `2026-09-07T05-44-52-591Z.jsonl`.
+
+### Run 1 — 11 of 20, and the speed is not the model's
+
+The server was OOM-killed mid-run by a `llama-bench` sweep from another project competing for
+the same box. Nine cases never reached it. **2.5 tok/s generation in that trace is contention,
+not Qwen3-4B** — the same corpus on the same machine ran at 9.2 tok/s an hour later with the
+box free. Correctness over the 11 cases that did run agrees case-for-case with run 2.
+
+### Run 2 → run 3: the prompt was rewritten, and it half worked
+
+Run 2's four failures were two defects. Three cases (`sh-06`, `sh-07`, `sh-17`) ignored the
+study's entry criterion entirely — the model went straight to the 2x2. The fourth (`sh-14`)
+declined a case the rule decides, and the reason field said why: it returned Example 3's
+sentence, *"**Warm** peripheries with an elevated jugular venous pressure is the one combination
+the rule does not assign"*, with one word changed to **Cool** — which is false, because cool +
+elevated is cardiogenic. It had memorised the sentence and reached for it whenever the jugular
+venous pressure was elevated. Only the narration column could have shown that; the category
+alone reads as generic over-abstention.
+
+Prompt v2 made the cohort check step 1 of an ordered procedure ahead of the table, gave it the
+worked example it was the only indeterminate condition to lack, and stated outright that
+`cool + elevated is CARDIOGENIC. It is not the empty square.`
+
+It fixed `sh-06` and `sh-14` — and **broke `sh-08`**, which had been correct twice. All three of
+run 3's failures carried the identical signature `supporting_findings: ["lung_exam"]`,
+`discordant_findings: ["capillary_refill", ...]`, answer `cardiogenic`: Example 3's citation
+pattern copied wholesale. Making it the only cardiogenic example *and* the only example citing
+`lung_exam` as support had correlated "crackles" with "cardiogenic" across the prompt, and the
+model matched on it.
+
+**`sh-17` still failed after three formulations.** Prompt v2 says verbatim *"90 is not below 90,
+so a systolic of exactly 90 STOPS"*. The model applied the gate at 104 and skipped it at 90 and
+at ten minutes — right on the glaring case, wrong on the boundary, which is the worst profile a
+safety check can have because it looks like it works.
+
+### Run 3 → run 4: the numbers stopped being the model's to decide
+
+Every numeric judgement was delegated to the **medprotocol CLI v0.7.10** — the tool the
+consuming application already uses, so that the eval and the product read a blood pressure the
+same way rather than through two implementations. It parses the pressure and categorises it;
+`resolveExam` then applies the pack's cut-points and states the verdict in the payload:
+
+    blood_pressure: 90/62 mmHg (medprotocol: Normal)
+    mean_arterial_pressure: 71.3 mmHg
+    heart_rate: 100 bpm (medprotocol: Normal)
+    shock_index: 1.11
+    hypotension_duration: 120 minutes
+    in_studied_cohort: no (systolic 90 is not below 90)
+
+`sh-17` was fixed and `sh-08` recovered. Agreement 85% → 95%, abstention 78% → 89%, every gate
+clear.
+
+**The pack keeps the entry criterion and medprotocol does not get it**, deliberately:
+medprotocol's `category: "Low"` fires on systolic < 90 **OR diastolic < 60**, while the study
+enrolled on systolic < 90 alone. Delegating the parse is right; delegating the criterion would
+call a patient at 120/55 hypotensive and would admit `sh-17` — whose systolic is exactly 90 — to
+a cohort it is not in. There is a test on that divergence. The duration half stays in the pack
+for a plainer reason: medprotocol evaluates measurements, and "sustained thirty minutes" is not
+one.
+
+All 20 payloads gained a `diastolic` and a `heart_rate` for this, because medprotocol will not
+parse a pressure without a diastolic. Every systolic and duration is unchanged from the corpus
+runs 1-3 used, and the gate is systolic-only, so no expected answer moved.
+
+### `sh-07`, the one that still fails, and why it is now a different problem
+
+Its payload states, on line 6, in English:
+
+    in_studied_cohort: no (hypotension has lasted 10 minutes, under the 30 the rule requires)
+
+The model answered `cardiogenic`, `indeterminate_reason: null`, confidence 0.9. So this was
+never arithmetic, and computing the answer and showing it is not enough either: the model
+overrules a stated fact.
+
+The three cohort cases separate on one variable — what medprotocol says about the pressure:
+
+| case | systolic | out of cohort because | medprotocol | model |
+|---|---|---|---|---|
+| `sh-06` | 104 | systolic | Normal | complied |
+| `sh-17` | 90 | systolic | Normal | complied |
+| `sh-07` | 84 | duration 10 min | **Low** | **overruled** |
+
+`blood_pressure: 84/60 mmHg (medprotocol: Low)` sitting above `in_studied_cohort: no` reads as a
+contradiction, and the model resolves it in favour of the low pressure. That line was added in
+run 4; it is the cost of showing the category.
+
+**The fix this points at has not been made.** When `cohort.ok` is false, `classify` already
+returns `indeterminate` with a better reason than the model has produced for any of these cases,
+so the contract could return that without an inference call at all — no request, no opportunity
+to overrule. That would take `sh-07` to correct and abstention to 9/9. It is a real contract
+change (the task would stop calling the model on every payload) and it is not in these numbers.
+
+### What it cost, on this machine
+
+An **8-core CPU with no GPU**, one slot, sequential, `cache_prompt` on. Quoted only with those
+conditions; correctness travels between machines and throughput does not.
+
+| run | generation | wall | note |
+|---|---|---|---|
+| 1 | 2.5 tok/s | 529 s | contended with `llama-bench`; not a measurement of the model |
+| 2 | 9.2 tok/s | 351 s | box free |
+| 3 | 6.0 tok/s | 536 s | longer prompt (v2 adds a fifth example) |
+| 4 | 5.4 tok/s | 601 s | longer prompt again, plus 20 medprotocol subprocesses |
+
+Prompt-cache reuse was 91-93% throughout: the system prompt has no placeholders, so only the
+first case pays prefill (102 s cold in run 4).
+
+### Traces
+
+    run 0  nothing scored          2026-09-07T05-44-52-591Z.jsonl
+    run 1  11/20, contended        2026-09-07T05-55-38-019Z.jsonl
+    run 2  prompt v1               2026-09-07T08-07-34-909Z.jsonl
+    run 3  prompt v2               2026-09-07T08-25-07-510Z.jsonl
+    run 4  medprotocol v0.7.10     2026-09-07T08-46-11-886Z.jsonl
+
+under `$XDG_STATE_HOME/medextract/traces/clinical/`, outside this repository as every other
+trace here is. Runs 2-4 each hold the model's reply, the rule's answer and the concordance the
+rule would have cited, per case. Run 4's `run` and `record` events additionally name the
+medprotocol version and command — a result reproduced against a different build of that CLI is
+a result about a different rule, and the trace is the only thing that would say so.
+
+---
+
 ## Dictated transcripts — 2026-08-22
 
 First graded run of the `transcript` task, on the twelve transcripts added the same day.

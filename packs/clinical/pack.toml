@@ -36,6 +36,14 @@ name = "clinical"
 [documents]
 default    = "notes/{case}.note.txt"
 transcript = "transcripts/{case}.transcript.txt"
+# The physical-examination payloads, and the first kind here that is not prose. A `.exam.json`
+# is a CLOSED set of five findings that have already been decided, not a document to be read:
+# the shock task reasons from it rather than extracting anything out of it, and the bytes the
+# model actually sees are `renderExam`'s rendering of this file rather than the file. Filed
+# apart from notes/ for the reason transcripts/ is — what a document IS carries more weight in
+# this directory than anywhere else in the repository, and a payload in notes/ would read as a
+# note nobody wrote.
+exam       = "exams/{case}.exam.json"
 
 [files]
 # The system prompt. NO placeholders: the note is the `user` message, not spliced into this
@@ -198,6 +206,37 @@ transcriptRepairSchemaGolden = "schemas/transcript-repair.golden.json"
 # carries a `source` copied out of the note, verified by literal search under
 # [clinical.quoteVerification] exactly as a note item's quote is. A topic whose source is not
 # in the note is discarded before anything leaves the machine.
+# --- Shock category: a fixed examination payload in, a category out. -------------------
+# THE FIRST CONTRACT HERE THAT EXTRACTS NOTHING. Every other task in this pack reads prose and
+# pulls facts out of it; this one is handed five findings that have already been decided and
+# asks the model to reason from them. Extraction — how those five get out of a ward-round note
+# — is a separate contract and deliberately does not exist yet, because a reasoning number
+# measured over an extraction's mistakes is not a reasoning number.
+#
+# It grades against a PUBLISHED RULE implemented in code: Vazquez R, Gheorghe C, Kaufman D,
+# Manthous CA, J Hosp Med 2010;5(8):471-4 (PMID 20945471). Skin temperature by jugular venous
+# pressure put 52 of 68 hypotensive patients in the right arm — 76%. That 76% is the ceiling and
+# it is the reason `_whatThisIsNot` is the longest key in the case file: a model scoring 1.0
+# here has shown it applies a bedside heuristic faithfully and declines where the heuristic does
+# not reach. It has shown nothing about anyone's shock.
+#
+# THE RULE IS TWELVE LINES OF TYPESCRIPT AND THE MODEL IS GRADED AGAINST IT. Nothing is gained
+# by asking a 4B model to do a table lookup, and the point of measuring it anyway is that a
+# lookup the model gets right 95% of the time is strictly worse than the lookup — a fact a pack
+# that shipped the model here without the reference arm would never discover. What the model is
+# for is the residue the 2x2 cannot express: which corroborating findings contradict the answer,
+# and why a case is undecidable.
+#
+# NOT YET MEASURED. There is no row for this task in RESULTS.md and there will not be one until
+# it has run against named weights. The obvious second arm when it does: the prompt currently
+# STATES the 2x2, so what is measured is rule-following. Removing the table measures whether the
+# model knows the physiology, which is a different and much weaker product, and the difference
+# between the two runs is worth having as a number.
+shockPrompt       = "prompts/shock.md"
+shockSchema       = "schemas/shock.schema.json"
+shockSchemaGolden = "schemas/shock.golden.json"
+shockCases        = "evals/shock-cases.json"
+
 literaturePrompt       = "prompts/literature.md"
 literatureSchema       = "schemas/literature.schema.json"
 literatureSchemaGolden = "schemas/literature.golden.json"
@@ -238,6 +277,8 @@ medicationSchemaName = "current_medication"
 # The literature pass. Its own label like every other task, so a server log and a pinned body
 # can tell which contract produced which bytes.
 literatureSchemaName = "literature_search"
+# The shock-category pass, its own label for the same reason.
+shockSchemaName = "shock_category"
 
 # Which task `eval --profile clinical` runs when none is named. `--task all` runs the four,
 # and each clears its own floor: averaging them would let a ceiling on one hide a failure in
@@ -415,8 +456,60 @@ minSpeakers = 2
 [clinical.medicationPass]
 shapes = ["dictation"]
 
+# --- The cut-points the shock rule turns on. --------------------------------------------
+#
+# All three are the published study's, and all three are DATA for the reason every other rule
+# in this file is: the consuming application applies the same rule to its own patients, and an
+# application admitting someone at 95 mmHg into a rule derived below 90 — or binning the
+# jugular venous pressure at 8 cmH2O instead of 7 — is running a different rule from the one
+# this eval measured. Both would still produce a category. Neither would produce a complaint.
+#
+# REQUIRED rather than defaulted, on [clinical.quoteVerification]'s terms rather than
+# [clinical.setMatching]'s: a defaulted threshold is not a feature degrading to previous
+# behaviour, it is a silent decision about where cardiogenic begins, made in src/ and reported
+# as the pack's. See `loadShockRule`.
+# --- The CLI that decides every number in the shock contract. ---------------------------
+#
+# WHY THIS EXISTS. The shock task used to ask the model whether a systolic was below a
+# threshold. Measured over this corpus across three prompt formulations, a 4B model applied the
+# cohort gate at a systolic of 104 and skipped it at exactly 90 and at a ten-minute duration —
+# right on the glaring case, wrong on the boundary, which is the worst profile a safety check
+# can have because it looks like it works. Numeric decisions are now delegated, and delegated to
+# the tool the consuming application already uses rather than to a second implementation here:
+# the eval and the product read a blood pressure the same way, or the number describes something
+# adjacent to the product.
+#
+# WHAT IT DECIDES AND WHAT THIS PACK STILL DECIDES. medprotocol parses and categorises the vital
+# signs. [clinical.shockExam] below keeps the study's ENTRY CRITERION, because those are
+# different questions: medprotocol's `Low` fires on systolic < 90 OR diastolic < 60, so it calls
+# 120/55 low, and it would admit sh-17-systolic-at-cut — whose systolic is exactly 90 — to a
+# cohort it is not in. Delegating the parse is right; delegating the criterion would silently
+# re-point this contract at a rule Vazquez et al. did not publish.
+#
+# `command` is an argv ARRAY, not a shell string, so a path with a space in it is not a quoting
+# bug. Override the executable with MEDPROTOCOL_BIN — the command is a property of a machine
+# while the VERSION is a property of this contract, which is why only the first is overridable.
+# The version is checked once per run and a mismatch refuses it.
+[clinical.medprotocol]
+command = ["node", "/home/enrique/projects/medprotocol-core/packages/medprotocol/dist/index.js"]
+version = "0.7.10"
+
+[clinical.shockExam]
+# The study's entry criterion: systolic below 90 mmHg. At or above it the rule says nothing —
+# the four-way table is about which shock, never about whether there is one, and the corpus's
+# sh-06-normotensive case exists to catch a model that has forgotten the difference.
+hypotensionSystolicBelow = 90
+# And sustained for more than thirty minutes. A transient dip is not the population the
+# accuracies were measured in. sh-07-brief-hypotension is the case for this half, and it is the
+# harder half to notice: the systolic passes and the disqualification is on the next line.
+hypotensionMinutesAtLeast = 30
+# ABOVE 7 cmH2O is elevated. Strictly above: 7 itself is normal_or_low, which is what
+# sh-13-jvp-at-threshold pins, and it is the case that fails the day either runtime reimplements
+# the comparison as >=.
+jvpElevatedAboveCmH2O = 7
+
 [clinical.setMatching]
-negators = ["no", "not", "never", "denies", "denied", "without", "sin", "niega", "ningun", "ninguna", "nunca"]
+negators =["no", "not", "never", "denies", "denied", "without", "sin", "niega", "ningun", "ninguna", "nunca"]
 
 # --- What a medication item's `text` may contain: a drug name, and nothing else. --------
 #

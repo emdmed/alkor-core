@@ -224,13 +224,59 @@ test('the denominators and floors are what the corpora were authored against', (
   assert.ok(format.fabricationFloor! >= format.quoteFloor, 'below the quote floor it could never bind')
 })
 
+/**
+ * A cap that binds on a legal answer measures the budget rather than the model — it turns a
+ * good reply into a parse failure and reports it as a model that cannot read.
+ *
+ * The floor is 1024 for the four extraction tasks, whose realistic maximal answer is large and
+ * whose schemas could in principle produce far more than their caps allow (note-format's could
+ * emit ~7500 tokens against a 2048 cap; the pack's comment explains why that is sized to a
+ * realistic maximum rather than to the schema's ceiling). `shock` is exempted by meeting a
+ * STRICTLY STRONGER condition instead: its cap is above what its schema can legally emit at
+ * all, so no answer exists that this cap could truncate. That is a property the other four
+ * cannot claim, so it is checked rather than asserted — the exemption has to be earned by the
+ * schema on every run, or the day someone raises `maxLength` on `indeterminate_reason` this
+ * test fails instead of the eval quietly reporting truncations as wrong answers.
+ */
 test('every task declares its own sampling, and every graded one is deterministic', () => {
   for (const task of TASKS) {
     const s = loadSampling(pack, SAMPLING_KEY[task])
     assert.equal(s.temperature, 0, `${task} must be deterministic to be graded`)
-    assert.ok(s.max_tokens >= 1024, `${task}: a cap that truncates a legal answer measures the budget`)
+    const ceiling = Math.ceil(schemaCharCeiling(pack.json(CONTRACTS[task].schemaKey)) / 3)
+    assert.ok(
+      s.max_tokens >= 1024 || s.max_tokens > ceiling,
+      `${task}: cap ${s.max_tokens} is under 1024 and under the ~${ceiling} tokens its schema can emit — ` +
+        'a cap that truncates a legal answer measures the budget',
+    )
   }
 })
+
+/**
+ * An upper bound on the CHARACTERS a schema can legally serialize to, from its own bounds.
+ *
+ * Deliberately crude and deliberately generous: `maxLength`, `maxItems` and the widest enum
+ * member, with no attempt to model whitespace or realistic content. It is used only to let a
+ * small contract prove its cap cannot bind, so an over-estimate is the safe direction — it
+ * makes the exemption harder to claim, never easier.
+ */
+const schemaCharCeiling = (schema: any, defs?: any): number => {
+  const d = defs ?? schema?.$defs ?? {}
+  const s = schema
+  if (!s) return 0
+  if (s.$ref) return schemaCharCeiling(d[String(s.$ref).split('/').pop()!], d)
+  if (s.anyOf) return Math.max(...s.anyOf.map((a: any) => schemaCharCeiling(a, d)))
+  if (s.enum) return Math.max(...s.enum.map((e: any) => String(e).length)) + 2
+  if (s.type === 'array') return (s.maxItems ?? 50) * (schemaCharCeiling(s.items, d) + 1) + 2
+  if (s.type === 'object') {
+    return Object.entries(s.properties ?? {}).reduce(
+      (n, [k, v]) => n + k.length + 4 + schemaCharCeiling(v, d),
+      2,
+    )
+  }
+  if (s.type === 'string') return (s.maxLength ?? 500) + 2
+  if (s.type === 'number' || s.type === 'integer') return 8
+  return 4
+}
 
 /**
  * A verification rule that defaulted would report a perfect rate having checked nothing —
@@ -763,12 +809,23 @@ test('every contract names keys that resolve, and names them alone', () => {
     assert.ok(loadSampling(pack, s.samplingKey).max_tokens > 0, `${s.id} has no [sampling.${s.samplingKey}]`)
   }
 
-  // The graded tasks are exactly the rows with a corpus, and the two passes exactly those
-  // without: a pass that gained a `documentKind` would appear in `--task` with nothing to read.
-  assert.deepEqual(
-    specs.filter((s) => 'documentKind' in s).map((s) => s.id).sort(),
-    [...TASKS].sort(),
-  )
+  // Every graded task has a corpus, and no row without one is a task: a pass that gained a
+  // `documentKind` would appear in `--task` with nothing to read, and a task that lost one
+  // would read the `default` corpus and grade another task's notes against its own answer key.
+  for (const t of TASKS) assert.ok('documentKind' in CONTRACTS[t], `task ${t} has no corpus`)
+
+  // The converse is NOT that every row with a corpus is a task, and the exception is narrow
+  // enough to state as a rule: a contract may declare a corpus before there is an eval mode
+  // that runs it, and while that is true it is `optional` and no `--task` word names it.
+  // `shock` is the first — it ships a schema, a prompt and thirteen payloads, and its reference
+  // arm is a rule in code rather than an eval loop. What must never happen is a REQUIRED
+  // contract with a corpus sitting outside TASKS: that is a graded task nobody can run, and it
+  // would sit there reporting nothing while looking complete. So the day `optional` comes off
+  // one of these, this assertion is what says it has to join TASKS in the same commit.
+  for (const s of specs) {
+    if (!('documentKind' in s) || (TASKS as string[]).includes(s.id)) continue
+    assert.equal(s.optional, true, `${s.id} declares a corpus but is not a task, so it must be optional`)
+  }
   for (const t of TASKS) assert.equal(DOCUMENT_KIND[t], CONTRACTS[t].documentKind)
 })
 

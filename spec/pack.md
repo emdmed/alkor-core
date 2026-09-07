@@ -83,6 +83,16 @@ needs editing. A profile asks for a kind by name; asking for one the pack does n
 an **error**, never a fall back to `default` — a task handed the wrong corpus does not fail,
 it produces a plausible number for a question nobody asked.
 
+**A document need not be prose.** The harness reads a per-case file as text and hands the
+string to the profile, which is as true of a JSON payload as of a note — the reference pack's
+`exam` kind is a closed set of physical-examination findings that a task reasons *from* rather
+than extracting anything *out of*. Two things follow, and both are the profile's job rather
+than the format's. The bytes that reach the model are the profile's **rendering** of that
+payload, not the file, so the rendering rule belongs in the manifest for the same reason an
+assembly rule does (see below). And a payload has a **vocabulary**, so the profile must refuse
+a value outside it at load: a misspelled finding does not fail, it classifies to whatever the
+fall-through says and is scored as a model that got the case wrong.
+
 Reach for the table only when the documents really are different things. The reference pack
 grades three tasks over written clinical notes and a fourth over transcripts of clinicians
 dictating them: the two corpora share no file, answer to different prompts, and filing the

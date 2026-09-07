@@ -55,7 +55,7 @@ export const parseVitalSigns = (raw: string, fields: GradedField[]): VitalSigns 
  * copies of this function would drift in exactly the direction that makes two tasks' failure
  * counts incomparable.
  */
-const parseJson = (raw: string, label = 'vital-signs'): Record<string, unknown> => {
+export const parseJson = (raw: string, label = 'vital-signs'): Record<string, unknown> => {
   // A fenced reply is NOT quietly unwrapped, and the refusal is deliberate. The eval must
   // report what a caller actually receives: an application that does not strip fences gets
   // nothing from this reply, so scoring it as a success would measure a leniency the

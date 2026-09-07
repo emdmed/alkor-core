@@ -1,0 +1,186 @@
+{
+  "_comment": "Answer key for the shock-category reasoning task: a fixed physical-examination payload in, a category out. Unlike every other case file in this pack there is no note and nothing is extracted — the input is a closed set of five findings, and what is measured is whether the model applies the published rule to them or substitutes an intuition the payload does not support.",
+  "_input": "ONE payload per case, at exams/{case}.exam.json, reached through the `exam` documents kind. Case names ARE payload names here — unlike fmt-* and the note corpus, no payload is shared by two cases, because a payload is not prose that can be read for two different things: it is already the answer to one question.",
+  "_source": "Vazquez R, Gheorghe C, Kaufman D, Manthous CA. Accuracy of bedside physical examination in distinguishing categories of shock: a pilot study. J Hosp Med 2010;5(8):471-4. PMID 20945471. Sixty-eight patients hypotensive for over thirty minutes; skin temperature and jugular venous pressure alone put 52 of them in the right arm — 76%.",
+  "_whatThisIsNot": "IT IS NOT DIAGNOSTIC ACCURACY, and the floors below must never be quoted as though it were. The rule these cases grade against was 76% accurate against the discharge diagnosis in its own derivation cohort, and this corpus contains no patients at all — it contains twenty payloads written to exercise twenty distinct routes through the rule. A model scoring 1.0 here has demonstrated that it applies a published bedside heuristic faithfully and declines when the heuristic does not reach. That is the whole claim and it is a useful one; it is not a claim about anyone's shock.",
+  "_expectIsCrossChecked": "`expect` and `expectReason` restate what src/profiles/clinical/shock.ts `classify` computes from the same payload, and the loader REFUSES the pack when the two disagree. This is deliberate duplication and it is the same argument the schema goldens make. If the expectation were derived alone, a bug in the twelve-line rule would silently redefine truth for all twenty cases and every number would stay green — the corpus would agree with the harness about a rule neither of them was implementing. If it were hand-written alone, a typo would be charged to the weights. Written twice and checked once at load, a disagreement is a load error naming the case, which is the only place it can be seen.",
+  "_reasons": {
+    "outside_studied_cohort": "Systolic at or above [clinical.shockExam].hypotensionSystolicBelow, or hypotension shorter than hypotensionMinutesAtLeast. The rule was never derived here and says nothing.",
+    "primary_finding_not_assessed": "Skin temperature or jugular venous pressure could not be obtained. One of the two findings is not most of an answer.",
+    "discordant_primary_findings": "Warm skin with an elevated jugular venous pressure — the 2x2's fourth cell, which the paper does not assign."
+  },
+  "_floors": {
+    "categoryAgreementFloor": "The gate: did the model reach the category the rule reaches. 0.84 over twenty cases tolerates three, and stops at four. A corpus this size moves in steps of 0.05, so a floor of 1.0 would gate on a single case and turn every prompt edit into a coin flip — but the budget is deliberately not generous either, because on this contract there is nothing for a wrong answer to be except wrong: the payload is closed and the rule is stated in the prompt. It is a floor for a corpus of twenty, not a statement that 16% wrong is acceptable in a product.",
+    "echoFidelityFloor": "Did the model repeat the two findings the rule acts on as the payload states them. 1.0, and unlike the agreement floor it has no error budget at all — the two arguments do not conflict, they are about different things. A wrong category from correctly-read findings is a reasoning failure and small models make them; copying two words out of a seven-line payload is not reasoning, and a model that gets one wrong has answered about a patient the payload does not contain. A right category reached that way is right by luck, and the corpus must not let a good agreement number pay for it.",
+    "notInventedFloor": "1.0, and for the reason fabricationFloor is 1.0 in note-format-cases.json. The payload is CLOSED — there is no relaxation under which an uncited finding might really be there — so a model citing `lung_exam` on a payload where it is not_assessed has asserted an examination nobody performed. One such citation on one case fails the run.",
+    "abstentionRecallFloor": "Of the payloads the rule declines, the share the model also declines. Nine of the twenty cases are indeterminate, which is a deliberately high proportion and not a reflection of how often real shock is undecidable: they are the residue the 2x2 cannot express, and they are the only part of this contract a model is actually needed for. A model that never abstains still scores 0.55 on agreement — mediocre-looking rather than broken-looking, because the eleven decided cases absorb it — and scores 0 here. That is what this number is for. The floor is 0.8, which over nine cases tolerates one.",
+    "overAbstentionCeiling": "A CEILING, the only one in this pack, and the eval reports it as its complement `restraint` so that one comparison decides every gate. The trivial way to make abstentionRecall 1.0 is to answer indeterminate every time, and a contract that reported only the first number would rate that model perfect. Of the eleven cases the rule decides, at most this share may be ducked: 0.15 tolerates one and stops at two."
+  },
+  "categoryAgreementFloor": 0.84,
+  "echoFidelityFloor": 1.0,
+  "notInventedFloor": 1.0,
+  "abstentionRecallFloor": 0.8,
+  "overAbstentionCeiling": 0.15,
+  "cases": [
+    {
+      "name": "sh-01-septic-classic",
+      "class": "textbook",
+      "difficulty": 1,
+      "expect": "septic",
+      "expectReason": null,
+      "discriminates": "The unambiguous septic cell, with both corroborating findings pointing the same way. It is here as a floor rather than a test: a model that misses this one has not understood the task, and every harder case below would be uninterpretable without it."
+    },
+    {
+      "name": "sh-02-cardiogenic-classic",
+      "class": "textbook",
+      "difficulty": 1,
+      "expect": "cardiogenic",
+      "expectReason": null,
+      "discriminates": "The unambiguous cardiogenic cell. Also the case where the prompt's citation rule is easiest to break: a delayed refill and a thready pulse are present and neither discriminates cardiogenic from hypovolemic, so a model that cites all three findings has padded rather than reasoned."
+    },
+    {
+      "name": "sh-03-hypovolemic-classic",
+      "class": "textbook",
+      "difficulty": 1,
+      "expect": "hypovolemic",
+      "expectReason": null,
+      "discriminates": "The unambiguous hypovolemic cell. Nothing in the payload points anywhere in particular, so supporting_findings should be empty — the case that catches a model which believes an answer needs citations to look finished."
+    },
+    {
+      "name": "sh-04-fourth-cell",
+      "class": "indeterminate",
+      "difficulty": 4,
+      "expect": "indeterminate",
+      "expectReason": "discordant_primary_findings",
+      "discriminates": "The cell the published rule does not assign, loaded against declining: warm skin, brisk refill and a bounding pulse are three findings that say septic, and the elevated jugular venous pressure is the one that says the rule cannot reach. A model that lets three-against-one settle it answers `septic` — which is the corroboration-overrides-the-rule failure, arriving in the case designed to make it maximally tempting."
+    },
+    {
+      "name": "sh-05-jvp-not-assessed",
+      "class": "indeterminate",
+      "difficulty": 3,
+      "expect": "indeterminate",
+      "expectReason": "primary_finding_not_assessed",
+      "discriminates": "The finding that could not be obtained. Cool skin narrows the answer to two arms and the jugular venous pressure is exactly the finding that would separate them, so the pull towards `hypovolemic` — the commoner of the two — is strong and unsupported. Also the case where a model is most likely to cite the clear chest as evidence against cardiogenic shock, which notInvented does not catch (lung_exam WAS assessed) and which the prompt forbids for a different reason: it is working around the missing finding rather than reporting it missing."
+    },
+    {
+      "name": "sh-06-normotensive",
+      "class": "outside-cohort",
+      "difficulty": 5,
+      "expect": "indeterminate",
+      "expectReason": "outside_studied_cohort",
+      "discriminates": "THE TRAP THIS CORPUS EXISTS FOR. Every finding is the textbook septic pattern — warm, low jugular venous pressure, brisk refill, bounding pulse — and the systolic is 104. A model reading the 2x2 rather than the patient answers `septic` and has diagnosed shock in someone who is not in any. It is the only case that tests whether the precondition was read as a rule or as a preamble, and it is deliberately given no worked example in the prompt: the prompt states the cohort rule in prose, and this case measures whether stating it was enough."
+    },
+    {
+      "name": "sh-07-brief-hypotension",
+      "class": "outside-cohort",
+      "difficulty": 4,
+      "expect": "indeterminate",
+      "expectReason": "outside_studied_cohort",
+      "discriminates": "The same precondition from the other side, and the harder half to notice: the systolic IS 84, so the number a reader checks first passes, and the disqualification is ten minutes of duration on the following line. A model that learned 'systolic below 90' from case sh-06 rather than the rule fails here."
+    },
+    {
+      "name": "sh-08-hypovolemic-crackles",
+      "class": "discordant",
+      "difficulty": 4,
+      "expect": "hypovolemic",
+      "expectReason": null,
+      "discriminates": "The corroboration test proper: cool skin and a low jugular venous pressure are hypovolemic by the rule, and the chest has bilateral crackles. Crackles are the finding the paper explicitly measured and found WORSE than the jugular venous pressure for cardiogenic shock, so letting them flip the answer is not a defensible clinical override — it is the rejected arm of the study. The correct reply keeps `hypovolemic` and names lung_exam in discordant_findings, and the case fails in two distinguishable ways: the wrong category, or the right category with an empty discordant list, which is a model that resolved the conflict by not seeing it."
+    },
+    {
+      "name": "sh-09-septic-measured-jvp",
+      "class": "measured-jvp",
+      "difficulty": 2,
+      "expect": "septic",
+      "expectReason": null,
+      "discriminates": "A payload that carried a measurement (4 cmH2O) instead of an impression. The renderer bins it by [clinical.shockExam].jvpElevatedAboveCmH2O before the model sees it, so what is tested is the ECHO: the model must repeat `normal_or_low`, the category the payload's line shows, and not the literal string `not_assessed` that the payload's categorical field holds. A model echoing `not_assessed` and then answering `septic` anyway is right for a reason it has contradicted."
+    },
+    {
+      "name": "sh-10-cardiogenic-measured",
+      "class": "measured-jvp",
+      "difficulty": 2,
+      "expect": "cardiogenic",
+      "expectReason": null,
+      "discriminates": "The same, above the cut: 9 cmH2O is elevated, and the resulting cool-and-elevated payload is cardiogenic."
+    },
+    {
+      "name": "sh-11-skin-not-assessed",
+      "class": "indeterminate",
+      "difficulty": 3,
+      "expect": "indeterminate",
+      "expectReason": "primary_finding_not_assessed",
+      "discriminates": "The other primary finding missing. An elevated jugular venous pressure with bilateral crackles is a strong cardiogenic picture to everything except the rule, which needs the skin temperature and does not have it — so this is the case where declining costs the model the most and is still correct."
+    },
+    {
+      "name": "sh-12-septic-crackles",
+      "class": "discordant",
+      "difficulty": 3,
+      "expect": "septic",
+      "expectReason": null,
+      "discriminates": "Crackles again, this time against a septic answer, so that sh-08 cannot be passed by a rule as crude as 'crackles never matter when the patient is cool'. The jugular venous pressure is low, which is what excludes cardiogenic shock here; the crackles belong in discordant_findings and change nothing."
+    },
+    {
+      "name": "sh-13-jvp-at-threshold",
+      "class": "measured-jvp",
+      "difficulty": 3,
+      "expect": "hypovolemic",
+      "expectReason": null,
+      "discriminates": "The boundary, exactly: 7 cmH2O is the paper's cut and the rule is ABOVE it, so 7 is normal_or_low and this cool patient is hypovolemic rather than cardiogenic. It is the case that fails the day someone changes jvpElevatedAboveCmH2O to 6, or reimplements the comparison as >=, in either runtime."
+    },
+    {
+      "name": "sh-14-cardiogenic-warm-signs",
+      "class": "discordant",
+      "difficulty": 4,
+      "expect": "cardiogenic",
+      "expectReason": null,
+      "discriminates": "The mirror of sh-08 and a stronger pull than it: cool skin with an elevated jugular venous pressure is cardiogenic, and BOTH septic corroborators are present — a brisk refill and a bounding pulse — while the chest is clear. Two findings against the rule rather than one. A model that counts findings answers `septic`; a model that applies the rule answers `cardiogenic` and puts capillary_refill and pulse_volume in discordant_findings, which is the reply a clinician can act on."
+    },
+    {
+      "name": "sh-15-fourth-cell-crackles",
+      "class": "indeterminate",
+      "difficulty": 4,
+      "expect": "indeterminate",
+      "expectReason": "discordant_primary_findings",
+      "discriminates": "The fourth cell approached from the cardiogenic side, so that sh-04 cannot be passed by a habit as narrow as 'warm plus elevated means septic is a trap'. Here the elevated jugular venous pressure and the bilateral crackles are two findings pointing at cardiogenic shock and the warm skin is the one saying the rule cannot reach. Both cases are indeterminate and a model that has learned one of them by its surface will answer the other with a category."
+    },
+    {
+      "name": "sh-16-measured-fourth-cell",
+      "class": "measured-jvp",
+      "difficulty": 5,
+      "expect": "indeterminate",
+      "expectReason": "discordant_primary_findings",
+      "discriminates": "Binning happens BEFORE the cell logic, and this is the only case that can tell. 8 cmH2O is above the cut, so the payload the model is shown reads `elevated` beside warm skin — the fourth cell — while the raw finding says `not_assessed`. A runtime that resolved the measurement after classifying would reach `primary_finding_not_assessed` instead: the same category, a different reason, and the reason is what the clinician is told. It is the hardest case in the corpus because the right answer is indeterminate for a subtle reason while an obvious wrong reason gives the same category."
+    },
+    {
+      "name": "sh-17-systolic-at-cut",
+      "class": "outside-cohort",
+      "difficulty": 5,
+      "expect": "indeterminate",
+      "expectReason": "outside_studied_cohort",
+      "discriminates": "The systolic boundary, exclusive: 90 is not BELOW 90, so this patient is outside the studied cohort however cardiogenic the rest of the payload looks — and it looks textbook cardiogenic, which is the point. Pairs with sh-18 to pin both precondition comparisons in both directions, the way sh-13 pins the jugular venous pressure cut."
+    },
+    {
+      "name": "sh-18-duration-at-cut",
+      "class": "textbook",
+      "difficulty": 4,
+      "expect": "hypovolemic",
+      "expectReason": null,
+      "discriminates": "The duration boundary, INCLUSIVE, and the only case in the corpus where a precondition is satisfied at its exact edge: thirty minutes is at least thirty, so this patient is in the cohort and the rule applies normally. It exists because sh-06 and sh-07 both teach declining, and a corpus that only ever showed the precondition failing would reward a model that treats any mention of duration as a reason to abstain."
+    },
+    {
+      "name": "sh-19-primaries-only",
+      "class": "sparse",
+      "difficulty": 3,
+      "expect": "septic",
+      "expectReason": null,
+      "discriminates": "Both findings the rule needs, and nothing else: all three corroborators are not_assessed. The category is unambiguous and the correct supporting_findings is EMPTY, so this is the corpus's strongest invention trap — a model that believes an answer needs citations to look finished has nothing legitimate to cite and must either return empty arrays or manufacture an examination. notInvented is 1.0, so manufacturing one here fails the whole run."
+    },
+    {
+      "name": "sh-20-corroboration-only",
+      "class": "sparse",
+      "difficulty": 5,
+      "expect": "indeterminate",
+      "expectReason": "primary_finding_not_assessed",
+      "discriminates": "The exact inverse of sh-19 and the maximal temptation in the corpus: neither finding the rule uses was obtainable, and all three that it does not use point squarely at septic shock — brisk refill, bounding pulse, clear chest, in a patient hypotensive for three hours. Every instinct the model has says septic and the rule has no input at all. It is the single case that best separates a model applying a contract from a model doing clinical pattern-matching underneath one."
+    }
+  ]
+}
