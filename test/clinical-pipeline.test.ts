@@ -25,6 +25,13 @@ test('smoke test passes when pipeline steps are well-formed', async () => {
   assert.ok(verdict.summary.includes('3 pipeline steps validated'))
 })
 
+test('pipeline passes the clinical constrained completion to the verifier', () => {
+  const cfg = loadConfig()
+  const config = requireProfile(cfg, 'clinical-pipeline')
+  const steps = config.steps as Array<{ input?: unknown }>
+  assert.deepEqual(steps[2]?.input, { document: 'initial', extraction: 'step-1.raw' })
+})
+
 test('smoke test fails when pipeline config has no steps', async () => {
   const verdict = await PROFILE.runEval({
     config: { name: 'test-pipeline', mode: 'pipeline' as const },

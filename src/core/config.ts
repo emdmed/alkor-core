@@ -37,6 +37,13 @@ export interface ProfileConfig {
   module?: string
   /** Default llama-server for this profile; --url overrides. */
   url?: string
+  /**
+   * Gateway profile: its model is the front door that catches every initial prompt. The
+   * interactive server routes an unpinned `/route` request through it, brings its backend
+   * up at the first prompt that needs it, and never idle-stops it — the specialists it
+   * names are the ones that start and stop on demand. One deployment keeps one resident.
+   */
+  pinned?: boolean
   /** Free-form, passed through to the profile module (e.g. a model hint). */
   [key: string]: unknown
 }

@@ -24,6 +24,7 @@ import type { ToolDef } from './tools.ts'
 import { CONFIG_NAME, envSuffix, type Mode, type ProfileConfig } from './config.ts'
 import type { Provider } from './client.ts'
 import type { Redactor, Trace } from './trace.ts'
+import type { Activity } from './activity.ts'
 
 const envKey = (name: string) => `PROFILE_MODULE_${envSuffix(name)}`
 
@@ -37,6 +38,8 @@ export interface EvalContext {
   options: Record<string, unknown>
   /** A custom LLM provider; defaults to the built-in HTTP client. */
   provider?: Provider
+  /** Activity bus for operational events. */
+  activity?: Activity
 }
 
 export interface EvalVerdict {
@@ -136,6 +139,8 @@ export interface ReviewContext {
   options: Record<string, unknown>
   /** A custom LLM provider; defaults to the built-in HTTP client. */
   provider?: Provider
+  /** Activity bus for operational events. */
+  activity?: Activity
 }
 
 export interface ReviewResult {

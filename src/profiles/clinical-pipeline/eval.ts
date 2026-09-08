@@ -11,10 +11,13 @@
  *        pipeline latency ≤ 2x monolith.
  *
  * The verified arm is run manually (route → extract → verify) rather than through the
- * pipeline mode, because the pipeline step configuration does not yet pass both the
- * document and the extraction to the verifier in the shape the verifier expects. This
- * eval measures the pipeline's fidelity, not the pipeline mode's wiring; once the wiring
- * is fixed the eval can be switched to `runPipeline` without changing the metrics.
+ * pipeline mode. The pipeline's verify step now composes both refs
+ * (`{document = "initial", extraction = "step-1.raw"}` in profiles.toml), and this
+ * transform exists because the clinical step's report is NOT the flat {value, quote} shape
+ * the verifier is graded on: the vital-signs task reports nothing, and shock-extraction
+ * reports exam fields that carry no quotes. Until a report is verifier-shaped, feeding the
+ * declared pipeline's output straight in would change the metrics this eval pins; when a
+ * profile reports in that shape, the arm can switch to `runPipeline` unchanged.
  */
 
 import type { Pack } from '../../core/pack.ts'

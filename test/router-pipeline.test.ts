@@ -19,6 +19,7 @@ import { join } from 'node:path'
 import { route, type RouteRule, type RouterOptions } from '../src/modes/router.ts'
 import { ROUTER_RULES as CLINICAL_RULES } from '../src/profiles/router/profile.ts'
 import { runPipeline, buildPipeline, type PipelineStep, type PipelineOptions } from '../src/modes/pipeline.ts'
+import { createActivity, withActivityScope } from '../src/core/activity.ts'
 import type { ProfileModule, ReviewResult, EvalVerdict } from '../src/core/profile.ts'
 
 // ---------------------------------------------------------------------------
@@ -186,6 +187,7 @@ test('pipeline stops early on step failure', async () => {
   assert.equal(result.stoppedEarly, true)
   assert.equal(result.steps.length, 1)
   assert.equal(result.steps[0]!.ok, false)
+  assert.equal(result.steps[0]!.error, 'mock extractor')
   assert.equal(result.final, undefined)
 })
 
@@ -295,6 +297,93 @@ test('pipeline resolves input.field references', async () => {
   assert.equal(parsed.data, 'step1-data')
 })
 
+test('pipeline composes step input from a template of refs', async () => {
+  let capturedInput: unknown
+  const profile: ProfileModule = {
+    name: 'step2',
+    mode: 'extract',
+    needsPack: false,
+    async review(ctx): Promise<ReviewResult> {
+      capturedInput = ctx.input.kind === 'text' ? ctx.input.text : ctx.input.name
+      return { text: 'step2', ok: true, raw: 'step2' }
+    },
+    async runEval(): Promise<EvalVerdict> {
+      return { pass: true, summary: 'step2' }
+    },
+  }
+
+  const profiles = new Map<string, ProfileModule>([
+    ['step1', mockExtractProfile('step1', { data: 'step1-data' })],
+    ['step2', profile],
+  ])
+  const packs = new Map<string, undefined>([['step1', undefined], ['step2', undefined]])
+  const baseUrls = new Map<string, undefined>([['step1', undefined], ['step2', undefined]])
+
+  await runPipeline({
+    initialInput: 'the original document',
+    steps: buildPipeline([
+      { name: 'step1', profile: 'step1' },
+      { name: 'step2', profile: 'step2', input: { document: 'initial', extraction: 'step-0.report' } },
+    ]),
+    profiles,
+    packs,
+    baseUrls,
+  })
+
+  const parsed = JSON.parse(capturedInput as string)
+  assert.equal(parsed.document, 'the original document')
+  assert.deepEqual(parsed.extraction, { data: 'step1-data' })
+})
+
+test('template refs resolve strictly: a missing field is dropped, not substituted', async () => {
+  let capturedInput: unknown
+  // step1 produces no `report` — the field the template asks for.
+  const reportlessProfile: ProfileModule = {
+    name: 'step1',
+    mode: 'extract',
+    needsPack: false,
+    async review(): Promise<ReviewResult> {
+      return { text: 'step1', ok: true, raw: JSON.stringify({ data: 'step1-data' }) }
+    },
+    async runEval(): Promise<EvalVerdict> {
+      return { pass: true, summary: 'step1' }
+    },
+  }
+  const step2Profile: ProfileModule = {
+    name: 'step2',
+    mode: 'extract',
+    needsPack: false,
+    async review(ctx): Promise<ReviewResult> {
+      capturedInput = ctx.input.kind === 'text' ? ctx.input.text : ctx.input.name
+      return { text: 'step2', ok: true, raw: 'step2' }
+    },
+    async runEval(): Promise<EvalVerdict> {
+      return { pass: true, summary: 'step2' }
+    },
+  }
+
+  const profiles = new Map<string, ProfileModule>([['step1', reportlessProfile], ['step2', step2Profile]])
+  const packs = new Map<string, undefined>([['step1', undefined], ['step2', undefined]])
+  const baseUrls = new Map<string, undefined>([['step1', undefined], ['step2', undefined]])
+
+  await runPipeline({
+    initialInput: 'the original document',
+    steps: buildPipeline([
+      { name: 'step1', profile: 'step1' },
+      { name: 'step2', profile: 'step2', input: { document: 'initial', extraction: 'step-0.report' } },
+    ]),
+    profiles,
+    packs,
+    baseUrls,
+  })
+
+  // `step-0.report` does not exist, so the composed object must NOT drag in step-0's
+  // whole output under the `extraction` name — the strictness the verifier depends on.
+  const parsed = JSON.parse(capturedInput as string)
+  assert.equal(parsed.document, 'the original document')
+  assert.equal('extraction' in parsed, false)
+})
+
 test('pipeline reports missing profile as failure', async () => {
   const profiles = new Map<string, ProfileModule>()
   const packs = new Map<string, undefined>()
@@ -331,6 +420,85 @@ test('pipeline reports total wall time', async () => {
   assert.equal(result.stoppedEarly, false)
   assert.ok(result.totalMs >= 0)
   assert.ok(result.totalMs < 1000, 'mock profile should be nearly instant')
+})
+
+test('pipeline emits a decision-tree stage tree: root, steps nested under it, sub-work under each step', async () => {
+  const a = createActivity()
+  const profiles = new Map<string, ProfileModule>([
+    ['step1', mockExtractProfile('step1', { data: 'x' })],
+    ['step2', mockExtractProfile('step2', { data: 'y' })],
+  ])
+  const packs = new Map<string, undefined>([['step1', undefined], ['step2', undefined]])
+  const baseUrls = new Map<string, undefined>([['step1', undefined], ['step2', undefined]])
+
+  await withActivityScope({ runId: 'run-7' }, () =>
+    runPipeline({
+      initialInput: 'initial',
+      steps: buildPipeline([
+        { name: 'extract', profile: 'step1' },
+        { name: 'verify', profile: 'step2', input: 'step-0' },
+      ]),
+      profiles,
+      packs,
+      baseUrls,
+      activity: a,
+    }),
+  )
+
+  const stages = a.recent().filter((e) => e.kind === 'stage')
+
+  const started = new Map(stages.filter((e: any) => e.status === 'started').map((e: any) => [e.name, e]))
+  const completed = new Map(stages.filter((e: any) => e.status === 'completed').map((e: any) => [e.name, e]))
+  // pipeline, extract, verify — one started + one completed each.
+  assert.deepEqual([...started.keys()].sort(), ['extract', 'pipeline', 'verify'])
+  assert.deepEqual([...completed.keys()].sort(), ['extract', 'pipeline', 'verify'])
+
+  const root = started.get('pipeline') as any
+  assert.equal(root.status, 'started')
+  assert.equal(root.runId, 'run-7')
+  assert.equal(root.parentId, undefined)
+  const rootDone = completed.get('pipeline') as any
+  assert.equal(rootDone.stageId, root.stageId, 'started and completed share one stageId')
+  assert.deepEqual(rootDone.detail, { stoppedEarly: false })
+
+  // Steps nest under the pipeline root, not at the run level.
+  const step0 = started.get('extract') as any
+  const step1 = started.get('verify') as any
+  assert.equal(step0.parentId, root.stageId)
+  assert.equal(step1.parentId, root.stageId)
+  assert.equal(step0.detail.step, 0)
+  assert.equal(step1.detail.step, 1)
+  assert.equal(step1.detail.input.ref, 'step-0')
+  assert.equal((completed.get('extract') as any).detail.ok, true)
+
+  // A sub-stage emitted by a step's own mode nests under the step: patch a profile that
+  // emits one, to prove the withActivityScope parentId plumbing.
+  const emittingProfile: ProfileModule = {
+    name: 'noisy',
+    mode: 'extract',
+    needsPack: false,
+    async review(ctx): Promise<ReviewResult> {
+      ctx.activity?.emit({ kind: 'stage', stageId: 'sub-1', name: 'sub-paint', status: 'completed', detail: { ok: true } })
+      return { text: 'noisy', ok: true, raw: 'noisy' }
+    },
+    async runEval(): Promise<EvalVerdict> {
+      return { pass: true, summary: 'noisy' }
+    },
+  }
+  const a2 = createActivity()
+  await withActivityScope({ runId: 'run-8' }, () =>
+    runPipeline({
+      initialInput: 'initial',
+      steps: buildPipeline([{ name: 'noise', profile: 'noisy' }]),
+      profiles: new Map([['noisy', emittingProfile]]),
+      packs: new Map([['noisy', undefined]]),
+      baseUrls: new Map([['noisy', undefined]]),
+      activity: a2,
+    }),
+  )
+  const sub = a2.recent().find((e: any) => e.kind === 'stage' && e.stageId === 'sub-1') as any
+  const noisyStep = a2.recent().find((e: any) => e.kind === 'stage' && e.name === 'noise') as any
+  assert.equal(sub.parentId, noisyStep.stageId, 'a step sub-emit nests under the step node, not the root')
 })
 
 test('buildPipeline converts simple objects to PipelineSteps', () => {

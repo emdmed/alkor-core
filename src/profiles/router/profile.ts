@@ -18,6 +18,7 @@
 
 import type { EvalContext, EvalVerdict, ProfileModule, ReviewContext, ReviewResult } from '../../core/profile.ts'
 import { route, type RouteResult, type RouterOptions, type RouteRule } from '../../modes/router.ts'
+import { nextStageId } from '../../core/activity.ts'
 
 /** The rules this router uses. Exported so the eval and the interactive path share them. */
 export const ROUTER_RULES: RouteRule[] = [
@@ -95,6 +96,16 @@ export const PROFILE: ProfileModule = {
     }
 
     const result = await route(opts)
+
+    // The routing decision as a node: the profile the pipeline will delegate to, and how
+    // sure the router was. This is the branch a pipeline's decision tree starts from.
+    ctx.activity?.emit({
+      kind: 'stage',
+      stageId: nextStageId(),
+      name: 'route',
+      status: 'completed',
+      detail: { profile: result.profile, confidence: Number((result.confidence * 100).toFixed(0)), reason: result.reason },
+    })
 
     const lines = [
       `=== router · ${label} ===`,

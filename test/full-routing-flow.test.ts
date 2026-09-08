@@ -109,23 +109,32 @@ const mockVerifierProfile = (): ProfileModule => ({
   async review(ctx): Promise<ReviewResult> {
     const text = ctx.input.kind === 'text' ? ctx.input.text : `(case ${ctx.input.name})`
 
-    // Parse the report that the clinical step handed us.
+    // The real verifier's contract: {document, extraction}. The pipeline composes the
+    // step input from a template, so this mock parses the same two fields the real
+    // profile demands, rather than the extraction report alone.
+    let document: string
     let report: Record<string, unknown> | undefined
     try {
-      report = JSON.parse(text) as Record<string, unknown>
+      const parsed = JSON.parse(text) as Record<string, unknown>
+      document = String(parsed.document ?? '')
+      report = (parsed.extraction ?? undefined) as Record<string, unknown> | undefined
     } catch {
       return { text: 'verifier: could not parse report', ok: false }
     }
+    if (!document) return { text: 'verifier: missing document', ok: false }
+    if (!report || typeof report !== 'object') {
+      return { text: 'verifier: missing extraction', ok: false }
+    }
 
-    const verified = Boolean(report?.routedTask)
+    const verified = Boolean(report.routedTask)
     const issues: unknown[] = []
-    if (!report?.routedTask) issues.push({ field: 'routedTask', issue: 'missing', severity: 'high' })
+    if (!report.routedTask) issues.push({ field: 'routedTask', issue: 'missing', severity: 'high' })
 
     const verificationReport = {
       verified,
       confidence: verified ? 0.95 : 0.3,
       issues,
-      checkedFields: Object.keys(report ?? {}),
+      checkedFields: Object.keys(report),
     }
 
     return {
@@ -161,7 +170,7 @@ const buildTestPipeline = (
     steps: buildPipeline([
       { name: 'route', profile: 'router' },
       { name: 'extract', profile: 'clinical', input: 'initial' },
-      { name: 'verify', profile: 'verifier', input: 'step-1', field: 'report' },
+      { name: 'verify', profile: 'verifier', input: { document: 'initial', extraction: 'step-1.report' } },
     ]),
     profiles,
     packs,

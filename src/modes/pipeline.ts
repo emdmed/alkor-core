@@ -22,6 +22,12 @@
  * - `step-N.raw`: the raw completion of step N, before parsing.
  * - `step-N.text`: the rendered text of step N, when available.
  * - `step-N.report`: the structured report of step N, when available.
+ * - an OBJECT of names to refs, when a step needs to COMPOSE its input from more than one
+ *   source: `{ document = "initial", extraction = "step-1.report" }` hands the step a JSON
+ *   object built from the two refs. Template refs resolve STRICTLY — a ref whose field the
+ *   previous step did not produce resolves to `undefined` (which `JSON.stringify` drops)
+ *   rather than substituting the whole step state, so a template cannot quietly smuggle the
+ *   previous step's spill into a field the consumer treats as a specific thing.
  *
  * A pipeline step may write:
  * - `output`: the step's structured output, if the profile produces one.
@@ -33,6 +39,8 @@
 import type { ProfileModule, ReviewContext, ReviewResult } from '../core/profile.ts'
 import type { Pack } from '../core/pack.ts'
 import type { Trace } from '../core/trace.ts'
+import type { Activity, TemplateRefEntry } from '../core/activity.ts'
+import { nextStageId, withActivityScope, currentActivityScope } from '../core/activity.ts'
 import { extract, type ExtractOutcome } from './extract.ts'
 import type { Provider } from '../core/client.ts'
 import { runAgent } from './agentic.ts'
@@ -47,10 +55,11 @@ export interface PipelineStep {
   /** The profile to run for this step. */
   profile: string
   /**
-   * What this step reads as its input. Defaults to `initial` for the first step,
-   * and `step-${n-1}.output` for subsequent steps.
+   * What this step reads as its input. A ref like `step-1.report`, or an object template
+   * that composes several refs into one JSON object (see the header). Defaults to
+   * `initial` for the first step, and `step-${n-1}.output` for subsequent steps.
    */
-  input?: string
+  input?: string | Record<string, string>
   /**
    * Which field of the previous step to read. Defaults to `output`.
    * Supported: `output`, `raw`, `text`, `report`, `document`.
@@ -89,6 +98,8 @@ export interface PipelineOptions {
   runStep?: number
   /** A custom LLM provider; defaults to the built-in HTTP client. */
   provider?: Provider
+  /** Activity bus for operational events. */
+  activity?: Activity
 }
 
 /** Serializable checkpoint written to `contextDir` after each step. */
@@ -161,6 +172,25 @@ export interface PipelineResult {
 /** Run a pipeline from step 0 to completion or first failure. */
 export const runPipeline = async (o: PipelineOptions): Promise<PipelineResult> => {
   const startedAt = performance.now()
+  o.activity?.emit({ kind: 'pipeline.started' })
+  // The root node of the decision tree. Steps nest under it (see stepStageId below).
+  const rootStageId = o.activity ? nextStageId() : undefined
+  o.activity?.emit({
+    kind: 'stage',
+    stageId: rootStageId,
+    name: 'pipeline',
+    status: 'started',
+    detail: { steps: o.steps.length },
+  })
+  const rootDone = (stoppedEarly: boolean, totalMs: number) =>
+    o.activity?.emit({
+      kind: 'stage',
+      stageId: rootStageId,
+      name: 'pipeline',
+      status: 'completed',
+      wallMs: totalMs,
+      detail: { stoppedEarly },
+    })
   let results: PipelineStepResult[] = []
   const state = new Map<string, unknown>()
   let startStep = 0
@@ -215,11 +245,13 @@ export const runPipeline = async (o: PipelineOptions): Promise<PipelineResult> =
   const endStep = o.runStep !== undefined ? o.runStep + 1 : o.steps.length
 
   if (actualStart >= o.steps.length) {
+    const totalMs = performance.now() - startedAt
+    rootDone(false, totalMs)
     return {
       steps: results,
       stoppedEarly: false,
       final: highestStepResult(results)?.output,
-      totalMs: performance.now() - startedAt,
+      totalMs,
     }
   }
 
@@ -229,17 +261,42 @@ export const runPipeline = async (o: PipelineOptions): Promise<PipelineResult> =
     const inputRef = stepDef.input ?? (i === 0 ? 'initial' : `step-${i - 1}.output`)
     const input = resolveInput(state, inputRef, stepDef.field)
 
+    const fromProfile = i > 0 ? o.steps[i - 1]!.profile : undefined
+    o.activity?.emit({
+      kind: 'pipeline.step.started',
+      step: i,
+      name: stepDef.name,
+      profile: stepDef.profile,
+      input: { ref: describeInputRef(inputRef), field: stepDef.field, fromProfile },
+    })
+    // The step as a node in the decision tree, attached under the pipeline root. Everything
+    // the step's own mode and provider emits while running nests underneath it via the
+    // parentId scope in `withActivityScope` below.
+    const stepStageId = o.activity ? nextStageId() : undefined
+    o.activity?.emit({
+      kind: 'stage',
+      stageId: stepStageId,
+      parentId: rootStageId,
+      name: stepDef.name,
+      status: 'started',
+      detail: { step: i, profile: stepDef.profile, input: { ref: describeInputRef(inputRef), field: stepDef.field, fromProfile } },
+    })
+
     const profile = o.profiles.get(stepDef.profile)
     if (!profile) {
+      const wallMs = performance.now() - stepStart
       const fail = {
         step: i,
         name: stepDef.name,
         profile: stepDef.profile,
         ok: false,
         error: `profile '${stepDef.profile}' not found in pipeline profile map`,
-        wallMs: performance.now() - stepStart,
+        wallMs,
       }
       results.push(fail)
+      o.activity?.emit({ kind: 'pipeline.step.completed', step: i, name: stepDef.name, profile: stepDef.profile, ok: false, wallMs })
+      o.activity?.emit({ kind: 'stage', stageId: stepStageId, parentId: rootStageId, name: stepDef.name, status: 'completed', wallMs, detail: { step: i, ok: false } })
+      rootDone(true, performance.now() - startedAt)
       return { steps: results, stoppedEarly: true, totalMs: performance.now() - startedAt }
     }
 
@@ -248,26 +305,37 @@ export const runPipeline = async (o: PipelineOptions): Promise<PipelineResult> =
     const stepOptions = { ...o.options, ...stepDef.options }
 
     try {
-      const result = await runStep({
-        profile,
-        pack,
-        baseUrl,
-        input,
-        options: stepOptions,
-        trace: o.trace,
-        provider: o.provider,
-      })
+      const result = await withActivityScope(
+        // The scope is replaced, not stacked — merge the outer runId/scope eagerly.
+        { ...currentActivityScope(), parentId: stepStageId },
+        () =>
+          runStep({
+            profile,
+            pack,
+            baseUrl,
+            input,
+            options: stepOptions,
+            trace: o.trace,
+            provider: o.provider,
+            activity: o.activity,
+          }),
+      )
 
+      const wallMs = performance.now() - stepStart
       const stepResult: PipelineStepResult = {
         step: i,
         name: stepDef.name,
         profile: stepDef.profile,
         ok: result.ok,
+        // A profile can reject a request without throwing (for example, a verifier refusing
+        // an incomplete composed input). Preserve that reason for CLI and dashboard users;
+        // otherwise every such refusal is rendered as the unhelpful "step failed".
+        error: result.ok ? undefined : result.text,
         output: result.output,
         raw: result.raw,
         text: result.text,
         report: result.report,
-        wallMs: performance.now() - stepStart,
+        wallMs,
       }
 
       // If this step is being re-run, replace the old result instead of appending.
@@ -284,6 +352,9 @@ export const runPipeline = async (o: PipelineOptions): Promise<PipelineResult> =
         document: result.document,
       })
 
+      o.activity?.emit({ kind: 'pipeline.step.completed', step: i, name: stepDef.name, profile: stepDef.profile, ok: result.ok, wallMs })
+      o.activity?.emit({ kind: 'stage', stageId: stepStageId, parentId: rootStageId, name: stepDef.name, status: 'completed', wallMs, detail: { step: i, ok: result.ok } })
+
       if (o.contextDir) {
         saveCheckpoint(o.contextDir, {
           initialInput,
@@ -294,22 +365,26 @@ export const runPipeline = async (o: PipelineOptions): Promise<PipelineResult> =
       }
 
       if (!result.ok) {
+        rootDone(true, performance.now() - startedAt)
         return { steps: results, stoppedEarly: true, totalMs: performance.now() - startedAt }
       }
     } catch (e) {
+      const wallMs = performance.now() - stepStart
       const stepResult: PipelineStepResult = {
         step: i,
         name: stepDef.name,
         profile: stepDef.profile,
         ok: false,
         error: (e as Error).message,
-        wallMs: performance.now() - stepStart,
+        wallMs,
       }
       const existingIdx = results.findIndex((r) => r.step === i)
       if (existingIdx !== -1) {
         results.splice(existingIdx, 1)
       }
       results.push(stepResult)
+      o.activity?.emit({ kind: 'pipeline.step.completed', step: i, name: stepDef.name, profile: stepDef.profile, ok: false, wallMs })
+      o.activity?.emit({ kind: 'stage', stageId: stepStageId, parentId: rootStageId, name: stepDef.name, status: 'completed', wallMs, detail: { step: i, ok: false } })
       if (o.contextDir) {
         saveCheckpoint(o.contextDir, {
           initialInput,
@@ -318,20 +393,24 @@ export const runPipeline = async (o: PipelineOptions): Promise<PipelineResult> =
           completedStep: i,
         })
       }
+      rootDone(true, performance.now() - startedAt)
       return { steps: results, stoppedEarly: true, totalMs: performance.now() - startedAt }
     }
   }
 
+  const totalMs = performance.now() - startedAt
+  rootDone(false, totalMs)
+  o.activity?.emit({ kind: 'pipeline.completed', stoppedEarly: false, totalMs })
   return {
     steps: results,
     stoppedEarly: false,
     final: highestStepResult(results)?.output,
-    totalMs: performance.now() - startedAt,
+    totalMs,
   }
 }
 
 /** Resolve a state reference like `step-0.output` or `initial`. */
-const resolveInput = (state: Map<string, unknown>, ref: string, field?: string): unknown => {
+const resolveRef = (state: Map<string, unknown>, ref: string, field?: string): unknown => {
   const parts = ref.split('.')
   const key = parts[0]!
   const explicitField = parts[1] ?? field ?? 'output'
@@ -341,6 +420,57 @@ const resolveInput = (state: Map<string, unknown>, ref: string, field?: string):
     return (value as Record<string, unknown>)[explicitField] ?? value
   }
   return value
+}
+
+/**
+ * Resolve a template ref STRICTLY, without the `?? value` fallback `resolveRef` keeps.
+ *
+ * A plain `step-1` step accepts a whole-step object when the field it named is absent, and
+ * that leniency has a purpose. A template composes SPECIFIC fields into one object; a field
+ * the previous step did not produce must come out as `undefined` (dropped by the caller's
+ * `JSON.stringify`) rather than as the previous step's spill — otherwise the vital-signs
+ * certificate of a verifier built as `{extraction = "step-1.report"}` silently receives the
+ * step's whole output under the `extraction` name.
+ */
+const resolveTemplateRef = (state: Map<string, unknown>, ref: string): unknown => {
+  const parts = ref.split('.')
+  const key = parts[0]!
+  const explicitField = parts[1] ?? 'output'
+  const value = state.get(key)
+  if (value === undefined) return undefined
+  if (typeof value === 'object' && value !== null) {
+    return (value as Record<string, unknown>)[explicitField]
+  }
+  return value
+}
+
+/** Compose a step input from a map of names to refs. */
+const resolveTemplate = (state: Map<string, unknown>, template: Record<string, string>): Record<string, unknown> => {
+  const out: Record<string, unknown> = {}
+  for (const [name, ref] of Object.entries(template)) {
+    out[name] = resolveTemplateRef(state, ref)
+  }
+  return out
+}
+
+const resolveInput = (
+  state: Map<string, unknown>,
+  ref: string | Record<string, string>,
+  field?: string,
+): unknown => (typeof ref === 'string' ? resolveRef(state, ref, field) : resolveTemplate(state, ref))
+
+/**
+ * A metadata-only description of a step's input reference, for activity events.
+ *
+ * A plain ref is itself a string, so it can be emitted as-is. A template is MAP of names
+ * to refs, and the names are fields the composed input will carry — a template pointing at
+ * `document` would carry a field named `document`, which is exactly the ban in the
+ * activity spec. So the template is emitted as (name, ref) pairs, where `name` is a VALUE
+ * rather than a key and the walk has nothing to refuse.
+ */
+const describeInputRef = (ref: string | Record<string, string>): string | TemplateRefEntry[] => {
+  if (typeof ref === 'string') return ref
+  return Object.entries(ref).map(([name, r]) => ({ name, ref: r }))
 }
 
 interface StepRunResult {
@@ -361,6 +491,7 @@ const runStep = async (o: {
   options: Record<string, unknown>
   trace?: Trace
   provider?: Provider
+  activity?: Activity
 }): Promise<StepRunResult> => {
   const { profile, pack, baseUrl, input, options, provider } = o
 
@@ -374,6 +505,7 @@ const runStep = async (o: {
       input: { kind: 'text', text: textInput, label: 'pipeline-step' },
       options,
       provider,
+      activity: o.activity,
     }
     const result = await profile.review(reviewCtx)
     return {
@@ -417,6 +549,7 @@ const runStep = async (o: {
       input: { kind: 'text', text: textInput, label: 'pipeline-step' },
       options,
       provider,
+      activity: o.activity,
     }
     const result = await profile.review(reviewCtx)
     return {
@@ -440,5 +573,12 @@ const runStep = async (o: {
 }
 
 /** Build a pipeline definition from a simple declarative format. */
-export const buildPipeline = (steps: Array<{ name: string; profile: string; input?: string; field?: string; options?: Record<string, unknown> }>): PipelineStep[] =>
-  steps.map((s) => ({ name: s.name, profile: s.profile, input: s.input, field: s.field, options: s.options }))
+export const buildPipeline = (
+  steps: Array<{
+    name: string
+    profile: string
+    input?: string | Record<string, string>
+    field?: string
+    options?: Record<string, unknown>
+  }>,
+): PipelineStep[] => steps.map((s) => ({ name: s.name, profile: s.profile, input: s.input, field: s.field, options: s.options }))

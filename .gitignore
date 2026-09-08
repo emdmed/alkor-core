@@ -27,3 +27,7 @@ shock_siagnostic_test.md
 # TypeScript / test artifacts
 *.tsbuildinfo
 coverage/
+
+# Web dashboard (own Vite app under web/)
+web/node_modules/
+web/dist/

@@ -569,6 +569,27 @@ export const serverProps = async (baseUrl: string = DEFAULT_URL): Promise<BenchC
 }
 
 /**
+ * Reachability probe for a base URL: one GET /health, 2s deadline.
+ *
+ * This answers "is ANYTHING listening" — `identifyServer` is the loader check, and it is
+ * best effort for a reason that does not apply here. The server probes every configured
+ * backend at startup so it can say "start llama-server first" instead of a dashboard that
+ * claims LIVE over a dark model port, and a run refuses to start when every backend is dark.
+ */
+export const probeServer = async (baseUrl: string = DEFAULT_URL): Promise<boolean> => {
+  try {
+    const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/health`, {
+      signal: AbortSignal.timeout(2000),
+      dispatcher,
+    })
+    // Any answer under 500 is a server that is up; an HTTP error still proves a listener.
+    return res.status < 500
+  } catch {
+    return false
+  }
+}
+
+/**
  * What produced this run, resolved ONCE, and whether it can be named at all.
  *
  * The two functions above are best effort by design — failing an eval over a label would be

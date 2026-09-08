@@ -14,6 +14,7 @@ import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ProfileError, type EvalContext, type EvalVerdict, type ProfileModule, type ReviewContext, type ReviewResult } from '../../core/profile.ts'
 import type { Provider } from '../../core/client.ts'
+import type { Activity } from '../../core/activity.ts'
 import { identifyServer } from '../../core/client.ts'
 import type { Pack } from '../../core/pack.ts'
 import { PackError } from '../../core/pack.ts'
@@ -237,16 +238,16 @@ const resolveInputText = (ctx: ReviewContext): string => {
   return resolveCaseDocument(ctx.pack!, ctx.input.name)
 }
 
-const executeClinicalTask = async (ctx: ReviewContext, shared: { pack: Pack; baseUrl?: string; trace: ReviewContext['trace']; constrain: boolean; input: ReviewContext['input']; calculate: boolean; provider?: Provider }, task: Task): Promise<ReviewResult> => {
+const executeClinicalTask = async (ctx: ReviewContext, shared: { pack: Pack; baseUrl?: string; trace: ReviewContext['trace']; constrain: boolean; input: ReviewContext['input']; calculate: boolean; provider?: Provider; activity?: Activity }, task: Task): Promise<ReviewResult> => {
   if (task !== 'transcript' && ctx.options.repair) {
     throw new ProfileError(`--repair applies to --task transcript; ${task} has no citation to repair`)
   }
 
   if (task === 'vital-signs') return reviewVitalSigns(shared)
   if (task === 'transcript') return reviewTranscript({ ...shared, repair: Boolean(ctx.options.repair) })
-  if (task === 'shock') return reviewShock({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider })
-  if (task === 'shock-extraction') return reviewShockExtraction({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider })
-  if (task === 'note-format') return reviewNoteFormat({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider })
+  if (task === 'shock') return reviewShock({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider, activity: ctx.activity })
+  if (task === 'shock-extraction') return reviewShockExtraction({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider, activity: ctx.activity })
+  if (task === 'note-format') return reviewNoteFormat({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider, activity: ctx.activity })
 
   throw new ProfileError(
     `--task '${task}' is a graded task but not a reviewable one: ` +
@@ -264,12 +265,19 @@ const reviewSingleStep = async (ctx: ReviewContext): Promise<ReviewResult> => {
     input: ctx.input,
     calculate: Boolean(ctx.options.calculate),
     provider: ctx.provider,
+    activity: ctx.activity,
   }
 
   let task: Task
   if (ctx.options.task === undefined || ctx.options.task === 'default') {
     const text = resolveInputText(ctx)
     const route = routeClinicalShape(text, loadSettings(ctx.pack!).defaultTask)
+    ctx.activity?.emit({
+      kind: 'stage',
+      name: 'route',
+      status: 'completed',
+      detail: { shape: route.shape, confidence: route.confidence, task: route.task },
+    })
     ctx.trace.write({
       event: 'route',
       kind: 'clinical',
@@ -323,6 +331,12 @@ const reviewWithCheckpoint = async (ctx: ReviewContext, contextDir: string): Pro
     } else {
       text = resolveInputText(ctx)
       route = routeClinicalShape(text, loadSettings(ctx.pack!).defaultTask)
+      ctx.activity?.emit({
+        kind: 'stage',
+        name: 'route',
+        status: 'completed',
+        detail: { shape: route.shape, confidence: route.confidence, task: route.task },
+      })
       ctx.trace.write({
         event: 'route',
         kind: 'clinical',
@@ -344,6 +358,7 @@ const reviewWithCheckpoint = async (ctx: ReviewContext, contextDir: string): Pro
     input: ctx.input.kind === 'text' ? ctx.input : ({ kind: 'text', text, label: ctx.input.name } as ReviewContext['input']),
     calculate: Boolean(ctx.options.calculate),
     provider: ctx.provider,
+    activity: ctx.activity,
   }
 
   const result = await executeClinicalTask(ctx, shared, task)

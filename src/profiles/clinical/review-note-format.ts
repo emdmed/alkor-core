@@ -15,9 +15,11 @@ import { extract } from '../../modes/extract.ts'
 import { loadSettings } from './settings.ts'
 import { formatRequest } from './contracts.ts'
 import { parseNoteFormat, type NoteFormat } from './extraction.ts'
-import { verifyReading, type ReviewedItem } from './review-transcript.ts'
+import { verifyReading, tallyReviewed, type ReviewedItem } from './review-transcript.ts'
 import type { Provider } from '../../core/client.ts'
 import type { QuoteRule, DerivationRule } from '../../core/verify.ts'
+import type { Activity } from '../../core/activity.ts'
+import { nextStageId } from '../../core/activity.ts'
 
 export interface NoteFormatReviewOptions {
   pack: Pack
@@ -26,6 +28,8 @@ export interface NoteFormatReviewOptions {
   constrain: boolean
   input: { kind: 'case'; name: string } | { kind: 'text'; text: string; label?: string }
   provider?: Provider
+  /** Activity bus, so the review can paint its verification pass as a stage. */
+  activity?: Activity
 }
 
 export const reviewNoteFormat = async (o: NoteFormatReviewOptions): Promise<ReviewResult> => {
@@ -59,6 +63,7 @@ export const reviewNoteFormat = async (o: NoteFormatReviewOptions): Promise<Revi
     baseUrl: o.baseUrl,
     label: 'note_format',
     provider: o.provider,
+    activity: o.activity,
   })
 
   const header =
@@ -68,11 +73,21 @@ export const reviewNoteFormat = async (o: NoteFormatReviewOptions): Promise<Revi
     `temp ${req.sampling.temperature} · max_tokens ${req.sampling.max_tokens}\n`
 
   const settings = loadSettings(o.pack)
+  const verifyStage = o.activity ? nextStageId() : undefined
+  o.activity?.emit({ kind: 'stage', stageId: verifyStage, name: 'verify', status: 'started' })
   let text: string
   if (outcome.parsed) {
     const items = verifyReading(outcome.parsed, document, settings.quoteVerification, settings.textDerivation)
+    o.activity?.emit({
+      kind: 'stage',
+      stageId: verifyStage,
+      name: 'verify',
+      status: 'completed',
+      detail: { ok: true, ...tallyReviewed(items) },
+    })
     text = `${header}\n${renderNoteFormat(items)}`
   } else {
+    o.activity?.emit({ kind: 'stage', stageId: verifyStage, name: 'verify', status: 'completed', detail: { ok: false } })
     text = `${header}\nno reading: ${outcome.error}`
   }
 

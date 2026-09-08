@@ -20,6 +20,8 @@ import type { Pack } from '../../core/pack.ts'
 import type { ReviewResult } from '../../core/profile.ts'
 import type { Trace } from '../../core/trace.ts'
 import type { Provider } from '../../core/client.ts'
+import type { Activity } from '../../core/activity.ts'
+import { nextStageId } from '../../core/activity.ts'
 import { serverModel } from '../../core/client.ts'
 import { HARNESS_VERSION } from '../../core/version.ts'
 import { extract } from '../../modes/extract.ts'
@@ -41,6 +43,8 @@ export interface VitalReviewOptions {
   calculate?: boolean
   /** A custom LLM provider; defaults to the built-in HTTP client. */
   provider?: Provider
+  /** Activity bus, so the review can paint its verification pass as a stage. */
+  activity?: Activity
 }
 
 /** Case names this pack can be asked for by name, in the order the answer key lists them. */
@@ -82,6 +86,7 @@ export const reviewVitalSigns = async (o: VitalReviewOptions): Promise<ReviewRes
     baseUrl: o.baseUrl,
     label: 'vital_signs',
     provider: o.provider,
+    activity: o.activity,
   })
 
   const header =
@@ -90,9 +95,26 @@ export const reviewVitalSigns = async (o: VitalReviewOptions): Promise<ReviewRes
     `${o.constrain ? 'constrained' : 'unconstrained'} · ` +
     `temp ${req.sampling.temperature} · max_tokens ${req.sampling.max_tokens}\n`
 
+  // Provenance is the only on-document check a review can make without an answer key, so it
+  // is the stage that deserves its own node: quoted versus unverified is exactly the signal
+  // a clinician wants to see survive the pipeline intact.
+  const verifyStage = o.activity ? nextStageId() : undefined
+  o.activity?.emit({ kind: 'stage', stageId: verifyStage, name: 'verify', status: 'started' })
   const readingText = outcome.parsed
     ? renderReading(req.fields, outcome.parsed, document, loadSettings(o.pack).quoteVerification)
     : `no reading: ${outcome.error}`
+  if (outcome.parsed) {
+    const counts = countProvenance(req.fields, outcome.parsed, document, loadSettings(o.pack).quoteVerification)
+    o.activity?.emit({
+      kind: 'stage',
+      stageId: verifyStage,
+      name: 'verify',
+      status: 'completed',
+      detail: { ok: true, read: counts.read, quoted: counts.quoted, unverified: counts.unverified },
+    })
+  } else {
+    o.activity?.emit({ kind: 'stage', stageId: verifyStage, name: 'verify', status: 'completed', detail: { ok: false } })
+  }
 
   const derivedText =
     outcome.parsed && o.calculate
@@ -142,6 +164,24 @@ export const checkQuote = (reading: NonNullable<Reading>, document: string, rule
 
 const describe = (r: NonNullable<Reading>): string =>
   isBloodPressure(r) ? `${r.systolic}/${r.diastolic} ${r.unit ?? ''}`.trim() : `${r.value} ${r.unit ?? ''}`.trim()
+
+/** The same tally `renderReading` prints, as numbers a stage event can carry. */
+const countProvenance = (
+  fields: GradedField[],
+  vitals: VitalSigns,
+  document: string,
+  rule: QuoteRule,
+): { read: number; quoted: number; unverified: number } => {
+  let read = 0
+  let quoted = 0
+  for (const field of fields) {
+    const reading = vitals[field.name] ?? null
+    if (reading === null) continue
+    read++
+    if (checkQuote(reading, document, rule) === 'quoted') quoted++
+  }
+  return { read, quoted, unverified: read - quoted }
+}
 
 /**
  * The reading, in schema order — which is the order the grammar made the model emit it.

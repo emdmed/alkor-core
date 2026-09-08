@@ -314,7 +314,7 @@ if (command === 'pipeline') {
     steps!.map((s) => ({
       name: String(s.name ?? 'unnamed'),
       profile: String(s.profile ?? ''),
-      input: s.input as string | undefined,
+      input: s.input as string | Record<string, string> | undefined,
       field: s.field as string | undefined,
       options: s.options as Record<string, unknown> | undefined,
     })),

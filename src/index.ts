@@ -115,6 +115,20 @@ export {
   type TraceFile,
 } from './core/trace-read.ts'
 
+// --- Activity: metadata-only operational events ---------------------------------------
+export {
+  ACTIVITY_SPEC,
+  createActivity,
+  nullActivity,
+  withActivity,
+  withActivityScope,
+  type Activity,
+  type ActivityEvent,
+  type ActivityInput,
+  type ActivityScope,
+  type StageDetail,
+} from './core/activity.ts'
+
 // --- The transport to the LLM server -----------------------------------------------
 export {
   DEFAULT_URL,

@@ -20,6 +20,8 @@
 import { chat, ChatError, defaultProvider } from '../core/client.ts'
 import type { Provider } from '../core/client.ts'
 import type { Timings } from '../core/bench.ts'
+import type { Activity } from '../core/activity.ts'
+import { nextStageId } from '../core/activity.ts'
 
 export interface ExtractOutcome<T> {
   parsed?: T
@@ -86,6 +88,8 @@ export interface ExtractOptions<T> {
   chatTemplateKwargs?: Record<string, unknown>
   /** A custom LLM provider; defaults to the built-in HTTP client. */
   provider?: Provider
+  /** Activity bus, so the mode can paint its own stages (prompt entry, parse). */
+  activity?: Activity
 }
 
 export const extract = async <T,>(o: ExtractOptions<T>): Promise<ExtractOutcome<T>> => {
@@ -97,6 +101,19 @@ export const extract = async <T,>(o: ExtractOptions<T>): Promise<ExtractOutcome<
   let lostMs = 0
   /** Everything the caller waited for, in the shape every return path below carries. */
   const spent = () => ({ cost, attempts, lostMs })
+
+  // The prompt is what the caller assembled; this node marks where it crosses into the
+  // transport, carrying the facets a dashboard can show without the content itself.
+  const promptStage = o.activity ? nextStageId() : undefined
+  const promptDetail: Record<string, string | number | boolean | null> = {
+    constrained: Boolean(o.schema),
+    messageCount: 2,
+    promptChars: o.systemPrompt.length,
+    documentChars: o.document.length,
+  }
+  if (o.maxTokens != null) promptDetail.maxTokens = o.maxTokens
+  o.activity?.emit({ kind: 'stage', stageId: promptStage, name: 'prompt-assembly', status: 'started' })
+  o.activity?.emit({ kind: 'stage', stageId: promptStage, name: 'prompt-assembly', status: 'completed', detail: promptDetail })
 
   /** `retryable` is true only when no completion came back at all. See the header. */
   const attempt = async (): Promise<{ outcome: ExtractOutcome<T>; retryable: boolean }> => {
@@ -133,8 +150,19 @@ export const extract = async <T,>(o: ExtractOptions<T>): Promise<ExtractOutcome<
       lostMs += performance.now() - startedAt
       return { outcome: { error: (e as Error).message, ...spent() }, retryable: e instanceof ChatError }
     }
+    const parseStageId = o.activity ? nextStageId() : undefined
     try {
-      return { outcome: { parsed: o.parse(raw), raw, ...spent() }, retryable: false }
+      o.activity?.emit({ kind: 'stage', stageId: parseStageId, name: 'parse', status: 'started' })
+      const parsed = o.parse(raw)
+      o.activity?.emit({
+        kind: 'stage',
+        stageId: parseStageId,
+        name: 'parse',
+        status: 'completed',
+        wallMs: performance.now() - startedAt,
+        detail: { ok: true },
+      })
+      return { outcome: { parsed, raw, ...spent() }, retryable: false }
     } catch (e) {
       // A reply cut off by the cap is not a model that cannot write JSON, and the two have
       // different fixes — raise the pack's cap, or fix the prompt. The parser cannot tell
@@ -143,6 +171,13 @@ export const extract = async <T,>(o: ExtractOptions<T>): Promise<ExtractOutcome<
         finishReason === 'length'
           ? ` — the completion stopped at the ${o.maxTokens ?? 'default'}-token cap, so this JSON is cut off rather than wrong`
           : ''
+      o.activity?.emit({
+        kind: 'stage',
+        stageId: parseStageId,
+        name: 'parse',
+        status: 'completed',
+        detail: { ok: false, reason: `${(e as Error).message}${truncated}`.slice(0, 120) },
+      })
       return { outcome: { error: `${(e as Error).message}${truncated}`, raw, ...spent() }, retryable: false }
     }
   }

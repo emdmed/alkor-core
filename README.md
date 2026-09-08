@@ -103,6 +103,12 @@ packs/        clinical/    the reference pack — 4 prompts, 4 schemas + goldens
               verifier/    the verifier contract pack (prompt + schema + cases)
 scripts/      model-manager.ts   start/stop/status llama-server per profile
 src/index.ts  the public API — what a profile is written against
+src/tui/      state.ts     pure reducer over the activity event stream (tested, Node 24)
+               sse.ts       SSE client (undici): replay, resume, reconnect, refusal (tested, Node 24)
+               sse-core.ts  transport-agnostic SSE core — frames, dedup, refusal; shared with the web dashboard
+               app.ts       OpenTUI renderer — the only file that imports it; dynamic import
+               tui.ts       entry guard: Node 26.4 + --experimental-ffi or Bun ≥ 1.3
+web/          the browser dashboard (own Vite + React app): same reducer, same SSE core
 src/cli.ts    extract, eval, agent, route, pipeline, profiles
 profiles.toml the only file that may name a project outside this repository
 ```
@@ -225,6 +231,50 @@ node src/cli.ts pipeline --profile clinical-pipeline --input "ward-round.txt"
 # model manager — start/stop/status per profile
 node scripts/model-manager.ts status
 ```
+
+### TUI (terminal dashboard)
+
+```bash
+npm run tui                    # connect to http://127.0.0.1:3000
+node --experimental-ffi src/tui.ts --url http://127.0.0.1:3001
+```
+
+The TUI is an **opt-in entry** that requires a runtime with native FFI:
+
+- **Node.js ≥ 26.4.0** with `--experimental-ffi`, **or**
+- **Bun ≥ 1.3**
+
+The rest of the harness (tests, CLI, server) runs unchanged on Node ≥ 24. The TUI
+consumes the same `GET /events` SSE stream that the server already exposes; no
+in-process coupling, no additional API, no build step.
+
+### Web dashboard (browser)
+
+```bash
+npm install --prefix web           # once
+npm run web                        # dev server on http://localhost:5173
+npm run web:build                  # static build to web/dist/
+```
+
+A React + Vite dashboard that renders the same activity feed in the browser — the
+terminal TUI's panels plus an inspector (sessions, stage trees, tools, routes, HTTP
+traffic), an editable server URL, pause/resume, and a filterable, click-to-inspect event
+log. It is a browser over the same three layers as the terminal TUI: the pure reducer in
+`src/tui/state.ts` and the SSE core in `src/tui/sse-core.ts` are shared verbatim; only
+the transport differs (browser `fetch` + `ReadableStream` instead of `undici`).
+
+The dashboard is cross-origin by definition, so the server answers CORS for **loopback
+`Origin`s when an `Origin` header is present**; nothing else is granted by default. Set
+`MEDEXTRACT_CORS` to a comma-separated allowlist to open it to specific other origins,
+or `*` for an explicit blanket:
+
+```bash
+PORT=3000 MEDEXTRACT_CORS="http://192.168.1.20:5173" node src/server.ts
+```
+
+Point the dashboard at a different server with the URL field, or set
+`VITE_MEDEXTRACT_URL` at build time. The wire carries only metadata-flowing event fields,
+under the same banned-key guarantee the terminal TUI relies on.
 
 ### Extracting from one note
 

@@ -15,9 +15,15 @@
 # private has no use for a harness that makes it publish the scorer that reads it. Point
 # both `pack` and `module` at another repository and that domain lives entirely there.
 #
-# Profiles generally need DIFFERENT models, so each names its own server. Start one per
-# profile — the harness will not start one for you, because a server's flags are part of a
-# measurement and outlive many runs.
+# Profiles generally need DIFFERENT models, so each names its own server. Eval never
+# spawns one — a server's flags are part of a measurement and outlive many runs. The
+# interactive server (npm run server) DOES manage them on demand: it spawns a profile's
+# llama-server at the first run that needs it and stops it after MEDEXTRACT_IDLE_MS of
+# idle, so a host keeps in RAM only the models it is actually using. Mark the front-door
+# profile `pinned = true` and its model stays resident once brought up — `/route` without
+# explicit rules routes through it, so one classifier catches every initial prompt and the
+# specialists it names start and stop around it. MEDEXTRACT_MANAGE_MODELS=0 restores the
+# manual flow.
 
 # The agentic worked example: six tools, no pack, no domain. It is here to exercise the
 # tool loop and to be read by someone writing their own profile.
@@ -51,8 +57,13 @@ ctx = 32768
 # default — the rules are compiled in. A model fallback can be configured via options.
 # Measured: 1.7B drops accuracy to 77.8% when allowed to overrule rules. 4B is the
 # minimum that preserves the 98.1% rule-based accuracy.
+#
+# Pinned: this is the front-door model. The interactive server routes an unpinned /route
+# request through this profile (rules first, then the model), brings the backend up at the
+# first prompt and never idle-stops it — one resident classifier, specialists on demand.
 [router]
 mode = "router"
+pinned = true
 url = "http://127.0.0.1:8080"
 model = "~/models/Qwen3-4B-Q4_K_M.gguf"
 ctx = 8192
@@ -71,14 +82,22 @@ ctx = 8192
 # The pipeline definition is the `steps` array below. Each step names a profile and
 # describes what input it reads. The CLI loads the profiles and packs, then runs the
 # steps in order, passing outputs from one step to the next.
+#
+# The verifier's contract is a JSON object with two fields — the ORIGINAL DOCUMENT and the
+# EXTRACTION TO VERIFY — which no single pipeline output holds, so the verify step composes
+# its input as a template: `initial` for the document and the clinical step's raw, constrained
+# JSON completion for the extraction. Vital-sign review deliberately does not expose a `report`:
+# its public JSON output is the model completion. The verifier decodes this JSON string before
+# it builds its own prompt, and refuses it if it is not a structured JSON value.
 [clinical-pipeline]
 mode = "pipeline"
 # The pipeline definition: a list of steps. Each step has a name, a profile, and an input
 # reference. Input references: `initial` for the original input, `step-N` for the output
 # of step N (0-indexed), `step-N.raw` for the raw completion, `step-N.text` for rendered
-# text, `step-N.report` for the structured report.
+# text, `step-N.report` for the structured report. An OBJECT composes refs into one JSON
+# input for a step that needs more than one file of state.
 steps = [
   { name = "route", profile = "router" },
   { name = "extract", profile = "clinical", input = "initial" },
-  { name = "verify", profile = "verifier", input = "step-1", field = "report" }
+  { name = "verify", profile = "verifier", input = { document = "initial", extraction = "step-1.raw" } }
 ]

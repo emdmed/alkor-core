@@ -41,6 +41,12 @@ const CONTRACT = [
   // tracing
   'openTrace',
   'stateRoot',
+  // activity
+  'ACTIVITY_SPEC',
+  'createActivity',
+  'nullActivity',
+  'withActivity',
+  'withActivityScope',
   // transport
   'chat',
   'llamaChat',

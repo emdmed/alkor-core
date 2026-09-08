@@ -27,6 +27,8 @@ import type { Trace } from '../../core/trace.ts'
 import { serverModel } from '../../core/client.ts'
 import { HARNESS_VERSION } from '../../core/version.ts'
 import { extract } from '../../modes/extract.ts'
+import type { Activity } from '../../core/activity.ts'
+import { nextStageId } from '../../core/activity.ts'
 import { loadSettings } from './settings.ts'
 import { loadTranscriptCases } from './cases.ts'
 import { DOCUMENT_KIND, transcriptRequest } from './contracts.ts'
@@ -56,6 +58,8 @@ export interface TranscriptReviewOptions {
   medicationPass?: boolean
   /** A custom LLM provider; defaults to the built-in HTTP client. */
   provider?: Provider
+  /** Activity bus, so the review can paint its verification pass as a stage. */
+  activity?: Activity
 }
 
 /**
@@ -217,6 +221,7 @@ export const reviewTranscript = async (o: TranscriptReviewOptions): Promise<Revi
     // produce different numbers should not be indistinguishable in the record of what ran.
     label: 'transcript',
     provider: o.provider,
+    activity: o.activity,
   })
 
   // The medication pass, before anything is verified: it REPLACES a section rather than
@@ -237,6 +242,11 @@ export const reviewTranscript = async (o: TranscriptReviewOptions): Promise<Revi
         })
       : null
   const reading = outcome.parsed && medication ? applyMedication(outcome.parsed, medication) : outcome.parsed
+
+  // The provenance pass over the reading — the verdict totals below are the stage's output,
+  // so the node carries them the way the report does.
+  const verifyStage = o.activity ? nextStageId() : undefined
+  o.activity?.emit({ kind: 'stage', stageId: verifyStage, name: 'verify', status: 'started' })
 
   const first = reading
     ? verifyReading(reading, document, settings.quoteVerification, settings.textDerivation)
@@ -260,6 +270,26 @@ export const reviewTranscript = async (o: TranscriptReviewOptions): Promise<Revi
         })
       : null
   const items = repair?.items ?? first
+
+  if (reading) {
+    const t = tallyReviewed(items)
+    o.activity?.emit({
+      kind: 'stage',
+      stageId: verifyStage,
+      name: 'verify',
+      status: 'completed',
+      detail: {
+        ok: true,
+        items: t.items,
+        quotesVerified: t.quotesVerified,
+        quotesAbsent: t.quotesAbsent,
+        derivationsOk: t.derivationsOk,
+        repaired: repair ? repair.tally.accepted : 0,
+      },
+    })
+  } else {
+    o.activity?.emit({ kind: 'stage', stageId: verifyStage, name: 'verify', status: 'completed', detail: { ok: false } })
+  }
 
   const report: TranscriptReport = {
     task: 'transcript',

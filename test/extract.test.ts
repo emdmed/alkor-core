@@ -11,6 +11,8 @@ import assert from 'node:assert/strict'
 import { createServer, type Server } from 'node:http'
 import { once } from 'node:events'
 import { extract } from '../src/modes/extract.ts'
+import { createActivity, withActivityScope } from '../src/core/activity.ts'
+import type { Provider } from '../src/core/client.ts'
 
 interface Reply {
   status?: number
@@ -187,4 +189,61 @@ test('--no-cache-prompt reaches the request body', async () => {
   await extract({ systemPrompt: 'sys', document: 'doc', parse: asJson, baseUrl: s.url, cachePrompt: false, label: 'test' })
   assert.equal(JSON.parse(s.bodies[0]!).cache_prompt, false)
   await s.close()
+})
+
+test('extract paints prompt-assembly and parse stages on the activity bus', async () => {
+  const a = createActivity()
+  const fake: Provider = {
+    chat: async () => '{"value": 42}',
+    toolChat: async () => ({ content: null, toolCalls: [] }),
+    streamChat: async () => ({ content: null, toolCalls: [], chunks: 0 }),
+    identify: async () => ({ identified: true }),
+  }
+  await withActivityScope({ runId: 'run-9' }, () =>
+    extract({
+      systemPrompt: 'sys',
+      document: 'doc',
+      parse: asJson,
+      provider: fake,
+      activity: a,
+      label: 'painted',
+      maxTokens: 100,
+    }),
+  )
+
+  const stages = a.recent().filter((e) => e.kind === 'stage')
+  const names = stages.map((e: any) => `${e.name}:${e.status}`)
+  assert.deepEqual(names, ['prompt-assembly:started', 'prompt-assembly:completed', 'parse:started', 'parse:completed'])
+
+  const completed = stages.find((e: any) => e.name === 'prompt-assembly' && e.status === 'completed') as any
+  assert.equal(completed.runId, 'run-9')
+  assert.deepEqual(
+    { constrained: completed.detail.constrained, maxTokens: completed.detail.maxTokens, promptChars: completed.detail.promptChars, documentChars: completed.detail.documentChars },
+    { constrained: false, maxTokens: 100, promptChars: 3, documentChars: 3 },
+  )
+  const parse = stages.find((e: any) => e.name === 'parse' && e.status === 'completed') as any
+  assert.deepEqual(parse.detail, { ok: true })
+})
+
+test('extract paints a failed parse with ok:false on the activity bus', async () => {
+  const a = createActivity()
+  const fake: Provider = {
+    chat: async () => 'not-json',
+    toolChat: async () => ({ content: null, toolCalls: [] }),
+    streamChat: async () => ({ content: null, toolCalls: [], chunks: 0 }),
+    identify: async () => ({ identified: true }),
+  }
+  const out = await extract({
+    systemPrompt: 'sys',
+    document: 'doc',
+    parse: asJson,
+    provider: fake,
+    activity: a,
+    label: 'painted-fail',
+  })
+  assert.ok(out.parsed === undefined)
+  assert.ok(out.error)
+  const parse = a.recent().find((e: any) => e.kind === 'stage' && e.name === 'parse' && e.status === 'completed') as any
+  assert.equal(parse.detail.ok, false)
+  assert.ok(typeof parse.detail.reason === 'string')
 })

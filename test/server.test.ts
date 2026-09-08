@@ -47,7 +47,109 @@ test('health endpoint returns profiles and session count', async () => {
   assert.ok(Array.isArray((data as any).profiles))
   assert.ok((data as any).profiles.includes('clinical'))
   assert.ok((data as any).profiles.includes('router'))
+  assert.ok(Array.isArray((data as any).topology?.pipelines))
   assert.equal(typeof (data as any).sessions, 'number')
+  await close()
+})
+
+test('health reports each configured model backend and its reachability', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'medextract-health-test-'))
+
+  // A loopback port that is guaranteed to refuse: bind an ephemeral listener, then let it
+  // go. Nothing else can take the port before the probe (loopback, immediate).
+  const dead = createServer(() => {})
+  dead.listen(0, '127.0.0.1')
+  await once(dead, 'listening')
+  const { port: deadPort } = dead.address() as { port: number }
+  await new Promise<void>((resolve) => dead.close(() => resolve()))
+
+  const tomlPath = join(dir, 'profiles.toml')
+  writeFileSync(tomlPath, `[dead]\nmode = "extract"\nurl = "http://127.0.0.1:${deadPort}"\n`)
+
+  const { url, close } = await startServer(tomlPath)
+  try {
+    const { status, data } = await request(`${url}/health`, 'GET')
+    assert.equal(status, 200)
+    const models = (data as any).models as Array<{
+      baseUrl: string
+      reachable: boolean
+      managed?: boolean
+      state?: string
+    }>
+    assert.ok(Array.isArray(models))
+    // The profile's own backend plus the process-wide fallback are both listed.
+    const entry = models.find((m) => m.baseUrl === `http://127.0.0.1:${deadPort}`)
+    assert.ok(entry, `health models must include the dead backend (got ${models.map((m) => m.baseUrl).join(', ')})`)
+    assert.equal(entry.reachable, false)
+    // No `model` in the toml, so this backend is unmanaged: DOWN means "you start it",
+    // never "spawn on demand". The dashboard's MODEL OFFLINE badge keys off this.
+    assert.equal(entry.managed, false)
+    assert.equal(entry.state, 'stopped')
+  } finally {
+    await close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('run with every backend down refuses with 503, not a silent failure', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'medextract-503-test-'))
+
+  const dead = createServer(() => {})
+  dead.listen(0, '127.0.0.1')
+  await once(dead, 'listening')
+  const { port: deadPort } = dead.address() as { port: number }
+  await new Promise<void>((resolve) => dead.close(() => resolve()))
+
+  const modulePath = join(dir, 'extract-down.mjs')
+  const tomlPath = join(dir, 'profiles.toml')
+  writeFileSync(
+    tomlPath,
+    `[extract-down]\nmode = "extract"\nmodule = "${modulePath}"\nurl = "http://127.0.0.1:${deadPort}"\n`,
+  )
+  writeFileSync(
+    modulePath,
+    "export const PROFILE = { name: 'extract-down', mode: 'extract', needsPack: false, async runEval() { return { pass: true, summary: 'test' } } }\n",
+  )
+
+  const { url, close } = await startServer(tomlPath)
+  try {
+    const { status, data } = await request(`${url}/run`, 'POST', { profile: 'extract-down', input: 'hi' })
+    assert.equal(status, 503)
+    assert.ok(String((data as any).error).includes('llama-server'))
+  } finally {
+    await close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('loopback browser origins may read the feed over CORS', async () => {
+  const { url, close } = await startServer()
+  const res = await fetch(`${url}/health`, {
+    headers: { Origin: 'http://localhost:5173' },
+  })
+  assert.equal(res.headers.get('access-control-allow-origin'), 'http://localhost:5173')
+  await res.json()
+  await close()
+})
+
+test('foreign origins are refused CORS by default', async () => {
+  const { url, close } = await startServer()
+  const res = await fetch(`${url}/health`, {
+    headers: { Origin: 'https://not-your-server.example' },
+  })
+  assert.equal(res.headers.get('access-control-allow-origin'), null)
+  await res.json()
+  await close()
+})
+
+test('OPTIONS preflight for a loopback origin is answered', async () => {
+  const { url, close } = await startServer()
+  const res = await fetch(`${url}/run`, {
+    method: 'OPTIONS',
+    headers: { Origin: 'http://127.0.0.1:5173' },
+  })
+  assert.equal(res.status, 204)
+  assert.ok((res.headers.get('access-control-allow-methods') ?? '').includes('POST'))
   await close()
 })
 
@@ -81,6 +183,93 @@ test('route endpoint falls back to default', async () => {
   assert.equal((data as any).confidence, 0)
   assert.ok((data as any).reason.includes('default'))
   await close()
+})
+
+test('route without explicit rules or a model 503s when the pinned gateway is unreachable', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'medextract-gateway-test-'))
+
+  const dead = createServer(() => {})
+  dead.listen(0, '127.0.0.1')
+  await once(dead, 'listening')
+  const { port: deadPort } = dead.address() as { port: number }
+  await new Promise<void>((resolve) => dead.close(() => resolve()))
+
+  const tomlPath = join(dir, 'profiles.toml')
+  writeFileSync(tomlPath, `[router]\nmode = "router"\npinned = true\nurl = "http://127.0.0.1:${deadPort}"\n`)
+
+  const { url, close } = await startServer(tomlPath)
+  try {
+    const { status, data } = await request(`${url}/route`, 'POST', {
+      input: 'a free-form prompt the rules cannot see',
+    })
+    assert.equal(status, 503)
+    assert.ok(String((data as any).error).includes('no model backend is reachable'))
+  } finally {
+    await close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('route without explicit rules routes through the pinned gateway model', async () => {
+  // A stub front-door: answers /health so the gateway is reachable, and classifies any
+  // chat request the rules miss as clinical.
+  const stub = createServer((req, res) => {
+    if (req.url === '/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ status: 'ok' }))
+      return
+    }
+    if (req.url === '/v1/chat/completions') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({ profile: 'clinical', confidence: 0.8, reason: 'stub' }),
+              },
+            },
+          ],
+        }),
+      )
+      return
+    }
+    res.writeHead(404)
+    res.end()
+  })
+  stub.listen(0, '127.0.0.1')
+  await once(stub, 'listening')
+  const { port: stubPort } = stub.address() as { port: number }
+
+  const dir = mkdtempSync(join(tmpdir(), 'medextract-gateway-test-'))
+  const tomlPath = join(dir, 'profiles.toml')
+  writeFileSync(
+    tomlPath,
+    `[router]
+mode = "router"
+pinned = true
+url = "http://127.0.0.1:${stubPort}"
+model = "~/models/q.gguf"
+`,
+  )
+
+  const { url, close } = await startServer(tomlPath)
+  try {
+    const { status, data } = await request(`${url}/route`, 'POST', {
+      input: 'what should I do with this?',
+    })
+    assert.equal(status, 200)
+    // The stub is only reached because the gateway's own rules did not match the input.
+    assert.equal((data as any).profile, 'clinical')
+    assert.equal((data as any).confidence, 0.8)
+    assert.ok(String((data as any).reason).startsWith('model:'))
+  } finally {
+    await close()
+    stub.closeAllConnections()
+    stub.close()
+    await once(stub, 'close')
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('route endpoint requires input', async () => {

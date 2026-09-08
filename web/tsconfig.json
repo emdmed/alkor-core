@@ -1,0 +1,34 @@
+{
+  "// why": [
+    "This is a browser bundle, not the harness: bundler resolution, DOM libs, JSX.",
+    "The dashboard imports shared reducer/SSE code from the repo root by relative path;",
+    "`allowImportingTsExtensions` + `noEmit` keep those .ts source imports type-safe.",
+    "`erasableSyntaxOnly` is inherited from the harness so code that would not run under",
+    "Node's type-stripping cannot sneak in here either."
+  ],
+  "compilerOptions": {
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "target": "ES2024",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["src"]
+}

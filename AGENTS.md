@@ -12,7 +12,7 @@ error. Always run `npm run check` (test + typecheck) before committing.
 ## Architecture boundaries
 
 - `src/core/` — the harness: config, pack loading, transport, tracing, verification,
-  assembly, bench. **Core must never mention a clinical concept, vital sign, or consuming
+  assembly, bench, activity. **Core must never mention a clinical concept, vital sign, or consuming
   project.** Domain arrives as a pack (data) and a profile (code that reads it).
 - `src/modes/` — execution shapes: `extract`, `agentic`, `session`, `router`, `pipeline`.
   These are generic; they know about the mode, not the domain.
@@ -23,6 +23,15 @@ error. Always run `npm run check` (test + typecheck) before committing.
   only one that lives in this repository; others are pointed to from `profiles.toml`.
 - `src/index.ts` — the public API. Everything a profile may import is re-exported here;
   nothing that is itself a profile is exported. Deep imports are unsupported.
+- `src/tui/` — dashboards over the activity feed, sharing one pure core. `state.ts` (the
+  reducer) and `sse-core.ts` (frame parsing, dedup, spec refusal) are dependency-free and
+  unit-tested on Node 24; the terminal app and the browser dashboard both import them. The
+  terminal side is `sse.ts` (undici) + `app.ts` (OpenTUI — the only file that may import
+  `@opentui/core`, dynamically, so `node src/tui.ts --help` never fails on Node 24).
+- `web/` — the browser dashboard (React + Vite). It is a separate app with its own
+  `package.json`; it imports the shared reducer/SSE core from the repo root by relative
+  path and talks to the server over the same `GET /events` + `/health` endpoints. The
+  server answers CORS for loopback origins only by default (`MEDEXTRACT_CORS` widens it).
 
 ## How to add things
 
@@ -99,8 +108,11 @@ These are taken from `CONTRIBUTING.md` and are enforced by design, not by policy
   pressures, and fabricated quotes because those are the outcomes that matter.
 - The eval loop is testable without a model: `test/eval-loop.test.ts` runs against a
   throwaway `node:http` server that counts requests and serves canned replies.
-- Nothing in `npm test` may need a model, a server, or a private pack. Tests over contracts
-  that ship here run; tests over contracts that do not ship **skip**.
+- Nothing in `npm test` may need a model, a server, a private pack, **or a native renderer**.
+  `test/tui-state.test.ts` and `test/tui-sse.test.ts` prove the whole TUI intelligence on
+  Node 24 without `@opentui/core` installed; `app.ts` is exercised manually. The same core
+  is what the browser dashboard renders, so nothing in `npm test` needs the web app;
+  `npm run web:typecheck` guards the browser side.
 
 ## Files and conventions
 
@@ -111,6 +123,10 @@ These are taken from `CONTRIBUTING.md` and are enforced by design, not by policy
 - Traces go to `${XDG_STATE_HOME:-~/.local/state}/medextract/traces/<profile>/`, outside
   any repository, deliberately. A trace contains raw prompts and completions; a profile
   that handles patient data must supply a `redact` hook before tracing anything real.
+- Activity events go to the in-process bus and, via `GET /events`, over SSE. They are
+  metadata-only by construction: no `content`/`prompt`/`completion`/`text`/`messages`/`note`/
+  `document` field exists on the union, and `emit()` throws if a banned key appears anywhere.
+  Because there is nothing to redact, the feed needs no redactor hook.
 - `spec = 2` in `pack.toml` is the current pack format. Absent means 1. A pack declaring a
   version this harness does not read is refused rather than read under the old rules.
 
@@ -134,3 +150,7 @@ every number measured before it. Rules:
 Comments explain **why**, and often cite the measurement that settled it. A rule without its
 reason gets "cleaned up" by the next person. Commit messages say what changed and what it
 cost. If a change made a number move, the message is where the old number goes.
+
+Activity events follow the same rule: metadata-only by construction, with a banned-key walk
+that fails loud at the source. `spec/activity.md` mirrors `spec/pack.md` for the event
+catalogue, SSE framing, and versioning rule.

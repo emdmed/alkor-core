@@ -9,7 +9,8 @@
   },
   "bin": {
     "medextract": "./src/cli.ts",
-    "medextract-server": "./src/server.ts"
+    "medextract-server": "./src/server.ts",
+    "medextract-tui": "./src/tui.ts"
   },
   "files": [
     "src",
@@ -31,6 +32,10 @@
     "route": "node src/cli.ts route",
     "pipeline": "node src/cli.ts pipeline",
     "server": "node src/server.ts",
+    "tui": "node --experimental-ffi src/tui.ts",
+    "web": "npm --prefix web run dev",
+    "web:build": "npm --prefix web run build",
+    "web:typecheck": "npm --prefix web run typecheck",
     "model-manager": "node scripts/model-manager.ts"
   },
   "dependencies": {
@@ -40,5 +45,8 @@
   "devDependencies": {
     "@types/node": "^26.2.0",
     "typescript": "^7.0.2"
+  },
+  "optionalDependencies": {
+    "@opentui/core": "^0.5.10"
   }
 }

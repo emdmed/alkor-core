@@ -22,6 +22,7 @@
 import { toolChat, type Provider, type ToolCall, type Usage } from '../core/client.ts'
 import { toolSpecs, dispatchCall, type ToolDef } from '../core/tools.ts'
 import type { Trace } from '../core/trace.ts'
+import type { Activity } from '../core/activity.ts'
 
 export interface AgenticOptions {
   systemPrompt: string
@@ -43,6 +44,8 @@ export interface AgenticOptions {
   chat?: typeof toolChat
   /** A custom LLM provider; defaults to the built-in HTTP client. */
   provider?: Provider
+  /** Activity bus for operational events. */
+  activity?: Activity
 }
 
 export interface AgenticResult {
@@ -144,6 +147,7 @@ export const runAgent = async (o: AgenticOptions): Promise<AgenticResult> => {
       // Recorded before the tool is resolved: an invented tool is still something the
       // model reached for, and the eval grades that.
       toolsUsed.push(call.function.name)
+      o.activity?.emit({ kind: 'tool.called', name: call.function.name })
 
       const d = dispatchCall(call, byName)
       if (d.kind === 'error') {
@@ -158,6 +162,7 @@ export const runAgent = async (o: AgenticOptions): Promise<AgenticResult> => {
       // interactive host, and this loop deliberately does not consult it.
       const result = d.tool.execute(d.args, o.workspace)
       messages.push({ role: 'tool', tool_call_id: call.id, content: result })
+      o.activity?.emit({ kind: 'tool.completed', name: d.tool.name })
       // Size, not content: the trail above says the context grew, and this says which
       // result grew it. A run that dies of context is diagnosed by the pair.
       o.trace?.write({ turn: 'tool', step, name: d.tool.name, args: d.args, chars: result.length })

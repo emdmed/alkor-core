@@ -1,0 +1,272 @@
+/**
+ * Activity event shapes, dependency-free.
+ *
+ * `activity.ts` owns the bus and the banned-key walk; this module exists so a browser
+ * dashboard can import the event contract without pulling in `node:async_hooks`. Nothing
+ * here may import Node — the web TUI and the terminal TUI must agree on one schema.
+ *
+ * The shape rules live in `spec/activity.md` and are stamped by `createActivity`: a view
+ * must trust `seq` monotonicity, ignore duplicates, and refuse a stream whose
+ * `activitySpec` does not match `ACTIVITY_SPEC`.
+ */
+export const ACTIVITY_SPEC = 1
+
+/** Correlation ids stamped by `withActivityScope`; dashboards group events by them. */
+export interface ActivityScope {
+  runId?: string
+  sessionId?: string
+  requestId?: string
+  stageId?: string
+  parentId?: string
+}
+
+/** Allowed scalar types in `StageDetail`. Prose is not representable. */
+export type StageDetail =
+  | string
+  | number
+  | boolean
+  | null
+  | { from: string; to: string; via: string; confirmed?: boolean }
+  | Record<string, string | number | boolean | null>
+
+/** Fields every event carries. No content-bearing field may ever appear here or below. */
+interface BaseActivityEvent {
+  activitySpec: typeof ACTIVITY_SPEC
+  seq: number
+  ts: string
+  kind: string
+  runId?: string
+  sessionId?: string
+  requestId?: string
+  stageId?: string
+  parentId?: string
+}
+
+export interface ServerReadyEvent extends BaseActivityEvent {
+  kind: 'server.ready'
+}
+
+export interface ProfileLoadedEvent extends BaseActivityEvent {
+  kind: 'profile.loaded'
+  name: string
+  mode: string
+  url?: string
+  pack?: string
+}
+
+export interface ModelIdentifiedEvent extends BaseActivityEvent {
+  kind: 'model.identified'
+  baseUrl: string
+  model?: string
+  ctx?: number
+  slots?: number
+  identified: boolean
+}
+
+/**
+ * A managed backend's lifecycle: spawn on demand, idle-stop to free memory.
+ * `stopped` carries the reason so a dashboard can show "stopped idle" rather than a
+ * failure. Emitted only for backends the server itself manages.
+ */
+export interface ModelLifecycleEvent extends BaseActivityEvent {
+  kind: 'model.lifecycle'
+  baseUrl: string
+  state: 'starting' | 'ready' | 'stopped' | 'failed'
+  pid?: number
+  model?: string
+  reason?: 'idle' | 'shutdown'
+  error?: string
+  wallMs?: number
+}
+
+export interface LlmRequestEvent extends BaseActivityEvent {
+  kind: 'llm.request'
+  requestId: string
+  label: string
+  baseUrl: string
+  model?: string
+  constrained: boolean
+  messageCount: number
+}
+
+export interface LlmResponseEvent extends BaseActivityEvent {
+  kind: 'llm.response'
+  requestId: string
+  wallMs: number
+  promptTokens?: number
+  completionTokens?: number
+  cachedTokens?: number
+  finishReason?: string
+  chunks?: number
+}
+
+export interface LlmErrorEvent extends BaseActivityEvent {
+  kind: 'llm.error'
+  requestId: string
+  wallMs: number
+  message: string
+}
+
+export interface HttpRequestEvent extends BaseActivityEvent {
+  kind: 'http.request'
+  method: string
+  path: string
+}
+
+export interface HttpCompletedEvent extends BaseActivityEvent {
+  kind: 'http.completed'
+  method: string
+  path: string
+  status: number
+  wallMs: number
+}
+
+export interface RouteDecidedEvent extends BaseActivityEvent {
+  kind: 'route.decided'
+  profile: string
+  confidence: number
+  reason: string
+  ruleVsModel: 'rule' | 'model'
+}
+
+export interface RunStartedEvent extends BaseActivityEvent {
+  kind: 'run.started'
+  profile: string
+  inputChars: number
+  inputDigest: string
+}
+
+export interface RunCompletedEvent extends BaseActivityEvent {
+  kind: 'run.completed'
+  profile: string
+  wallMs: number
+}
+
+export interface RunFailedEvent extends BaseActivityEvent {
+  kind: 'run.failed'
+  profile: string
+  wallMs: number
+  error: string
+}
+
+export interface PipelineStartedEvent extends BaseActivityEvent {
+  kind: 'pipeline.started'
+}
+
+/**
+ * One mapping inside a COMPOSED step input: `name` is the field the pipeline hands the
+ * next step, `ref` is where it resolves from. Held as (name, ref) pairs rather than as the
+ * template object itself so the event survives the banned-key walk — a template maps a
+ * field named `document`, and a field NAME is exactly what `emit()` refuses.
+ */
+export interface TemplateRefEntry {
+  /** The field of the composed input this ref fills (e.g. `extraction`). */
+  name: string
+  /** The source ref it resolves from (e.g. `step-1.report`). */
+  ref: string
+}
+
+export interface PipelineStepStartedEvent extends BaseActivityEvent {
+  kind: 'pipeline.step.started'
+  step: number
+  name: string
+  profile: string
+  input?: { ref: string | TemplateRefEntry[]; field?: string; fromProfile?: string }
+}
+
+export interface PipelineStepCompletedEvent extends BaseActivityEvent {
+  kind: 'pipeline.step.completed'
+  step: number
+  name: string
+  profile: string
+  ok: boolean
+  wallMs?: number
+}
+
+export interface PipelineCompletedEvent extends BaseActivityEvent {
+  kind: 'pipeline.completed'
+  stoppedEarly: boolean
+  totalMs: number
+}
+
+export interface SessionCreatedEvent extends BaseActivityEvent {
+  kind: 'session.created'
+  sessionId: string
+  profile: string
+}
+
+export interface TurnStartedEvent extends BaseActivityEvent {
+  kind: 'turn.started'
+  sessionId: string
+  turn: number
+}
+
+export interface TurnCompletedEvent extends BaseActivityEvent {
+  kind: 'turn.completed'
+  sessionId: string
+  turn: number
+  stop: string
+  steps: number
+  toolsUsed: string[]
+  usage?: { promptTokens: number; completionTokens: number; totalTokens: number; cachedTokens?: number }
+}
+
+export interface SessionDestroyedEvent extends BaseActivityEvent {
+  kind: 'session.destroyed'
+  sessionId: string
+}
+
+export interface ToolCalledEvent extends BaseActivityEvent {
+  kind: 'tool.called'
+  name: string
+}
+
+export interface ToolCompletedEvent extends BaseActivityEvent {
+  kind: 'tool.completed'
+  name: string
+}
+
+export interface ToolDeclinedEvent extends BaseActivityEvent {
+  kind: 'tool.declined'
+  name: string
+}
+
+export interface StageEvent extends BaseActivityEvent {
+  kind: 'stage'
+  name: string
+  status: 'started' | 'completed'
+  detail?: StageDetail
+  wallMs?: number
+  stageId?: string
+  parentId?: string
+}
+
+export type ActivityEvent =
+  | ServerReadyEvent
+  | ProfileLoadedEvent
+  | ModelIdentifiedEvent
+  | ModelLifecycleEvent
+  | LlmRequestEvent
+  | LlmResponseEvent
+  | LlmErrorEvent
+  | HttpRequestEvent
+  | HttpCompletedEvent
+  | RouteDecidedEvent
+  | RunStartedEvent
+  | RunCompletedEvent
+  | RunFailedEvent
+  | PipelineStartedEvent
+  | PipelineStepStartedEvent
+  | PipelineStepCompletedEvent
+  | PipelineCompletedEvent
+  | SessionCreatedEvent
+  | TurnStartedEvent
+  | TurnCompletedEvent
+  | SessionDestroyedEvent
+  | ToolCalledEvent
+  | ToolCompletedEvent
+  | ToolDeclinedEvent
+  | StageEvent
+
+/** What goes into `emit` — the bus stamps `activitySpec`, `seq`, `ts`. Correlation ids may come from the scope or the caller. */
+export type ActivityInput = Omit<ActivityEvent, 'activitySpec' | 'seq' | 'ts'>
