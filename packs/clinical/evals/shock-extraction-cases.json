@@ -1,0 +1,18 @@
+{
+  "_comment": "Shock-extraction eval cases: synthetic prose notes that restate the findings of the existing shock exam payloads. The expectation for each case is the SAME exam.json the downstream reasoning task already grades against, so the two tasks share a truth source even though their inputs differ.",
+  "exactMatchFloor": 0.67,
+  "cases": [
+    {
+      "name": "sh-01-septic-classic",
+      "difficulty": 1
+    },
+    {
+      "name": "sh-02-cardiogenic-classic",
+      "difficulty": 1
+    },
+    {
+      "name": "sh-03-hypovolemic-classic",
+      "difficulty": 1
+    }
+  ]
+}

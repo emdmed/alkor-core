@@ -27,6 +27,7 @@
  */
 import type { Pack } from '../../core/pack.ts'
 import type { Trace } from '../../core/trace.ts'
+import type { Provider } from '../../core/client.ts'
 import type { Timings } from '../../core/bench.ts'
 import { extract } from '../../modes/extract.ts'
 import { hasRepairContract, repairRequest } from './contracts.ts'
@@ -104,6 +105,7 @@ export interface RepairOptions {
   baseUrl?: string
   trace?: Trace
   cachePrompt?: boolean
+  provider?: Provider
 }
 
 /**
@@ -135,6 +137,7 @@ export const repairReading = async (o: RepairOptions): Promise<RepairOutcome> =>
     baseUrl: o.baseUrl,
     cachePrompt: o.cachePrompt,
     label: 'transcript-repair',
+    provider: o.provider,
   })
 
   const tally: RepairTally = { ...EMPTY, offered: failed.length }

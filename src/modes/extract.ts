@@ -17,7 +17,8 @@
  * format failure two chances at a contract while a wrong VALUE got one — an asymmetry
  * between the two things the eval reports side by side.
  */
-import { llamaChat, LlamaError } from '../core/client.ts'
+import { chat, ChatError, defaultProvider } from '../core/client.ts'
+import type { Provider } from '../core/client.ts'
 import type { Timings } from '../core/bench.ts'
 
 export interface ExtractOutcome<T> {
@@ -78,6 +79,13 @@ export interface ExtractOptions<T> {
    */
   cachePrompt?: boolean
   label?: string
+  /**
+   * Override `chat_template_kwargs` (e.g. to enable thinking for a profile that needs it).
+   * Passed through to the client; see ChatOptions.
+   */
+  chatTemplateKwargs?: Record<string, unknown>
+  /** A custom LLM provider; defaults to the built-in HTTP client. */
+  provider?: Provider
 }
 
 export const extract = async <T,>(o: ExtractOptions<T>): Promise<ExtractOutcome<T>> => {
@@ -99,8 +107,9 @@ export const extract = async <T,>(o: ExtractOptions<T>): Promise<ExtractOutcome<
     // fires on a completion. This clock is the one that survives a request that never
     // produced one — which is precisely the attempt that used to cost nothing on paper.
     const startedAt = performance.now()
+    const provider = o.provider ?? defaultProvider
     try {
-      raw = await llamaChat({
+      raw = await provider.chat({
         systemPrompt: o.systemPrompt,
         userPrompt: o.document,
         label: o.label ?? 'extraction',
@@ -111,17 +120,18 @@ export const extract = async <T,>(o: ExtractOptions<T>): Promise<ExtractOutcome<
         timeoutMs: o.timeoutMs,
         baseUrl: o.baseUrl,
         cachePrompt: o.cachePrompt,
+        chatTemplateKwargs: o.chatTemplateKwargs,
         onMetrics: (m) => {
           cost.push({ timings: m.timings, wallMs: m.wallMs })
           finishReason = m.finishReason
         },
       })
     } catch (e) {
-      // A LlamaError is the transport speaking: unreachable server, HTTP status, an envelope
+      // A ChatError is the transport speaking: unreachable server, HTTP status, an envelope
       // with no content. Anything else escaping the client is a bug here, not a bad reply,
       // and retrying it would only hide it.
       lostMs += performance.now() - startedAt
-      return { outcome: { error: (e as Error).message, ...spent() }, retryable: e instanceof LlamaError }
+      return { outcome: { error: (e as Error).message, ...spent() }, retryable: e instanceof ChatError }
     }
     try {
       return { outcome: { parsed: o.parse(raw), raw, ...spent() }, retryable: false }

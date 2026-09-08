@@ -34,9 +34,6 @@
  * findings that contradict each other, and the reason a case is undecidable — none of which
  * a 2x2 can express and all of which a clinician needs said out loud.
  */
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { parse as parseToml } from 'smol-toml'
 import { type Pack } from '../../core/pack.ts'
 import { ProfileError } from '../../core/profile.ts'
 // The difficulty scale is the pack's, not this task's: a tier means the same thing across
@@ -174,6 +171,8 @@ export interface ShockExamRule {
   hypotensionMinutesAtLeast: number
   /** Above this is `elevated`. cmH2O. The paper's cut is 7. */
   jvpElevatedAboveCmH2O: number
+  /** Shock index (HR / SBP) above this confirms shock. The paper's cut is 0.7. */
+  shockIndexAbove: number
 }
 
 /**
@@ -185,12 +184,10 @@ export interface ShockExamRule {
  * cardiogenic starts, made by this file, reported as the pack's.
  */
 export const loadShockRule = (pack: Pack): ShockExamRule => {
-  const manifest = parseToml(readFileSync(join(pack.root, 'pack.toml'), 'utf8')) as {
-    clinical?: { shockExam?: Partial<ShockExamRule> }
-  }
+  const manifest = pack.manifest as { clinical?: { shockExam?: Partial<ShockExamRule> } }
   const r = manifest.clinical?.shockExam
   const missing = (
-    ['hypotensionSystolicBelow', 'hypotensionMinutesAtLeast', 'jvpElevatedAboveCmH2O'] as const
+    ['hypotensionSystolicBelow', 'hypotensionMinutesAtLeast', 'jvpElevatedAboveCmH2O', 'shockIndexAbove'] as const
   ).filter((k) => typeof r?.[k] !== 'number')
   if (!r || missing.length) {
     throw new ProfileError(
@@ -354,6 +351,43 @@ export interface Concordance {
  * patient with a low jugular venous pressure AND bilateral crackles is a rule being applied to
  * someone it does not fit. Reported rather than resolved, for the reason in `classify`.
  */
+// --- Deterministic shock confirmation -------------------------------------------------------
+
+/**
+ * Simple deterministic confirmation of shock from an extracted (or supplied) exam.
+ *
+ * Uses the SAME medprotocol evaluation as the full classification pipeline, so the
+ * numbers the confirmation reports are the numbers the downstream rule consumes.
+ *
+ * Criteria: systolic < 90 mmHg OR shock index (HR / SBP) > 0.7.
+ * Either criterion alone confirms shock, catching both overt hypotension and early
+ * compensated shock where pressure is maintained by tachycardia.
+ */
+export interface ShockConfirmation {
+  confirmed: boolean
+  systolic: number
+  shockIndex: number
+  reason: string
+}
+
+export const confirmShock = (exam: ShockExam, mp: MedprotocolRule, rule: ShockExamRule): ShockConfirmation => {
+  const vitals = evaluateVitals(
+    mp,
+    { systolic: exam.hypotension.systolic, diastolic: exam.hypotension.diastolic },
+    exam.heart_rate,
+  )
+  const reasons: string[] = []
+  if (vitals.systolic < rule.hypotensionSystolicBelow) reasons.push(`systolic ${vitals.systolic} < ${rule.hypotensionSystolicBelow} mmHg`)
+  if (vitals.shockIndex > rule.shockIndexAbove) reasons.push(`shock index ${vitals.shockIndex} > ${rule.shockIndexAbove}`)
+  const confirmed = reasons.length > 0
+  return {
+    confirmed,
+    systolic: vitals.systolic,
+    shockIndex: vitals.shockIndex,
+    reason: confirmed ? reasons.join(', ') : 'no shock criteria met',
+  }
+}
+
 export const concordance = (exam: ShockExam, assessment: ShockAssessment): Concordance => {
   const supporting: FindingName[] = []
   const discordant: FindingName[] = []

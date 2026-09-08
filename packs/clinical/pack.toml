@@ -237,6 +237,14 @@ shockSchema       = "schemas/shock.schema.json"
 shockSchemaGolden = "schemas/shock.golden.json"
 shockCases        = "evals/shock-cases.json"
 
+# --- Shock extraction: free-text note in, structured ShockExam payload out. --------------
+# The upstream half of the end-to-end shock pipeline. Prose notes that restate the findings
+# of the existing shock exam payloads, so the downstream expectation is shared.
+shockExtractionPrompt       = "prompts/shock-extraction.md"
+shockExtractionSchema       = "schemas/shock-extraction.schema.json"
+shockExtractionSchemaGolden = "schemas/shock-extraction.golden.json"
+shockExtractionCases        = "evals/shock-extraction-cases.json"
+
 literaturePrompt       = "prompts/literature.md"
 literatureSchema       = "schemas/literature.schema.json"
 literatureSchemaGolden = "schemas/literature.golden.json"
@@ -279,6 +287,8 @@ medicationSchemaName = "current_medication"
 literatureSchemaName = "literature_search"
 # The shock-category pass, its own label for the same reason.
 shockSchemaName = "shock_category"
+# The shock-extraction pass, its own label so a server log can tell extraction from reasoning.
+shockExtractionSchemaName = "shock_exam_extraction"
 
 # Which task `eval --profile clinical` runs when none is named. `--task all` runs the four,
 # and each clears its own floor: averaging them would let a ceiling on one hide a failure in
@@ -507,6 +517,10 @@ hypotensionMinutesAtLeast = 30
 # sh-13-jvp-at-threshold pins, and it is the case that fails the day either runtime reimplements
 # the comparison as >=.
 jvpElevatedAboveCmH2O = 7
+# Shock index (HR / SBP) above this confirms shock alongside the systolic threshold.
+# A true index of 0.704 rounds to 0.7 and is never flagged if rounded before comparison,
+# so the comparison uses the unrounded value computed from medprotocol's parse.
+shockIndexAbove = 0.7
 
 [clinical.setMatching]
 negators =["no", "not", "never", "denies", "denied", "without", "sin", "niega", "ningun", "ninguna", "nunca"]

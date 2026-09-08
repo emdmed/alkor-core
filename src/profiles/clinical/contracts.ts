@@ -189,6 +189,22 @@ export const CONTRACTS = {
     samplingKey: 'shock',
     documentKind: 'exam',
   },
+  /**
+   * The shock-extraction pass: a free-text clinical note in, the structured ShockExam payload
+   * the reasoning contract consumes out. This is the upstream half of a pipeline that ends
+   * with the shock task: prose → extraction → reasoning. It shares the same output shape as
+   * the exam files, and the downstream contract reads the same schema-shaped bytes whether
+   * they were written by a human or extracted by this pass.
+   */
+  'shock-extraction': {
+    id: 'shock-extraction',
+    promptKey: 'shockExtractionPrompt',
+    schemaKey: 'shockExtractionSchema',
+    goldenKey: 'shockExtractionSchemaGolden',
+    schemaNameField: 'shockExtractionSchemaName',
+    samplingKey: 'shock_extraction',
+    documentKind: 'default',
+  },
   /** The repair pass: the failed items of a reading, handed back with the transcript. */
   'transcript-repair': {
     id: 'transcript-repair',
@@ -211,8 +227,21 @@ export const CONTRACTS = {
  * contract that sits looking complete and reports nothing, which is the state it was in for
  * exactly as long as it took to write an eval mode for it.
  */
-export type Task = 'vital-signs' | 'summary' | 'note-format' | 'transcript' | 'shock'
-export const TASKS: Task[] = ['vital-signs', 'summary', 'note-format', 'transcript', 'shock']
+export type Task = 'vital-signs' | 'summary' | 'note-format' | 'transcript' | 'shock' | 'shock-extraction'
+export const TASKS: Task[] = ['vital-signs', 'summary', 'note-format', 'transcript', 'shock', 'shock-extraction']
+
+export type ClinicalShape = 'exam-json' | 'shock-suspicion' | 'dialogue' | 'dictation' | 'vitals-note' | 'note' | 'summary-input'
+
+/** The default task each shape routes to. The `note` shape is overridden by the pack's `defaultTask`. */
+export const DEFAULT_TASK_FOR_SHAPE: Record<ClinicalShape, Task> = {
+  'exam-json': 'shock',
+  'shock-suspicion': 'shock-extraction',
+  'summary-input': 'summary',
+  dialogue: 'transcript',
+  dictation: 'transcript',
+  'vitals-note': 'vital-signs',
+  note: 'vital-signs',
+}
 
 /**
  * The `[sampling.*]` key each task reads. Separate from the task name because one is a

@@ -1,0 +1,7 @@
+spec = 2
+name = "verification"
+
+[files]
+prompt = "prompt.md"
+schema = "schema.json"
+system = "system.md"

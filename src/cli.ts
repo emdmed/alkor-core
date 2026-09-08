@@ -6,6 +6,8 @@
  *   node src/cli.ts eval    --profile NAME [--runs N] [--constrain] [--repair] [--difficulty N|N-M] [--no-cache-prompt] [--url URL] [--pack DIR]
  *   node src/cli.ts eval    --profile NAME --from-trace FILE [--strip-fences]
  *   node src/cli.ts agent   --profile NAME --task "..." --workspace DIR [--url URL] [--steps N]
+ *   node src/cli.ts route   --profile NAME --input "..." [--json]
+ *   node src/cli.ts pipeline --profile NAME --input "..." [--json]
  *   node src/cli.ts profiles
  *
  * `extract` is the job and `eval` is how you know it works. They are two entries into one
@@ -21,10 +23,11 @@
 import { readFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { loadConfig, requireProfile, ConfigError } from './core/config.ts'
-import { loadPack, resolvePackRoot, PackError } from './core/pack.ts'
+import { loadPack, resolvePackRoot, PackError, type Pack } from './core/pack.ts'
 import { TraceError } from './core/trace-read.ts'
 import { loadProfileModule, redactor, requireDocumentName, resolveProfileModule, ProfileError } from './core/profile.ts'
 import { runAgent } from './modes/agentic.ts'
+import { runPipeline, buildPipeline } from './modes/pipeline.ts'
 import { nullTrace, openTrace } from './core/trace.ts'
 
 const { values } = parseArgs({
@@ -41,6 +44,7 @@ const { values } = parseArgs({
     note: { type: 'string' },
     case: { type: 'string' },
     difficulty: { type: 'string' },
+    input: { type: 'string' },
     // Spelled as the negative because ON is the default and the reason to type it is to give
     // the reuse up. `parseArgs` has no negation convention, so this is a plain flag.
     'no-cache-prompt': { type: 'boolean', default: false },
@@ -56,6 +60,8 @@ const { values } = parseArgs({
     // Re-score a recorded run instead of producing a new one. No server is contacted.
     'from-trace': { type: 'string' },
     'strip-fences': { type: 'boolean', default: false },
+    'context-dir': { type: 'string' },
+    step: { type: 'string' },
     // The second pass over the items whose citation failed. Opt-in on both verbs, because
     // every number this harness has pinned describes one pass: a repair that ran by default
     // would make the old results incomparable with the new ones without anyone typing
@@ -63,6 +69,11 @@ const { values } = parseArgs({
     repair: { type: 'boolean', default: false },
     json: { type: 'boolean', default: false },
     calculate: { type: 'boolean', default: false },
+    // Pipeline fidelity eval: run three arms (monolith, specialist, verified) against
+    // the clinical corpus and compare. See src/profiles/clinical-pipeline/eval.ts.
+    fidelity: { type: 'boolean', default: false },
+    // Limit the fidelity eval to N cases (for quick iteration).
+    'case-limit': { type: 'string' },
   },
 })
 
@@ -73,6 +84,8 @@ const usage = (msg?: string) => {
   console.error('  node src/cli.ts eval    --profile NAME [--runs N] [--constrain] [--task NAME] [--repair] [--difficulty N|N-M] [--no-cache-prompt] [--no-medication-pass] [--url URL] [--pack DIR]')
   console.error('  node src/cli.ts eval    --profile NAME --from-trace FILE [--strip-fences] [--pack DIR]   (re-score a recorded run, no server)')
   console.error('  node src/cli.ts agent   --profile NAME --task "..." --workspace DIR [--url URL] [--steps N]')
+  console.error('  node src/cli.ts route   --profile NAME --input "..." [--json] [--url URL]')
+  console.error('  node src/cli.ts pipeline --profile NAME --input "..." [--json] [--url URL] [--pack DIR] [--context-dir DIR] [--step N]')
   console.error('  node src/cli.ts profiles')
   process.exit(2)
 }
@@ -108,7 +121,7 @@ if (command === 'profiles') {
   process.exit(0)
 }
 
-if (command !== 'eval' && command !== 'agent' && command !== 'extract') usage(`unknown command '${command}'`)
+if (command !== 'eval' && command !== 'agent' && command !== 'extract' && command !== 'route' && command !== 'pipeline') usage(`unknown command '${command}'`)
 if (!values.profile) usage('--profile is required')
 
 let profileConfig
@@ -143,7 +156,7 @@ if (profile!.needsPack || values.pack || profileConfig!.pack) {
 }
 
 if (command === 'extract') {
-  if (profile!.mode !== 'extract') usage(`profile '${profile!.name}' is mode '${profile!.mode}', which extracts nothing`)
+  if (profile!.mode !== 'extract' && profile!.mode !== 'router' && profile!.mode !== 'pipeline') usage(`profile '${profile!.name}' is mode '${profile!.mode}', which extracts nothing`)
   if (!profile!.review) usage(`profile '${profile!.name}' does not implement review, so it cannot read a single document`)
   if (Boolean(values.note) === Boolean(values.case)) usage('extract needs exactly one of --note FILE and --case NAME')
 
@@ -247,6 +260,140 @@ if (command === 'agent') {
   process.exit(res.stop === 'done' ? 0 : 1)
 }
 
+if (command === 'route') {
+  if (!values.input) usage('route needs --input')
+  if (profile!.mode !== 'router') usage(`profile '${profile!.name}' is mode '${profile!.mode}', which is not a router`)
+  if (!profile!.review) usage(`profile '${profile!.name}' does not implement review, so it cannot route a single input`)
+
+  const trace = openTrace(profile!.name, redactor(profile!, pack))
+  let result: Awaited<ReturnType<NonNullable<NonNullable<typeof profile>['review']>>> | undefined
+  try {
+    result = await profile!.review!({
+      pack,
+      baseUrl,
+      trace,
+      input: { kind: 'text', text: values.input!, label: 'cli-input' },
+      options: {
+        constrain: values.constrain,
+        task: values.task,
+      },
+    })
+  } catch (e) {
+    trace.close()
+    die(e)
+  }
+  trace.close()
+
+  if (values.json) {
+    console.error(result!.text)
+    if (result!.report !== undefined) console.log(JSON.stringify(result!.report, null, 2))
+    else if (result!.raw !== undefined) console.log(result!.raw)
+  } else {
+    console.log(result!.text)
+  }
+  process.exit(result!.ok ? 0 : 1)
+}
+
+if (command === 'pipeline') {
+  if (!values.input) usage('pipeline needs --input')
+  if (profile!.mode !== 'pipeline') usage(`profile '${profile!.name}' is mode '${profile!.mode}', which is not a pipeline`)
+
+  const stepNumber = values.step !== undefined ? Number(values.step) : undefined
+  if (stepNumber !== undefined && (Number.isNaN(stepNumber) || stepNumber < 0 || !Number.isInteger(stepNumber))) {
+    usage(`--step must be a non-negative integer, got '${values.step}'`)
+  }
+  if (stepNumber !== undefined && stepNumber > 0 && !values['context-dir']) {
+    usage('--step > 0 requires --context-dir to load state from previous steps')
+  }
+
+  // Pipeline steps are read from the profile config (profiles.toml extra keys).
+  const steps = profileConfig!.steps as Array<Record<string, unknown>> | undefined
+  if (!steps || !Array.isArray(steps)) usage(`profile '${profile!.name}' has no 'steps' array in its config`)
+
+  const pipelineSteps = buildPipeline(
+    steps!.map((s) => ({
+      name: String(s.name ?? 'unnamed'),
+      profile: String(s.profile ?? ''),
+      input: s.input as string | undefined,
+      field: s.field as string | undefined,
+      options: s.options as Record<string, unknown> | undefined,
+    })),
+  )
+
+  if (stepNumber !== undefined && stepNumber >= pipelineSteps.length) {
+    usage(`--step ${stepNumber} is out of range (pipeline has ${pipelineSteps.length} steps)`)
+  }
+
+  // Load all referenced profiles and packs.
+  const profiles = new Map<string, Awaited<ReturnType<typeof loadProfileModule>>>()
+  const packs = new Map<string, Pack | undefined>()
+  const baseUrls = new Map<string, string | undefined>()
+
+  for (const step of pipelineSteps) {
+    if (!profiles.has(step.profile)) {
+      const stepProfileConfig = requireProfile(cfg!, step.profile)
+      const stepProfile = await loadProfileModule(
+        step.profile,
+        resolveProfileModule(step.profile, { configured: stepProfileConfig.module, base: cfg!.base }),
+      )
+      profiles.set(step.profile, stepProfile)
+      baseUrls.set(step.profile, stepProfileConfig.url)
+
+      if (stepProfile.needsPack || stepProfileConfig.pack) {
+        try {
+          const stepPack = loadPack(
+            resolvePackRoot(stepProfile.name, {
+              explicit: undefined,
+              configured: stepProfileConfig.pack as string | undefined,
+              base: cfg!.base,
+            }),
+          )
+          packs.set(step.profile, stepPack)
+        } catch (e) {
+          if (stepProfile.needsPack) throw e
+          packs.set(step.profile, undefined)
+        }
+      }
+    }
+  }
+
+  const trace = openTrace(profile!.name, redactor(profile!, pack))
+  const result = await runPipeline({
+    initialInput: values.input!,
+    steps: pipelineSteps,
+    profiles,
+    packs,
+    baseUrls,
+    trace,
+    contextDir: values['context-dir'],
+    runStep: stepNumber,
+  })
+  trace.close()
+
+  const lines = [
+    `=== pipeline · ${profile!.name} ===`,
+    stepNumber !== undefined ? `running step: ${stepNumber + 1} / ${pipelineSteps.length}` : `steps: ${result.steps.length}`,
+    `total time: ${(result.totalMs / 1000).toFixed(1)}s`,
+    `stopped early: ${result.stoppedEarly ? 'yes' : 'no'}`,
+    ...(values['context-dir'] ? [`context dir: ${values['context-dir']}`] : []),
+  ]
+  for (const step of result.steps) {
+    lines.push(`  ${step.step + 1}. ${step.name} (${step.profile}) — ${step.ok ? 'ok' : 'failed'}${step.error ? ` — ${step.error}` : ''}${step.wallMs ? ` — ${(step.wallMs / 1000).toFixed(1)}s` : ''}`)
+  }
+  if (result.final) {
+    lines.push(`\nfinal output:`)
+    lines.push(JSON.stringify(result.final, null, 2))
+  }
+
+  const text = lines.join('\n')
+  if (values.json) {
+    console.log(JSON.stringify({ pipeline: result }, null, 2))
+  } else {
+    console.log(text)
+  }
+  process.exit(result.stoppedEarly ? 1 : 0)
+}
+
 // `--from-trace` re-scores a recording and contacts no server, so it opens no trace of its
 // own: a dated empty file per re-score is litter in the one directory where the real
 // recordings live.
@@ -276,6 +423,8 @@ try {
       stripFences: values['strip-fences'],
       repair: values.repair,
       medicationPass: !values['no-medication-pass'],
+      fidelity: values.fidelity,
+      caseLimit: values['case-limit'] ? Number(values['case-limit']) : undefined,
     },
   })
 } catch (e) {

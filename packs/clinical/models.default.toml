@@ -172,3 +172,13 @@ timeout_secs = 120
 temperature = 0.0
 max_tokens = 512
 timeout_secs = 900
+
+# --- The shock-extraction pass over a free-text clinical note. ---
+# The cap is the SAME as the transcript task's, because the input is a note and the output is a
+# single closed object of seven fields, but the note may carry filler prose that the model has to
+# read through to find the findings. The ceiling is the note-format task's rather than the shock
+# reasoning task's, because the input is prose and not a pre-rendered payload.
+[sampling.shock_extraction]
+temperature = 0.0
+max_tokens = 1024
+timeout_secs = 300

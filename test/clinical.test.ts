@@ -11,9 +11,10 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { parse as parseToml } from 'smol-toml'
 import { loadPack, specGap, SPEC_VERSION } from '../src/core/pack.ts'
 import { loadSampling, loadSettings } from '../src/profiles/clinical/settings.ts'
 import { gradedExpectations, loadVitalCases, parseDifficultyRange } from '../src/profiles/clinical/cases.ts'
@@ -60,7 +61,8 @@ test('a pack older than the harness is refused by version, not only by key', () 
       '[clinical.quoteVerification]\ncollapseWhitespace = true\ncaseSensitive = true\n' +
       '[clinical.textDerivation]\ndeletionOnly = true\n[clinical.summaryAssembly]\ntotalChars = 10000\n',
   )
-  assert.throws(() => loadSettings(stale as unknown as typeof pack), (e: Error) => {
+  const staleManifest = parseToml(readFileSync(join(stale.root, 'pack.toml'), 'utf8')) as Record<string, unknown>
+  assert.throws(() => loadSettings({ ...stale, manifest: staleManifest } as unknown as typeof pack), (e: Error) => {
     assert.match(e.message, /accentSensitive/, 'the key')
     assert.match(e.message, /declares spec 1/, 'the version the pack claims')
     assert.match(e.message, new RegExp(`reads spec ${SPEC_VERSION}`), 'the version the harness reads')
@@ -331,22 +333,28 @@ test('a required schema label is refused at load, not sent as undefined', () => 
     `spec = 2\nname = "n"\n[clinical]\ndefaultTask = "vital-signs"\n${names}` +
     '[clinical.quoteVerification]\ncollapseWhitespace = true\ncaseSensitive = true\naccentSensitive = true\n' +
     '[clinical.textDerivation]\ndeletionOnly = true\n[clinical.summaryAssembly]\ntotalChars = 10000\n'
-  const stub = { name: 'n', spec: 2, root } as unknown as Parameters<typeof loadSettings>[0]
+  const stub = (extraManifest?: string) => {
+    const m = manifest(extraManifest ?? all)
+    writeFileSync(join(root, 'pack.toml'), m)
+    return {
+      name: 'n',
+      spec: 2,
+      root,
+      manifest: parseToml(readFileSync(join(root, 'pack.toml'), 'utf8')) as Record<string, unknown>,
+    } as unknown as Parameters<typeof loadSettings>[0]
+  }
 
   const all = 'vitalSignsSchemaName = "v"\nsummarySchemaName = "s"\nnoteFormatSchemaName = "f"\ntranscriptSchemaName = "t"\n'
-  writeFileSync(join(root, 'pack.toml'), manifest(all))
-  assert.equal(loadSettings(stub).transcriptSchemaName, 't')
+  assert.equal(loadSettings(stub(all)).transcriptSchemaName, 't')
 
   // Each of the four, named in its own refusal — a message that said "a label is missing"
   // would leave an author to diff four keys against the format.
   for (const key of ['vitalSignsSchemaName', 'summarySchemaName', 'noteFormatSchemaName', 'transcriptSchemaName']) {
-    writeFileSync(join(root, 'pack.toml'), manifest(all.replace(new RegExp(`^${key} = .*\n`, 'm'), '')))
-    assert.throws(() => loadSettings(stub), new RegExp(`${key} is missing`), `${key} must be refused`)
+    assert.throws(() => loadSettings(stub(all.replace(new RegExp(`^${key} = .*\n`, 'm'), ''))), new RegExp(`${key} is missing`), `${key} must be refused`)
   }
 
   // Declared and EMPTY is the same failure wearing a value: it reaches the body as `""`.
-  writeFileSync(join(root, 'pack.toml'), manifest(all.replace('vitalSignsSchemaName = "v"', 'vitalSignsSchemaName = ""')))
-  assert.throws(() => loadSettings(stub), /vitalSignsSchemaName is missing/)
+  assert.throws(() => loadSettings(stub(all.replace('vitalSignsSchemaName = "v"', 'vitalSignsSchemaName = ""'))), /vitalSignsSchemaName is missing/)
   rmSync(root, { recursive: true, force: true })
 })
 
@@ -489,12 +497,15 @@ test('a failed run is scored as total loss, never skipped', async () => {
  */
 test('the digest covers the files a run actually reads, notes included', () => {
   const fresh = loadPack(join(import.meta.dirname, '..', 'packs', 'clinical'))
-  assert.deepEqual(fresh.digest(), {}, 'a pack that has read nothing has nothing to attest')
+  const d0 = fresh.digest()
+  assert.ok(d0['pack.toml'], 'the manifest is always pinned')
+  assert.equal(Object.keys(d0).length, 1, 'a pack that has read nothing still attests its manifest')
 
   vitalPrompt(fresh)
   fresh.document('vs-en-01-vitals-block')
   const d = fresh.digest()
 
+  assert.ok(d['pack.toml'], 'the manifest is in the digest')
   assert.ok(d['prompts/vital-signs.md'], 'the prompt was read and should be in the digest')
   assert.ok(d['notes/vs-en-01-vitals-block.note.txt'], 'the note is the measured input')
   assert.ok(!d['evals/vital-signs-cases.json'], 'the case file was not read by this run')
@@ -510,7 +521,7 @@ test('the digest changes when a contract changes', () => {
   vitalPrompt(a)
   vitalPrompt(b)
   assert.deepEqual(a.digest(), b.digest(), 'the same bytes hash the same')
-  assert.equal(Object.keys(a.digest()).length, 1)
+  assert.equal(Object.keys(a.digest()).length, 2)
 })
 
 test('the harness names its own version', async () => {

@@ -19,6 +19,7 @@
 import type { Pack } from '../../core/pack.ts'
 import type { ReviewResult } from '../../core/profile.ts'
 import type { Trace } from '../../core/trace.ts'
+import type { Provider } from '../../core/client.ts'
 import { serverModel } from '../../core/client.ts'
 import { HARNESS_VERSION } from '../../core/version.ts'
 import { extract } from '../../modes/extract.ts'
@@ -38,6 +39,8 @@ export interface VitalReviewOptions {
   input: { kind: 'case'; name: string } | { kind: 'text'; text: string; label?: string }
   /** When true, compute derived values (BMI, PaO2/FiO2, categories) from the extracted readings. */
   calculate?: boolean
+  /** A custom LLM provider; defaults to the built-in HTTP client. */
+  provider?: Provider
 }
 
 /** Case names this pack can be asked for by name, in the order the answer key lists them. */
@@ -78,6 +81,7 @@ export const reviewVitalSigns = async (o: VitalReviewOptions): Promise<ReviewRes
     timeoutMs: req.sampling.timeout_secs * 1000,
     baseUrl: o.baseUrl,
     label: 'vital_signs',
+    provider: o.provider,
   })
 
   const header =

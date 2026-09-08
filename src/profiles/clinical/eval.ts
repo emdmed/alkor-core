@@ -12,6 +12,7 @@
  */
 import type { Pack } from '../../core/pack.ts'
 import type { Trace } from '../../core/trace.ts'
+import type { Provider } from '../../core/client.ts'
 import { identifyServer, UNIDENTIFIED, type ServerIdentity } from '../../core/client.ts'
 import { formatBench, summarizeBench, type BenchSample, type BenchSummary } from '../../core/bench.ts'
 import { formatStability, summarizeStability, type Observation, type StabilitySummary } from '../../core/stability.ts'
@@ -87,6 +88,7 @@ export interface VitalEvalOptions {
    * with the cache off is slower and can be compared with another run byte for byte.
    */
   cachePrompt?: boolean
+  provider?: Provider
 }
 
 export const runVitalSignsEval = async (o: VitalEvalOptions): Promise<VitalEvalResult> => {
@@ -192,6 +194,7 @@ export const runVitalSignsEval = async (o: VitalEvalOptions): Promise<VitalEvalR
         baseUrl: o.baseUrl,
         cachePrompt,
         label: 'vital_signs',
+        provider: o.provider,
       })
 
       // Summed over attempts: a case that had to be retried cost the caller both passes.

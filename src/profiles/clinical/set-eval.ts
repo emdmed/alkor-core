@@ -22,6 +22,7 @@
 import type { Pack } from '../../core/pack.ts'
 import type { Trace } from '../../core/trace.ts'
 import { formatBench, summarizeBench, type BenchSample, type BenchSummary } from '../../core/bench.ts'
+import type { Provider } from '../../core/client.ts'
 import { assembleDocument } from '../../core/assemble.ts'
 import { extract, type ExtractOutcome } from '../../modes/extract.ts'
 import { loadSettings, medicationName, setMatching } from './settings.ts'
@@ -75,6 +76,7 @@ export interface TaskEvalOptions {
   identity?: ServerIdentity
   /** Prefix reuse, on by default. Off buys a comparable run with prefill time; see the client. */
   cachePrompt?: boolean
+  provider?: Provider
   /**
    * Run the repair pass over failed citations, and report BOTH readings.
    *
@@ -263,6 +265,7 @@ export const runSummaryEval = async (o: TaskEvalOptions): Promise<TaskResult> =>
         baseUrl: o.baseUrl,
         cachePrompt: o.cachePrompt,
         label: 'patient_summary',
+        provider: o.provider,
       })
 
       const scored = outcome.parsed
@@ -504,6 +507,7 @@ const runQuotedSetEval = async <C extends { name: string; class: string; difficu
         baseUrl: o.baseUrl,
         cachePrompt: o.cachePrompt,
         label: def.requestLabel,
+        provider: o.provider,
       })
 
       // The first pass's reading, scored before anything is repaired. This is the number every

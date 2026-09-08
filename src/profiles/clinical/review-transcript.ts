@@ -31,6 +31,7 @@ import { loadSettings } from './settings.ts'
 import { loadTranscriptCases } from './cases.ts'
 import { DOCUMENT_KIND, transcriptRequest } from './contracts.ts'
 import { parseNoteFormat, type FormatItem, type MedicationItem, type NoteFormat } from './extraction.ts'
+import type { Provider } from '../../core/client.ts'
 import { verifyDerivation, verifyQuote, type DerivationRule, type DerivationVerdict, type QuoteRule } from '../../core/verify.ts'
 import { repairReading, type RepairTally } from './repair.ts'
 import { applyMedication, medicationReading, type MedicationOutcome } from './medication.ts'
@@ -53,6 +54,8 @@ export interface TranscriptReviewOptions {
    * make this decision the same way or the eval stops describing the product.
    */
   medicationPass?: boolean
+  /** A custom LLM provider; defaults to the built-in HTTP client. */
+  provider?: Provider
 }
 
 /**
@@ -213,6 +216,7 @@ export const reviewTranscript = async (o: TranscriptReviewOptions): Promise<Revi
     // a server log and a pinned request body are read by this string, and two tasks that
     // produce different numbers should not be indistinguishable in the record of what ran.
     label: 'transcript',
+    provider: o.provider,
   })
 
   // The medication pass, before anything is verified: it REPLACES a section rather than
@@ -229,6 +233,7 @@ export const reviewTranscript = async (o: TranscriptReviewOptions): Promise<Revi
           constrain: o.constrain,
           baseUrl: o.baseUrl,
           trace: o.trace,
+          provider: o.provider,
         })
       : null
   const reading = outcome.parsed && medication ? applyMedication(outcome.parsed, medication) : outcome.parsed
@@ -251,6 +256,7 @@ export const reviewTranscript = async (o: TranscriptReviewOptions): Promise<Revi
           constrain: o.constrain,
           baseUrl: o.baseUrl,
           trace: o.trace,
+          provider: o.provider,
         })
       : null
   const items = repair?.items ?? first

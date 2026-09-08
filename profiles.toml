@@ -41,7 +41,44 @@ mode = "extract"
 pack = "packs/clinical"
 url = "http://127.0.0.1:8081"
 # The `.official` suffix is load-bearing: it is the file whose sha256 matches the one the
-# pack declares. A local copy 384 bytes larger, matching no upstream repo, is the kind of
-# thing that makes a published number unreproducible on anyone else's machine.
+# pack declares. A local copy 384 bytes larger, matching no upstream repo, is the kind
+# of thing that makes a published number unreproducible on anyone else's machine.
 model = "~/models/Qwen3-4B-Q4_K_M.official.gguf"
 ctx = 32768
+
+# The router: a rule-based (and optionally model-based) classifier that decides which
+# specialist profile should handle a given input. It requires no pack and no model by
+# default — the rules are compiled in. A model fallback can be configured via options.
+# Measured: 1.7B drops accuracy to 77.8% when allowed to overrule rules. 4B is the
+# minimum that preserves the 98.1% rule-based accuracy.
+[router]
+mode = "router"
+url = "http://127.0.0.1:8080"
+model = "~/models/Qwen3-4B-Q4_K_M.gguf"
+ctx = 8192
+
+# The verifier: a second-pass model that checks extraction output against the original
+# document for hallucinations, quote errors, and unsupported values. Measured: 1.7B models
+# fail to catch 10/10 injected errors (too weak for the task). 4B clears the gate.
+[verifier]
+mode = "extract"
+pack = "packs/verifier"
+url = "http://127.0.0.1:8085"
+model = "~/models/Qwen3-4B-Q4_K_M.gguf"
+ctx = 8192
+
+# The clinical pipeline: a multi-model orchestration that routes, extracts, and verifies.
+# The pipeline definition is the `steps` array below. Each step names a profile and
+# describes what input it reads. The CLI loads the profiles and packs, then runs the
+# steps in order, passing outputs from one step to the next.
+[clinical-pipeline]
+mode = "pipeline"
+# The pipeline definition: a list of steps. Each step has a name, a profile, and an input
+# reference. Input references: `initial` for the original input, `step-N` for the output
+# of step N (0-indexed), `step-N.raw` for the raw completion, `step-N.text` for rendered
+# text, `step-N.report` for the structured report.
+steps = [
+  { name = "route", profile = "router" },
+  { name = "extract", profile = "clinical", input = "initial" },
+  { name = "verify", profile = "verifier", input = "step-1", field = "report" }
+]

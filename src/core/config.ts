@@ -22,7 +22,7 @@ export const CONFIG_NAME = 'profiles.toml'
 export const envSuffix = (profile: string): string => profile.toUpperCase().replaceAll('-', '_')
 
 /** Execution shapes the harness knows. A profile picks one; it does not invent one. */
-export type Mode = 'extract' | 'agentic'
+export type Mode = 'extract' | 'agentic' | 'router' | 'pipeline'
 
 export interface ProfileConfig {
   name: string
@@ -80,8 +80,8 @@ export const loadConfig = (explicitPath?: string): Config => {
       throw new ConfigError(`${path}: '${name}' is not a profile table`)
     }
     const t = value as Record<string, unknown>
-    if (t.mode !== 'extract' && t.mode !== 'agentic') {
-      throw new ConfigError(`${path}: profile '${name}' has mode '${t.mode}' (expected 'extract' or 'agentic')`)
+    if (t.mode !== 'extract' && t.mode !== 'agentic' && t.mode !== 'router' && t.mode !== 'pipeline') {
+      throw new ConfigError(`${path}: profile '${name}' has mode '${t.mode}' (expected 'extract', 'agentic', 'router', or 'pipeline')`)
     }
     profiles[name] = { ...t, name, mode: t.mode }
   }

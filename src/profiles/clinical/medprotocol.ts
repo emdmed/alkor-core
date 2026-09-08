@@ -28,9 +28,6 @@
  * `run` below therefore looks for the `error` key on BOTH paths and reports either as a refusal.
  */
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { parse as parseToml } from 'smol-toml'
 import { type Pack } from '../../core/pack.ts'
 import { ProfileError } from '../../core/profile.ts'
 
@@ -58,9 +55,7 @@ export interface MedprotocolRule {
  * pack whose numbers nobody can reproduce. So the first is overridable and the second is not.
  */
 export const loadMedprotocolRule = (pack: Pack): MedprotocolRule => {
-  const manifest = parseToml(readFileSync(join(pack.root, 'pack.toml'), 'utf8')) as {
-    clinical?: { medprotocol?: Partial<MedprotocolRule> }
-  }
+  const manifest = pack.manifest as { clinical?: { medprotocol?: Partial<MedprotocolRule> } }
   const m = manifest.clinical?.medprotocol
   if (!m || !Array.isArray(m.command) || !m.command.length || typeof m.version !== 'string') {
     throw new ProfileError(
@@ -209,6 +204,6 @@ export const evaluateVitals = (
     heartRate: h.value,
     heartRateCategory: h.category ?? 'unknown',
     meanArterialPressure: Math.round((b.diastolic + (b.systolic - b.diastolic) / 3) * 10) / 10,
-    shockIndex: Math.round((h.value / b.systolic) * 100) / 100,
+    shockIndex: h.value / b.systolic,
   }
 }

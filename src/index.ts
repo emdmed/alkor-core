@@ -115,11 +115,15 @@ export {
   type TraceFile,
 } from './core/trace-read.ts'
 
-// --- The transport to llama-server --------------------------------------------------
+// --- The transport to the LLM server -----------------------------------------------
 export {
+  DEFAULT_URL,
   LLAMA_DEFAULT_URL,
+  ChatError,
   LlamaError,
   UNIDENTIFIED,
+  chat,
+  defaultProvider,
   identifyServer,
   llamaChat,
   serverModel,
@@ -127,6 +131,7 @@ export {
   streamChat,
   toolChat,
   type ChatOptions,
+  type Provider,
   type StreamChatOptions,
   type StreamResult,
   type ToolCall,
@@ -145,3 +150,17 @@ export {
   type SessionOptions,
   type TurnResult,
 } from './modes/session.ts'
+export {
+  route,
+  type RouteRule,
+  type RouteResult,
+  type RouterOptions,
+} from './modes/router.ts'
+export {
+  runPipeline,
+  buildPipeline,
+  type PipelineOptions,
+  type PipelineResult,
+  type PipelineStep,
+  type PipelineStepResult,
+} from './modes/pipeline.ts'

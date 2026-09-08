@@ -119,6 +119,8 @@ export interface Pack {
   /** Resolved format version — `spec` in the manifest, or 1. Reported in a run record. */
   spec: number
   root: string
+  /** The parsed manifest itself, so a profile can read its own tables without re-parsing. */
+  manifest: Record<string, unknown>
   /** Absolute path for a manifest key. Throws if the key is not declared. */
   path(key: string): string
   /** File contents for a manifest key. */
@@ -238,6 +240,7 @@ export const loadPack = (root: string): Pack => {
   const files = manifest.files ?? {}
   // Every file handed out, so `digest` can state what was read rather than what was offered.
   const opened = new Set<string>()
+  opened.add(manifestPath)
 
   const path = (key: string): string => {
     const rel = files[key]
@@ -265,6 +268,7 @@ export const loadPack = (root: string): Pack => {
     name: manifest.name,
     spec,
     root,
+    manifest: manifest as unknown as Record<string, unknown>,
     path,
     read,
     has: (key) => Boolean(files[key]) && existsSync(resolve(root, files[key]!)),

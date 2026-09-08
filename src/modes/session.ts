@@ -27,7 +27,7 @@
  * "conversation without tools" loop would be the same code with the interesting half
  * deleted, and would drift from this one the first time streaming or aborting changed.
  */
-import { toolChat, streamChat, type ToolCall, type Usage } from '../core/client.ts'
+import { toolChat, streamChat, type Provider, type ToolCall, type Usage } from '../core/client.ts'
 import { toolSpecs, dispatchCall, type ToolDef } from '../core/tools.ts'
 import type { Trace } from '../core/trace.ts'
 
@@ -56,6 +56,8 @@ export interface SessionOptions {
   onToolResult?(name: string, result: string): void
   /** Transport seam, so a session can be tested without a server — as `runAgent` has. */
   chat?: typeof toolChat
+  /** A custom LLM provider; defaults to the built-in HTTP client. */
+  provider?: Provider
 }
 
 export interface TurnResult {
@@ -122,11 +124,12 @@ export const createSession = (o: SessionOptions): Session => {
   /** One model call, streaming or not, normalised to the same shape either way. */
   const ask = async (signal?: AbortSignal) => {
     if (o.chat || o.stream === false) {
-      const chat = o.chat ?? toolChat
+      const chat = o.provider?.toolChat ?? o.chat ?? toolChat
       const r = await chat({ messages, tools: specs, baseUrl: o.baseUrl, label: 'chat' })
       return { ...r, aborted: false }
     }
-    return streamChat({
+    const stream = o.provider?.streamChat ?? streamChat
+    return stream({
       messages,
       tools: specs,
       baseUrl: o.baseUrl,

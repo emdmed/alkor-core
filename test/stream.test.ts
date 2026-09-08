@@ -9,7 +9,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { streamChat, LlamaError } from '../src/core/client.ts'
+import { streamChat, ChatError } from '../src/core/client.ts'
 
 /** The stubbed transport for the test currently running. */
 let fetchImpl: any
@@ -100,12 +100,12 @@ test('a malformed frame is skipped rather than discarding the whole reply', asyn
 
 test('an error frame surfaces the server diagnosis verbatim', async () => {
   serve([`data: ${JSON.stringify({ error: { message: 'context overflow' } })}\n\n`])
-  await assert.rejects(call(), (e: Error) => e instanceof LlamaError && /context overflow/.test(e.message))
+  await assert.rejects(call(), (e: Error) => e instanceof ChatError && /context overflow/.test(e.message))
 })
 
 test('a non-2xx names the endpoint and carries the body, as the blocking path does', async () => {
   serve([], { status: 503 })
-  await assert.rejects(call(), (e: Error) => e instanceof LlamaError && /503/.test(e.message))
+  await assert.rejects(call(), (e: Error) => e instanceof ChatError && /503/.test(e.message))
 })
 
 test('an aborted stream returns what arrived instead of throwing', async () => {

@@ -1199,3 +1199,94 @@ Prompt text three times (long, short, short-with-counter-examples) and schema or
 them move it. It is not an instruction problem and it is not a decode-order problem, which leaves
 a pass of its own or a change to what `history` is allowed to contain — and neither should be
 attempted before the scorer can see the failure it is meant to fix.
+
+---
+
+## Vital signs — expanded corpus, first measurement — 2026-09-08
+
+**The first run on the 30-note / 132-slot corpus.** The corpus grew from 21/88 on 2026-08-21; this
+entry is the baseline against which the new notes are measured.
+
+**Model.** Qwen3-4B-Q4_K_M.official.gguf, sha256 `7485fe6f…` (verified against the pack's manifest
+before the run). Constrained arm, temp 0, `cache_prompt` on, sequential, 1 slot. The pack is
+`clinical` spec 3.
+
+**Hardware change.** CPU-only, 8-core, no GPU (`-ngl 0`). Previous runs were on an AMD Renoir iGPU
+with `-ngl 99`. Correctness travels; throughput does not, and the speeds here are about the
+hardware rather than the model.
+
+| gate | score | floor | |
+|---|---|---|---|
+| detection | 99% (131/132) | 90% | pass |
+| value | **95%** (124/131) | 95% | **FAIL** |
+| unit | 99% (130/131) | 95% | pass |
+| provenance | 85% (112/131) | — | — |
+| hallucinations | 1 | — | — |
+| edited-only | 3 | — | — |
+| failed runs | 0 | — | — |
+
+**Verdict: FAIL on value (124/131 = 94.66%, floor 95%).** One item short of the sub-gate.
+
+**What it cost.** 5.1 tok/s generation, 30.5 tok/s prompt (87% cache reuse), median 52.3 s/note, wall
+1578.5 s. Trace `2026-09-08T06-54-25-331Z.jsonl`.
+
+### The new notes, and what they cost
+
+Nine notes were added on 2026-08-21: four tabular layouts, three Spanish-language notes, one
+typography trap, and one that tests whether the model does arithmetic. This run is the first
+where every one of them is scored together with the original 21.
+
+| case | what happened | tier |
+|---|---|---|
+| vs-en-17-flowsheet | provenance ×5 — **every value correct, every citation invented**. Same failure mode as the 2026-08-21 run on the original flowsheet: the model reads the table correctly and then writes its own compact version of the row. `BP 121/74`, `HR 91`, `RR 19`, `SpO2 96`, `Temp 37.2` — none appear in the note. | d5 |
+| vs-en-22-obs-table | provenance ×5 — identical pattern: `BP 114/72`, `Pulse 102`, `Resp 20`, `Sats 96`, `Temp 37.4` all invented. | d5 |
+| vs-es-24-grafica | **provenance ×6 + value ×6** — every vital sign read from the wrong row of the table. `TA 142/88`, `FC 94`, `FR 22`, `SatO2 93`, `T 38.2`, `Glucemia 186` — none match the expected values. The model fabricated the quotes AND the numbers. | d5 |
+| vs-en-20-discharge | **detection miss** — weight 72 kg not found in a long discharge note. The one miss that brings detection to 131/132. | d5 |
+| vs-es-18-mixta | value ×1, unit ×1, hallucination ×1 — height 178 cm vs expected 1.78 m (different unit, same arithmetic); BMI 30.1 hallucinated where the note states height and weight but never combines them. | d4 |
+| vs-en-27-typography | edited-only ×1 — `weight 104·6 kg` lowercased in the quote. | d4 |
+| vs-en-03-prose | edited-only ×2 — `temperature this morning was 37.1 degrees` and `oxygen saturation of 94 per cent while on room air` both lowercased. | d3 |
+
+### Value is the binding gate, and the tabular notes are why
+
+Detection is 131/132 (99.2%) — one miss in a haystack note. Unit is 130/131 (99.2%). Value is
+124/131 (94.7%), the only gate under its floor. The six value failures are ALL on the three new
+tabular notes: vs-en-17 (0/5 quotes correct), vs-en-22 (0/5 quotes correct), vs-es-24 (0/6
+values correct, 0/6 quotes correct).
+
+The provenance failures (19 out of 131) are also concentrated on tabular notes: 16 of the 19 are
+on the three tables. The model reads the layout correctly — every value is clinically plausible —
+but then writes its own summary of the row rather than copying the cell text. This is the same
+behaviour `vs-en-17-flowsheet` showed on the original 21-note corpus, and the four additional
+tables were added precisely because one note carrying that much signal should not be one note.
+They all show it.
+
+**vs-es-24 is the worst case.** It is not only provenance: every value is wrong because the model
+read the wrong row. The note contains multiple patient rows in a single table; the model
+consistently picked a different patient's vitals. This is a layout-interpretation failure, not a
+transcription failure, and it is not caught by any gate that does not verify quotes.
+
+### What did not fail
+
+The three Spanish-language notes added in this expansion (`vs-es-18`, `vs-es-19`, `vs-es-26`,
+`vs-es-30`) all scored correctly on value and unit. The only Spanish failure is `vs-es-24`,
+which is a table layout note whose language is incidental to the defect. The `vs-es-18` height
+unit mismatch (cm vs m) is a real unit error under the case key, but the value gate counts it
+as a value error because the number changed (178 vs 1.78). This is one of the two items that
+separate 124/131 from 125/131.
+
+The typography note (`vs-en-27`) and the no-arithmetic note (`vs-en-29`) both cleared every
+gate. The model does not compute BMI when it is not stated; it does not invent values from
+typographical variants.
+
+### Speed, and the hardware caveat
+
+5.1 tok/s generation is about 40% of the 12.6 tok/s recorded on the same model with iGPU
+offload. The median 52.3 s/note is 2.4× the 21.6 s on iGPU. This is a CPU-only box and the
+number is for context only — a run on GPU would finish in ~10 minutes and should reproduce the
+same correctness figures at temperature 0. The 87% cache reuse is consistent with previous
+runs; the prompt is unchanged and the cold-cache first case (56.4 s) is proportional.
+
+### Trace
+
+`2026-09-08T06-54-25-331Z.jsonl` under `$XDG_STATE_HOME/medextract/traces/clinical/`.
+Raw eval output saved at `eval/clinical-vital-signs-2026-09-08-Qwen3-4B-Q4_K_M-official-cpu-constrained.log`.

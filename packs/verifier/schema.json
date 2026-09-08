@@ -1,0 +1,43 @@
+{
+  "type": "object",
+  "properties": {
+    "verified": {
+      "type": "boolean",
+      "description": "True only if there are zero major or critical issues."
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "How confident you are in the verification result."
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "field": {
+            "type": "string",
+            "description": "The name of the extraction field with the issue."
+          },
+          "quote": {
+            "type": ["string", "null"],
+            "description": "The problematic quote, if applicable."
+          },
+          "issue": {
+            "type": "string",
+            "enum": ["missing_quote", "modified_quote", "hallucination", "unsupported_value"],
+            "description": "The type of issue found."
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["minor", "major", "critical"],
+            "description": "How serious the issue is."
+          }
+        },
+        "required": ["field", "issue", "severity"]
+      }
+    }
+  },
+  "required": ["verified", "confidence", "issues"]
+}

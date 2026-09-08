@@ -219,13 +219,13 @@ test('an unknown tool is reported to the model rather than ending the turn', asy
 test('a transport failure ends the turn as an error and leaves the session usable', async () => {
   let fail = true
   const chat = async () => {
-    if (fail) throw new Error('cannot reach llama-server')
+    if (fail) throw new Error('cannot reach server')
     return prose('back')
   }
   const session = createSession({ systemPrompt: 's', workspace: '/tmp', tools: tools(), chat: chat as any })
   const first = await session.send('hi')
   assert.equal(first.stop, 'error')
-  assert.match(first.error!, /cannot reach llama-server/)
+  assert.match(first.error!, /cannot reach server/)
 
   fail = false
   assert.equal((await session.send('hi again')).stop, 'answered')

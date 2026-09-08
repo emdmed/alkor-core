@@ -12,9 +12,10 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { parse as parseToml } from 'smol-toml'
 import { loadPack, type Pack } from '../src/core/pack.ts'
 import {
   loadSettings,
@@ -688,7 +689,12 @@ test('a pack that declares the matching table must fill it', () => {
         '[clinical.textDerivation]\ndeletionOnly = true\n[clinical.summaryAssembly]\ntotalChars = 10000\n' +
         (setMatching === undefined ? '' : `[clinical.setMatching]\nnegators = ${JSON.stringify(setMatching)}\n`),
     )
-    return { name: 'm', spec: 2, root } as unknown as Parameters<typeof setMatching_>[0]
+    return {
+      name: 'm',
+      spec: 2,
+      root,
+      manifest: parseToml(readFileSync(join(root, 'pack.toml'), 'utf8')) as Record<string, unknown>,
+    } as unknown as Parameters<typeof setMatching_>[0]
   }
   // Omitted means the documented default, which is the whole point of it being optional.
   assert.deepEqual(setMatching_(stub(undefined)).negators, DEFAULT_NEGATORS)

@@ -13,9 +13,6 @@
  * them. A detector whose markers overlapped would answer confidently and mean nothing, so
  * the refusal and the reading belong in one file.
  */
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { parse as parseToml } from 'smol-toml'
 import { specGap, SPEC_VERSION, type Pack } from '../../core/pack.ts'
 import type { AssemblyRule } from '../../core/assemble.ts'
 import type { DerivationRule, QuoteRule } from '../../core/verify.ts'
@@ -67,6 +64,11 @@ export interface ClinicalSettings {
    * pack has no shock contract, and assembly refuses rather than guessing a label.
    */
   shockSchemaName?: string
+  /**
+   * `json_schema.name` for the shock-extraction pass, on the same terms: absent means the pack
+   * has no extraction contract, and assembly refuses rather than guessing a label.
+   */
+  shockExtractionSchemaName?: string
   quoteVerification: QuoteRule
   textDerivation: DerivationRule
   summaryAssembly: AssemblyRule
@@ -154,6 +156,7 @@ export type SchemaNameField =
   | 'transcriptRepairSchemaName'
   | 'medicationSchemaName'
   | 'shockSchemaName'
+  | 'shockExtractionSchemaName'
 
 /**
  * The four names a pack must state, as data rather than as four type annotations.
@@ -228,7 +231,7 @@ export const loadSettings = (pack: Pack): ClinicalSettings => {
   // `[clinical]` is inert to core/pack.ts, which acts only on spec/name/files/documents/
   // include. Reading it here rather than adding a core concept keeps the harness free of
   // this domain's vocabulary, which is the arrangement's whole rule.
-  const manifest = parseToml(readFileSync(join(pack.root, 'pack.toml'), 'utf8')) as { clinical?: ClinicalSettings }
+  const manifest = pack.manifest as { clinical?: ClinicalSettings }
   if (!manifest.clinical) throw new Error(`pack '${pack.name}' has no [clinical] table in its manifest`)
   const s = manifest.clinical
   // The verification rules are REQUIRED rather than defaulted, and this is the one place a

@@ -33,6 +33,7 @@ import {
   SHOCK_CATEGORIES,
   classify,
   concordance,
+  confirmShock,
   gate,
   loadShockCases,
   loadShockRule,
@@ -216,7 +217,7 @@ test('a payload renders to exactly the bytes the prompt was measured on', () => 
       'blood_pressure: 80/52 mmHg (medprotocol: Low)\n' +
       'mean_arterial_pressure: 61.3 mmHg\n' +
       'heart_rate: 118 bpm (medprotocol: Elevated)\n' +
-      'shock_index: 1.48\n' +
+      'shock_index: 1.475\n' +
       'hypotension_duration: 60 minutes\n' +
       'in_studied_cohort: yes (systolic 80 is below 90 and it has lasted 60 minutes)\n' +
       'skin_temperature: warm\n' +
@@ -832,8 +833,10 @@ test('a finding name outside the payload vocabulary is refused', () => {
  * the one task in this pack that reads no notes at all. An unreachable task that misdescribes
  * itself is worse than one that says nothing, because the sentence is what the reader acts on.
  */
-test('extract refuses the shock task, and says why shock in particular', async () => {
+test('extract now routes the shock task, and parses the payload', async () => {
   const { trace } = tracing()
+  // With the internal router, shock is a reviewable single-document task. An empty input
+  // fails at JSON parse time rather than at task selection time.
   await assert.rejects(
     () =>
       PROFILE.review!({
@@ -843,16 +846,14 @@ test('extract refuses the shock task, and says why shock in particular', async (
         options: { task: 'shock' },
       } as any),
     (e: Error) => {
-      assert.ok(e instanceof ProfileError, 'a setup mistake, not a crash')
-      assert.match(e.message, /physical-examination payload/)
-      assert.match(e.message, /eval --task shock/, 'and it says what to run instead')
-      assert.doesNotMatch(e.message, /same notes vital signs reads/, "note-format's reason, not shock's")
+      assert.ok(e instanceof ProfileError, 'a parse mistake, not a crash')
+      assert.match(e.message, /not valid JSON/)
       return true
     },
   )
 })
 
-/** Every graded task that `extract` cannot run gets a reason of its own, not an inherited one. */
+/** Only `summary` remains unreviewable from a single document. */
 test('each unreviewable task is refused with a distinct reason', async () => {
   const { trace } = tracing()
   const reasons = new Map<string, string>()
@@ -863,8 +864,9 @@ test('each unreviewable task is refused with a distinct reason', async () => {
       if (e instanceof ProfileError && e.message.includes('not a reviewable one')) reasons.set(task, e.message)
     }
   }
-  assert.deepEqual([...reasons.keys()].sort(), ['note-format', 'shock', 'summary'])
-  assert.equal(new Set(reasons.values()).size, 3, 'three tasks, three reasons — none inherited')
+  // shock and note-format are now reviewable; only summary requires an assembled record.
+  assert.deepEqual([...reasons.keys()].sort(), ['summary'])
+  assert.equal(new Set(reasons.values()).size, 1, 'one remaining unreviewable task')
 })
 
 // --- medprotocol: the delegation, and the line it must not cross -----------------------------
@@ -931,6 +933,52 @@ test('MAP and shock index are computed from the parsed vitals', () => {
  */
 test('a medprotocol error is refused rather than read as a result', () => {
   assert.throws(() => evaluateVitals(mp, { systolic: NaN, diastolic: NaN }, 80), /medprotocol refused/)
+})
+
+// --- Deterministic shock confirmation --------------------------------------------------------
+
+/**
+ * The confirmation criteria: systolic < 90 OR shock index > 0.7.
+ * Either criterion alone confirms shock, catching both overt hypotension and early
+ * compensated shock where pressure is maintained by tachycardia.
+ */
+
+/** Overt hypotension confirms regardless of shock index. */
+test('confirmShock: systolic below 90 confirms shock', () => {
+  // heart_rate 50 gives shock index 0.625 (< 0.7), so only the systolic criterion fires
+  const c = confirmShock(exam({ hypotension: { systolic: 80, diastolic: 50, duration_minutes: 60 }, heart_rate: 50 }), mp, rule)
+  assert.equal(c.confirmed, true)
+  assert.equal(c.systolic, 80)
+  assert.equal(c.shockIndex, 0.625)
+  assert.match(c.reason, /systolic 80 < 90 mmHg/)
+})
+
+/** Compensated shock: pressure maintained by tachycardia, shock index > 0.7. */
+test('confirmShock: shock index above 0.7 confirms even with normal BP', () => {
+  const c = confirmShock(exam({ hypotension: { systolic: 100, diastolic: 60, duration_minutes: 60 }, heart_rate: 80 }), mp, rule)
+  assert.equal(c.confirmed, true)
+  assert.equal(c.systolic, 100)
+  assert.equal(c.shockIndex, 0.8)
+  assert.match(c.reason, /shock index 0.8 > 0.7/)
+})
+
+/** Both criteria together confirm and the reason names both. */
+test('confirmShock: both criteria together name both in the reason', () => {
+  const c = confirmShock(exam({ hypotension: { systolic: 80, diastolic: 50, duration_minutes: 60 }, heart_rate: 118 }), mp, rule)
+  assert.equal(c.confirmed, true)
+  assert.equal(c.systolic, 80)
+  assert.equal(c.shockIndex, 1.475)
+  assert.match(c.reason, /systolic 80 < 90 mmHg/)
+  assert.match(c.reason, /shock index 1.475 > 0.7/)
+})
+
+/** Neither criterion met: no shock. */
+test('confirmShock: neither criterion met means no shock', () => {
+  const c = confirmShock(exam({ hypotension: { systolic: 120, diastolic: 80, duration_minutes: 60 }, heart_rate: 72 }), mp, rule)
+  assert.equal(c.confirmed, false)
+  assert.equal(c.systolic, 120)
+  assert.equal(c.shockIndex, 0.6)
+  assert.equal(c.reason, 'no shock criteria met')
 })
 
 /** The declared version is enforced: a different build is a different rule. */

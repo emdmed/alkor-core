@@ -1,2 +1,29 @@
+# Dependencies & logs
 node_modules/
 *.log
+
+# Generated eval outputs & reports
+eval/
+*.html
+shock_eval.txt
+
+# Workspace / planning scratch files
+next_steps.md
+k3_project_analysis.md
+clinical_routing_plan.md
+shock_siagnostic_test.md
+
+# Editor / tool artifacts
+.claude/
+.impeccable/
+.env
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# TypeScript / test artifacts
+*.tsbuildinfo
+coverage/

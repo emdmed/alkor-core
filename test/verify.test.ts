@@ -110,3 +110,12 @@ test('a connective the model added is an introduction, however harmless it reads
 test('with the rule off, nothing is checked — and the pack has to say so', () => {
   assert.deepEqual(verifyDerivation('anything at all', QUOTE, { deletionOnly: false }), { ok: true })
 })
+
+test('NFC/NFD equivalent text is treated as identical', () => {
+  const nfc = 'Presión arterial 138/86 mmHg, frecuencia 82 lpm.'
+  const nfd = 'Presio\u0301n arterial 138/86 mmHg, frecuencia 82 lpm.'
+  assert.equal(verifyQuote('Presión arterial 138/86', nfc, RULE).ok, true, 'NFC quote against NFC document')
+  assert.equal(verifyQuote('Presión arterial 138/86', nfd, RULE).ok, true, 'NFC quote against NFD document')
+  assert.equal(verifyQuote('Presio\u0301n arterial 138/86', nfc, RULE).ok, true, 'NFD quote against NFC document')
+  assert.equal(verifyQuote('Presion arterial 138/86', nfd, RULE).drift, 'accent')
+})

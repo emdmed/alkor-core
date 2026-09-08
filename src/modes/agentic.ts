@@ -19,7 +19,7 @@
  *    inference at local speeds. So consecutive prose replies are capped separately from
  *    the step cap, and they end the loop with their own outcome.
  */
-import { toolChat, type ToolCall, type Usage } from '../core/client.ts'
+import { toolChat, type Provider, type ToolCall, type Usage } from '../core/client.ts'
 import { toolSpecs, dispatchCall, type ToolDef } from '../core/tools.ts'
 import type { Trace } from '../core/trace.ts'
 
@@ -41,6 +41,8 @@ export interface AgenticOptions {
   trace?: Trace
   /** Transport seam, so the loop can be tested without a server. Defaults to the real one. */
   chat?: typeof toolChat
+  /** A custom LLM provider; defaults to the built-in HTTP client. */
+  provider?: Provider
 }
 
 export interface AgenticResult {
@@ -71,7 +73,7 @@ export interface AgenticResult {
 export const runAgent = async (o: AgenticOptions): Promise<AgenticResult> => {
   const maxSteps = o.maxSteps ?? 12
   const maxProseReplies = o.maxProseReplies ?? 2
-  const chat = o.chat ?? toolChat
+  const chat = o.provider?.toolChat ?? o.chat ?? toolChat
   const byName = new Map(o.tools.map((t) => [t.name, t]))
   const specs = toolSpecs(o.tools)
   const terminalName = o.tools.find((t) => t.terminal)?.name

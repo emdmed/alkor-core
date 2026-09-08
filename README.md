@@ -79,6 +79,8 @@ src/core/     config.ts    profiles.toml — which profiles exist, and what each
 src/modes/    extract.ts   single-shot constrained extraction; one retry, transport only
               agentic.ts   the tool loop, for one task run to completion
               session.ts   the same loop, multi-turn, with a consent gate
+              router.ts    rule-based intent routing (clinical / coding / transcriptor / verifier)
+              pipeline.ts  multi-model orchestration: route → extract → verify
 src/profiles/ clinical/    the reference profile: four tasks, names no vital sign
                            settings.ts  what the pack declares, and the refusals that make
                                         a declaration worth trusting
@@ -87,10 +89,21 @@ src/profiles/ clinical/    the reference profile: four tasks, names no vital sig
                            review.ts    one note in, one reading out, provenance checked
                            eval.ts      vital signs over the corpus, scored and gated
                            set-eval.ts  summary, note-format, transcript: set extraction, cited
+                           clinical-router.ts  shape-based routing inside clinical (dialogue, dictation, exam-json, vitals-note, note)
+                           shock.ts     shock-category classification with rule-based reference arm
+                           router-eval.ts   60-case confusion-matrix eval for the clinical router
+                           shock-eval.ts    20-case eval for shock category
+                           review-note-format.ts   post-processing for note-format
+                           review-shock.ts       post-processing for shock
               coding/      the agentic worked example: six tools, no pack
-packs/        clinical/    the reference pack — 3 prompts, 3 schemas + goldens, 29 notes
+              router/      the top-level router profile: rule-based + model fallback
+              verifier/    the verification specialist: checks extraction for hallucinations
+              clinical-pipeline/   the 3-step pipeline: router → extract → verify
+packs/        clinical/    the reference pack — 4 prompts, 4 schemas + goldens, 59 notes
+              verifier/    the verifier contract pack (prompt + schema + cases)
+scripts/      model-manager.ts   start/stop/status llama-server per profile
 src/index.ts  the public API — what a profile is written against
-src/cli.ts    extract, eval, agent, profiles
+src/cli.ts    extract, eval, agent, route, pipeline, profiles
 profiles.toml the only file that may name a project outside this repository
 ```
 
@@ -98,6 +111,8 @@ The swappable unit is the **execution mode**, not the toolset:
 
 - **`extract`** — single-shot constrained output over one document. No tool loop.
 - **`agentic`** — a tool-calling loop.
+- **`router`** — rule-based classification with an optional model fallback.
+- **`pipeline`** — multi-model orchestration: chain profiles, route outputs between steps.
 
 Extraction and agentic work are different shapes. Forcing extraction into an agent loop
 would be slower, less reliable, and much harder to validate.
@@ -193,6 +208,8 @@ nothing else, so deep imports are refused rather than quietly supported.
 
 ```bash
 npm test                # unit tests; pack-dependent tests SKIP when no pack is on disk
+npm run typecheck       # tsc --noEmit; Node strips types, so this is the real check
+npm run check           # npm test && npm run typecheck — what CI runs
 npm run profiles        # what is configured
 
 # start a server yourself — its flags are part of the measurement
@@ -200,6 +217,13 @@ LLAMA_PORT=8082 LLAMA_MODEL=~/models/Qwen3-4B-Q4_K_M.gguf scripts/llama-server.s
 
 node src/cli.ts eval  --profile coding
 node src/cli.ts agent --profile coding --task "fix the failing test" --workspace /tmp/wk
+
+# multi-model orchestration
+node src/cli.ts route    --profile router --input "dictated: BP 120/80, HR 72"
+node src/cli.ts pipeline --profile clinical-pipeline --input "ward-round.txt"
+
+# model manager — start/stop/status per profile
+node scripts/model-manager.ts status
 ```
 
 ### Extracting from one note
@@ -265,6 +289,25 @@ model will edit the file correctly and then emit the literal text `done` rather 
 calling `done`. One nudge recovers an accidental omission; a second identical reply means
 it will not be recovered, so the loop stops instead of re-nudging until the step cap.
 
+### Routing and pipeline
+
+The **router** (`src/modes/router.ts`) is a rule-based classifier with an optional model
+fallback. It decides which specialist profile should handle a given input — clinical,
+coding, transcriptor, or verifier — measured at 98.1% accuracy on a 54-case adversarial
+corpus (see `next_steps.md`).
+
+The **clinical internal router** (`src/profiles/clinical/clinical-router.ts`) runs *before*
+any GPU call, selecting the right sub-task (`vital-signs`, `transcript`, `summary`,
+`note-format`, `shock`) based on input shape: dialogue, dictation, exam JSON, vitals
+prose, or plain note. It is purely rule-based, zero GPU cost, and measured at 100% on 60
+cases.
+
+The **pipeline** (`src/modes/pipeline.ts`) chains these together: route → extract → verify.
+Each step names a profile and an input reference (`initial`, `step-0`, `step-1.raw`, etc.),
+and the harness passes outputs from one step to the next. See `profiles.toml` for the
+`clinical-pipeline` definition and `src/profiles/clinical-pipeline/` for the fidelity eval
+that compares three arms (monolith, specialist, verified) against each other.
+
 ## Traces
 
 Every run writes JSONL to `${XDG_STATE_HOME:-~/.local/state}/medextract/traces/<profile>/`
@@ -281,7 +324,8 @@ node src/cli.ts eval --profile clinical --constrain                     # vital-
 node src/cli.ts eval --profile clinical --constrain --task summary      # a whole record in, three lists out
 node src/cli.ts eval --profile clinical --constrain --task note-format  # one note, four sections, every item cited
 node src/cli.ts eval --profile clinical --constrain --task transcript   # a dictation, sorted into the same four
-node src/cli.ts eval --profile clinical --constrain --task all          # the four, each gated on its own floor
+node src/cli.ts eval --profile clinical --constrain --task shock        # a JSON exam payload, category + residue
+node src/cli.ts eval --profile clinical --constrain --task all          # the five, each gated on its own floor
 ```
 
 | task | input | what it returns | gate |
@@ -290,6 +334,7 @@ node src/cli.ts eval --profile clinical --constrain --task all          # the fo
 | `summary` | a **record**: several notes assembled into one message | three bounded sets — history, usual medication, pending | item recall ≥ 80% |
 | `note-format` | one note | four sections; every item carries a `quote` and a derived `text` | item recall ≥ 75%, **plus** provenance ≥ 90%, derivation ≥ 90% and *nothing invented* (100%) |
 | `transcript` | one **dictated transcript** — speech, out of order, correcting itself | the same four sections, same `quote` and `text` | item recall ≥ 65%, same three sub-gates at 85 / 85 / 100% — **provisional, unmeasured** |
+| `shock` | one **JSON exam payload** — vital signs, capillary refill, mental status | category + `indeterminate_reason` + agreement with rule-based reference | agreement ≥ 70%, concordance ≥ 80%, coverage ≥ 90%, format valid 100%, schema valid 100% |
 
 Three things about this arrangement are the reason it is worth having, and none of them are
 visible in a single-task pack:
@@ -299,7 +344,8 @@ note-format cases name a case in the vital-signs corpus and read *that* note: 30
 three tasks, and a note fixed once is fixed for all of them. The summary task brings its own
 documents because its unit of input is a patient rather than an encounter. The transcript task
 brings its own because a dictation is not a note — the pack declares a second `documents` kind
-for it (spec 3) rather than filing speech under a filename that calls it prose.
+for it (spec 3) rather than filing speech under a filename that calls it prose. The shock task
+brings its own because a JSON payload is not prose — the pack declares an `exams` kind for it.
 
 **One structure, two inputs.** `transcript` sends the *note-format schema*, byte for byte,
 under its own `json_schema.name`. A clinician reads one structure, and a second schema for it
@@ -403,11 +449,10 @@ a grade, because averaging N identical replies at temperature 0 is arithmetic on
 ## Measured
 
 **These numbers are from a corpus that no longer exists.** They were measured on 21 notes / 88
-graded slots; the corpus is now 30 / 132, the summary task 10 records / 56 items, note
-formatting 15 notes / 47 items, and `value` and `unit` have become sub-gates at 95% — a floor
-the 81/88 unit row below fails. The table is kept because it is the evidence those changes
-were made from, not as a current result; `packs/clinical/RESULTS.md` says so at the top and a
-re-run on the current corpus has not been made. What follows describes the run as it was.
+graded slots; the corpus is now 59 / 132 + 103 required items, the summary task 10 records / 56
+items, note formatting 15 notes / 47 items, transcript 15 / 47, shock 20 / 20, and `value` and
+`unit` have become sub-gates at 95% — a floor the 81/88 unit row below fails. The table is kept
+because it is the evidence those changes were made from, not as a current result; `packs/clinical/RESULTS.md` says so at the top and a re-run on the current corpus has not been made. What follows describes the run as it was.
 
 21 notes / 88 graded slots for `vital-signs`, 3 records / 13 items for `summary`, 6 notes /
 18 items for `note-format`. Temperature 0, `seed` 0, caps from the pack, one run per case, on
@@ -541,6 +586,11 @@ longer exists, so an entry there gets a new date rather than an edit.
 | two models re-measured on the extended corpus | done — see `RESULTS.md` |
 | offline re-scoring (`eval --from-trace`) | done, tested — a claim about a past run is checkable |
 | typecheck and CI | done — `npm test && npm run typecheck` on every push |
+| router (intent classification, 98.1% on 54 cases) | done, tested |
+| clinical internal router (shape-based, 100% on 60 cases) | done, tested |
+| shock category contract (20 cases, rule-based reference arm) | done, tested |
+| verifier (30 cases, 100% catch, 0% FP on 4B model) | done, tested |
+| pipeline fidelity eval (monolith vs specialist vs verified) | done, tested |
 | both models re-measured on the grown corpus | next — the entry `RESULTS.md` is waiting for |
 | `validate` verb | planned |
 

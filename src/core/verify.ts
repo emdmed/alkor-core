@@ -82,7 +82,10 @@ const stripAccents = (s: string): string => s.normalize('NFD').replace(/\p{Mn}/g
  * could emit.
  */
 export const verifyQuote = (quote: string, document: string, rule: QuoteRule): QuoteVerdict => {
-  const prepare = (s: string) => (rule.collapseWhitespace ? collapse(s) : s)
+  const prepare = (s: string) => {
+    const n = s.normalize('NFC')
+    return rule.collapseWhitespace ? collapse(n) : n
+  }
   const q = prepare(quote)
   const doc = prepare(document)
   if (!q) return { ok: false, drift: 'absent' }

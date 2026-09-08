@@ -110,11 +110,11 @@ test('an invented tool is reported back to the model rather than ending the run'
 
 test('a transport failure ends the run as an error, not as a step cap', async () => {
   const chat = async () => {
-    throw new Error('cannot reach llama-server')
+    throw new Error('cannot reach server')
   }
   const res = await runAgent({ systemPrompt: 's', task: 't', workspace: '/tmp', tools: noop(), chat: chat as any })
   assert.equal(res.stop, 'error')
-  assert.match(res.error!, /cannot reach llama-server/)
+  assert.match(res.error!, /cannot reach server/)
 })
 
 test('maxProseReplies of 1 gives up immediately, without a nudge', async () => {

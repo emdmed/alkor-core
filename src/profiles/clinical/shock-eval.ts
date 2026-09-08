@@ -22,6 +22,7 @@
  */
 import type { Pack } from '../../core/pack.ts'
 import type { Trace } from '../../core/trace.ts'
+import type { Provider } from '../../core/client.ts'
 import { identifyServer, UNIDENTIFIED, type ServerIdentity } from '../../core/client.ts'
 import { formatBench, summarizeBench, type BenchSample, type BenchSummary } from '../../core/bench.ts'
 import { formatStability, summarizeStability, type Observation } from '../../core/stability.ts'
@@ -53,6 +54,7 @@ export interface ShockEvalOptions {
   difficulty?: string
   identity?: ServerIdentity
   cachePrompt?: boolean
+  provider?: Provider
 }
 
 /** A percentage, or `n/a` when the denominator was zero. Never `(0/0) -> 100%`. */
@@ -164,6 +166,7 @@ export const runShockEval = async (o: ShockEvalOptions): Promise<TaskResult> => 
         baseUrl: o.baseUrl,
         cachePrompt,
         label: 'shock',
+        provider: o.provider,
       })
 
       const sample: BenchSample | undefined = outcome.cost.length

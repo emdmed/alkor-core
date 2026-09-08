@@ -10,9 +10,13 @@
  * different pack with the same file keys and it grades a different set of readings without
  * a line changing here — which is the property a project should copy when writing its own.
  */
+import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { ProfileError, type EvalContext, type EvalVerdict, type ProfileModule, type ReviewContext, type ReviewResult } from '../../core/profile.ts'
+import type { Provider } from '../../core/client.ts'
 import { identifyServer } from '../../core/client.ts'
 import type { Pack } from '../../core/pack.ts'
+import { PackError } from '../../core/pack.ts'
 import { runVitalSignsEval } from './eval.ts'
 import { runShockEval } from './shock-eval.ts'
 import { gatePasses, runNoteFormatEval, runSummaryEval, runTranscriptEval, type TaskResult } from './set-eval.ts'
@@ -20,8 +24,14 @@ import { loadSettings } from './settings.ts'
 import { TASKS, type Task } from './contracts.ts'
 import { clinicalRedactor } from './redact.ts'
 import { rescoreSummaryLine, rescoreTrace } from './rescore.ts'
+import { routeClinicalShape, type ClinicalRouteResult } from './clinical-router.ts'
 import { reviewVitalSigns, vitalDocumentNames } from './review.ts'
 import { reviewTranscript, transcriptDocumentNames } from './review-transcript.ts'
+import { reviewShock } from './review-shock.ts'
+import { shockDocumentNames } from './shock-eval.ts'
+import { reviewNoteFormat } from './review-note-format.ts'
+import { reviewShockExtraction, type ShockExtractionReviewOptions } from './review-shock-extraction.ts'
+import { runShockExtractionEval, shockExtractionDocumentNames } from './shock-extraction-eval.ts'
 
 export const PROFILE: ProfileModule = {
   name: 'clinical',
@@ -32,8 +42,13 @@ export const PROFILE: ProfileModule = {
    * below is: this pack holds two corpora that are not interchangeable, and a transcript is
    * not reachable by the name list the note tasks expose.
    */
-  documentNames: (pack: Pack, options?: Record<string, unknown>): string[] =>
-    reviewTask(options?.task) === 'transcript' ? transcriptDocumentNames(pack) : vitalDocumentNames(pack),
+  documentNames: (pack: Pack, options?: Record<string, unknown>): string[] => {
+    const task = reviewTask(options?.task)
+    if (task === 'transcript') return transcriptDocumentNames(pack)
+    if (task === 'shock') return shockDocumentNames(pack)
+    if (task === 'shock-extraction') return shockExtractionDocumentNames(pack)
+    return vitalDocumentNames(pack)
+  },
   /**
    * Trace redaction, decided by the PACK rather than by this file.
    *
@@ -60,25 +75,13 @@ export const PROFILE: ProfileModule = {
    * in the error so the refusal is a statement rather than a gap.
    */
   async review(ctx: ReviewContext): Promise<ReviewResult> {
-    const shared = {
-      pack: ctx.pack!,
-      baseUrl: ctx.baseUrl,
-      trace: ctx.trace,
-      constrain: Boolean(ctx.options.constrain),
-      input: ctx.input,
-      calculate: Boolean(ctx.options.calculate),
+    const contextDir = (ctx.options['context-dir'] ?? ctx.options.contextDir) as string | undefined
+
+    if (contextDir) {
+      return reviewWithCheckpoint(ctx, contextDir)
     }
-    const task = reviewTask(ctx.options.task)
-    // `--repair` reaches only the transcript task, and reads as unsupported rather than as
-    // ignored anywhere else: a flag that silently does nothing is a flag someone will report a
-    // number under.
-    if (task !== 'transcript') {
-      if (ctx.options.repair) {
-        throw new ProfileError("--repair applies to --task transcript; vital signs has no citation to repair")
-      }
-      return reviewVitalSigns(shared)
-    }
-    return reviewTranscript({ ...shared, repair: Boolean(ctx.options.repair) })
+
+    return reviewSingleStep(ctx)
   },
   async runEval(ctx: EvalContext): Promise<EvalVerdict> {
     const pack = ctx.pack!
@@ -116,7 +119,7 @@ export const PROFILE: ProfileModule = {
       cachePrompt: ctx.options.cachePrompt !== false,
       // Reaches the transcript eval and is ignored by the other three, which have no citation
       // to repair. Refused rather than ignored when the run asks for ONLY those tasks: a flag
-      // that silently did nothing is a flag somebody reports a number under.
+      // that quietly dropped a flag would report a number under.
       repair: Boolean(ctx.options.repair),
       // ON unless turned off, which is the opposite of `repair` and deliberately so: the
       // medication pass is part of what this pack says reading a dictation means, so an eval
@@ -124,6 +127,7 @@ export const PROFILE: ProfileModule = {
       // Measured over the seventeen dictations: recall 94% -> 96%, dose errors 3 -> 1,
       // hallucinations 4 -> 3, every gate clear.
       medicationPass: ctx.options.medicationPass !== false,
+      provider: ctx.provider,
     }
     const tasks = requestedTasks(ctx.options.task, loadSettings(pack).defaultTask)
     if (shared.repair && !tasks.includes('transcript')) {
@@ -143,6 +147,7 @@ export const PROFILE: ProfileModule = {
       // quietly dropped a flag would report a number under conditions the header names and
       // the run did not use.
       else if (task === 'shock') results.push(await runShockEval(shared))
+      else if (task === 'shock-extraction') results.push(await runShockExtractionEval(shared))
       else results.push(await runTranscriptEval(shared))
     }
 
@@ -178,35 +183,33 @@ export const PROFILE: ProfileModule = {
  * silently read vital signs would hand back a reading against a schema nobody asked for, and
  * it would look identical to a successful run of the task they wanted.
  */
-const REVIEW_TASKS = ['vital-signs', 'transcript'] as const
-
-const reviewTask = (requested: unknown): 'vital-signs' | 'transcript' => {
+const reviewTask = (requested: unknown): Task => {
   if (requested === undefined || requested === 'default') return 'vital-signs'
   const s = String(requested)
-  if ((REVIEW_TASKS as readonly string[]).includes(s)) return s as 'vital-signs' | 'transcript'
-  if ((TASKS as string[]).includes(s)) {
-    // A reason PER TASK rather than one sentence with a default. Written as a map because the
-    // fallback arm of a ternary is how a fourth task inherits the third's excuse: `shock` did
-    // exactly that for as long as it took to run the command — it was told it reads the same
-    // notes vital signs reads, which is false about the one task in this pack that reads no
-    // notes at all. An unreachable task that misdescribes itself is worse than one that says
-    // nothing, because the sentence is what the reader acts on.
-    const why: Record<string, string> = {
-      summary:
-        'its input is a whole record assembled from many notes, not one document — ' +
-        'run `eval --task summary` instead',
-      'note-format':
-        'it reads the same notes vital signs reads, and `extract --task vital-signs --case NAME` reaches them',
-      shock:
-        'its input is a physical-examination payload rather than a document, so there is nothing ' +
-        'for --note or --stdin to carry — run `eval --task shock` over the corpus in packs/*/exams/',
-    }
-    throw new ProfileError(
-      `--task '${s}' is a graded task but not a reviewable one: ` +
-        (why[s] ?? 'it has no single-document input this command can be pointed at'),
-    )
+  if ((TASKS as string[]).includes(s)) return s as Task
+  throw new ProfileError(`unknown --task '${s}' for extract (expected ${TASKS.join(', ')})`)
+}
+
+/**
+ * Load a case document for routing, trying the default kind first, then transcript, then exam.
+ */
+const resolveCaseDocument = (pack: Pack, caseName: string): string => {
+  try {
+    return pack.document(caseName)
+  } catch (e) {
+    if (!(e instanceof PackError)) throw e
   }
-  throw new ProfileError(`unknown --task '${s}' for extract (expected ${REVIEW_TASKS.join(', ')})`)
+  try {
+    return pack.document(caseName, 'transcript')
+  } catch (e) {
+    if (!(e instanceof PackError)) throw e
+  }
+  try {
+    return pack.document(caseName, 'exam')
+  } catch (e) {
+    if (!(e instanceof PackError)) throw e
+  }
+  throw new ProfileError(`pack '${pack.name}' has no document for case '${caseName}'`)
 }
 
 /**
@@ -225,6 +228,129 @@ const requestedTasks = (requested: unknown, fallback: string): Task[] => {
 const asTask = (s: string): Task => {
   if ((TASKS as string[]).includes(s)) return s as Task
   throw new ProfileError(`unknown --task '${s}' (expected ${TASKS.join(', ')}, all, or default)`)
+}
+
+// --- Review helpers ------------------------------------------------------------------------
+
+const resolveInputText = (ctx: ReviewContext): string => {
+  if (ctx.input.kind === 'text') return ctx.input.text
+  return resolveCaseDocument(ctx.pack!, ctx.input.name)
+}
+
+const executeClinicalTask = async (ctx: ReviewContext, shared: { pack: Pack; baseUrl?: string; trace: ReviewContext['trace']; constrain: boolean; input: ReviewContext['input']; calculate: boolean; provider?: Provider }, task: Task): Promise<ReviewResult> => {
+  if (task !== 'transcript' && ctx.options.repair) {
+    throw new ProfileError(`--repair applies to --task transcript; ${task} has no citation to repair`)
+  }
+
+  if (task === 'vital-signs') return reviewVitalSigns(shared)
+  if (task === 'transcript') return reviewTranscript({ ...shared, repair: Boolean(ctx.options.repair) })
+  if (task === 'shock') return reviewShock({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider })
+  if (task === 'shock-extraction') return reviewShockExtraction({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider })
+  if (task === 'note-format') return reviewNoteFormat({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider })
+
+  throw new ProfileError(
+    `--task '${task}' is a graded task but not a reviewable one: ` +
+      'its input is a whole record assembled from many notes, not one document — ' +
+      'run `eval --task summary` instead',
+  )
+}
+
+const reviewSingleStep = async (ctx: ReviewContext): Promise<ReviewResult> => {
+  const shared = {
+    pack: ctx.pack!,
+    baseUrl: ctx.baseUrl,
+    trace: ctx.trace,
+    constrain: Boolean(ctx.options.constrain),
+    input: ctx.input,
+    calculate: Boolean(ctx.options.calculate),
+    provider: ctx.provider,
+  }
+
+  let task: Task
+  if (ctx.options.task === undefined || ctx.options.task === 'default') {
+    const text = resolveInputText(ctx)
+    const route = routeClinicalShape(text, loadSettings(ctx.pack!).defaultTask)
+    ctx.trace.write({
+      event: 'route',
+      kind: 'clinical',
+      shape: route.shape,
+      task: route.task,
+      confidence: route.confidence,
+      reason: route.reason,
+    })
+    task = route.task
+  } else {
+    task = reviewTask(ctx.options.task)
+  }
+
+  return executeClinicalTask(ctx, shared, task)
+}
+
+/**
+ * Checkpointed review: the clinical profile splits into two logical steps —
+ * route (step 0) and execute (step 1) — both persisted to `contextDir/clinical/`.
+ *
+ * This lets local models speak to each other by leaving state on disk: the router
+ * writes `route.json`, then the executor (possibly on a different model load) reads
+ * it and writes `result.json`. A caller can resume after a crash, swap a model, or
+ * inspect the intermediate decision.
+ */
+const reviewWithCheckpoint = async (ctx: ReviewContext, contextDir: string): Promise<ReviewResult> => {
+  const clinicalDir = join(contextDir, 'clinical')
+  mkdirSync(clinicalDir, { recursive: true })
+
+  const routeFile = join(clinicalDir, 'route.json')
+  const resultFile = join(clinicalDir, 'result.json')
+
+  // Resume from a fully cached run.
+  if (existsSync(resultFile)) {
+    return JSON.parse(readFileSync(resultFile, 'utf8')) as ReviewResult
+  }
+
+  // Caller explicitly named a task — skip the router and use it directly.
+  let task: Task
+  let text: string
+  if (ctx.options.task !== undefined && ctx.options.task !== 'default') {
+    task = reviewTask(ctx.options.task)
+    text = resolveInputText(ctx)
+  } else {
+    // Resolve or resume the route.
+    let route: ClinicalRouteResult
+    if (existsSync(routeFile)) {
+      const cached = JSON.parse(readFileSync(routeFile, 'utf8')) as { route: ClinicalRouteResult; text: string }
+      route = cached.route
+      text = cached.text
+    } else {
+      text = resolveInputText(ctx)
+      route = routeClinicalShape(text, loadSettings(ctx.pack!).defaultTask)
+      ctx.trace.write({
+        event: 'route',
+        kind: 'clinical',
+        shape: route.shape,
+        task: route.task,
+        confidence: route.confidence,
+        reason: route.reason,
+      })
+      writeFileSync(routeFile, JSON.stringify({ route, text }, null, 2))
+    }
+    task = route.task
+  }
+
+  const shared = {
+    pack: ctx.pack!,
+    baseUrl: ctx.baseUrl,
+    trace: ctx.trace,
+    constrain: Boolean(ctx.options.constrain),
+    input: ctx.input.kind === 'text' ? ctx.input : ({ kind: 'text', text, label: ctx.input.name } as ReviewContext['input']),
+    calculate: Boolean(ctx.options.calculate),
+    provider: ctx.provider,
+  }
+
+  const result = await executeClinicalTask(ctx, shared, task)
+  // Only cache successful results so a transient failure (network, model not loaded)
+  // can be retried on the next run without re-routing.
+  if (result.ok) writeFileSync(resultFile, JSON.stringify(result, null, 2))
+  return result
 }
 
 /** The vital-signs eval, in the shape the other two already return. */

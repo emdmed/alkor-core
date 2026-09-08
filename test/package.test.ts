@@ -42,12 +42,16 @@ const CONTRACT = [
   'openTrace',
   'stateRoot',
   // transport
+  'chat',
   'llamaChat',
   'toolChat',
   'streamChat',
+  'ChatError',
   'LlamaError',
+  'DEFAULT_URL',
   'LLAMA_DEFAULT_URL',
   'serverProps',
+  'defaultProvider',
   // what a run cost
   'summarizeBench',
   'formatBench',
@@ -117,6 +121,7 @@ test('importing the package costs nothing', () => {
   // harness needs to be able to say what changed, and re-deriving that from release notes is
   // how two runtimes come to disagree about one format.
   assert.ok(medextract.specGap(1).length > 0)
+  assert.equal(typeof medextract.DEFAULT_URL, 'string')
   assert.equal(typeof medextract.LLAMA_DEFAULT_URL, 'string')
   assert.equal(medextract.envSuffix('note-format'), 'NOTE_FORMAT')
 })

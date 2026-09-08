@@ -22,6 +22,7 @@ import { pathToFileURL } from 'node:url'
 import type { Pack } from './pack.ts'
 import type { ToolDef } from './tools.ts'
 import { CONFIG_NAME, envSuffix, type Mode, type ProfileConfig } from './config.ts'
+import type { Provider } from './client.ts'
 import type { Redactor, Trace } from './trace.ts'
 
 const envKey = (name: string) => `PROFILE_MODULE_${envSuffix(name)}`
@@ -34,6 +35,8 @@ export interface EvalContext {
   trace: Trace
   /** Everything else the CLI collected: --runs, --constrain, and so on. */
   options: Record<string, unknown>
+  /** A custom LLM provider; defaults to the built-in HTTP client. */
+  provider?: Provider
 }
 
 export interface EvalVerdict {
@@ -131,6 +134,8 @@ export interface ReviewContext {
    */
   input: { kind: 'case'; name: string } | { kind: 'text'; text: string; label?: string }
   options: Record<string, unknown>
+  /** A custom LLM provider; defaults to the built-in HTTP client. */
+  provider?: Provider
 }
 
 export interface ReviewResult {

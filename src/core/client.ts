@@ -1,5 +1,5 @@
 /**
- * llama-server transport: one POST to /v1/chat/completions.
+ * LLM transport: one POST to /v1/chat/completions.
  *
  * The sampler settings here are fixed rather than configurable, and that is the point.
  * When a second runtime evaluates the same model against the same contract pack, any
@@ -25,7 +25,8 @@
 import { Agent, fetch } from 'undici'
 import type { BenchConditions, Timings } from './bench.ts'
 
-export const LLAMA_DEFAULT_URL = 'http://127.0.0.1:8080'
+export const DEFAULT_URL = 'http://127.0.0.1:8080'
+export const LLAMA_DEFAULT_URL = DEFAULT_URL
 
 /** Generous: a quantized model on CPU can spend minutes on the long JSON these ask for. */
 const TIMEOUT_MS = 900_000
@@ -143,9 +144,14 @@ export interface ChatOptions {
   cachePrompt?: boolean
   signal?: AbortSignal
   /**
+   * Override the default `chat_template_kwargs` (e.g. to enable thinking for a profile
+   * that needs it). Defaults to `{ enable_thinking: false }`.
+   */
+  chatTemplateKwargs?: Record<string, unknown>
+  /**
    * Sink for what the completion cost. Called once, on success only.
    *
-   * A sink rather than a changed return type: `llamaChat` returns the completion string
+   * A sink rather than a changed return type: `chat` returns the completion string
    * and is exported to out-of-tree profiles, so widening it would break every caller to
    * serve the ones that care. Nothing in the REQUEST changes when this is passed — the
    * server returns `timings` unasked on the non-streamed path, so a measured run and an
@@ -154,7 +160,9 @@ export interface ChatOptions {
   onMetrics?(m: { timings?: Timings; usage?: Usage; wallMs: number; finishReason?: string }): void
 }
 
-export class LlamaError extends Error {}
+export class ChatError extends Error {}
+
+export { ChatError as LlamaError }
 
 // Re-exported through this module's own surface: a caller reading timings off a completion
 // is already importing the transport, and a second import path for the shape it gets back
@@ -167,7 +175,7 @@ export type { BenchConditions, Timings } from './bench.ts'
  * There is no second way to get this right. A `text.length / 4` estimate is off by enough on
  * tool-heavy JSON to be misleading in exactly the situation the number exists for — deciding
  * whether the next question fits — and every tokeniser differs, so the harness cannot hold a
- * table of its own. llama-server already counts this per request; the only work is asking for
+ * table of its own. The server already counts this per request; the only work is asking for
  * it and carrying it back.
  *
  * `promptTokens` is the WHOLE conversation as the server saw it, not the newest message.
@@ -194,7 +202,7 @@ const readUsage = (u: any): Usage | undefined => {
 }
 
 /**
- * llama-server's own `timings`, normalised.
+ * The server's own `timings`, normalised.
  *
  * Non-standard — an OpenAI envelope has no such field — so it is read defensively and a
  * server that omits it yields undefined rather than zeros. Zeros would be worse than a gap:
@@ -233,7 +241,7 @@ export interface ToolChatOptions {
 /**
  * The tool fields, present only when there are tools.
  *
- * An EMPTY `tools: []` is not the same request as no `tools` field at all. llama-server
+ * An EMPTY `tools: []` is not the same request as no `tools` field at all. The server
  * takes the presence of the field as a request to apply the template's tool syntax, so a
  * toolless conversation would be handed the scaffolding for calls it can never make — and
  * on a model whose template has no tool support at all (gemma-3, a common choice for
@@ -246,7 +254,7 @@ const toolFields = (tools: unknown[]): Record<string, unknown> =>
 
 /**
  * Tool-calling variant. Requires the server to be started with `--jinja`, which is what
- * makes llama-server apply the model's own chat template and parse tool calls back out of
+ * makes the server apply the model's own chat template and parse tool calls back out of
  * the completion. Without it the `tools` field is ignored and the model answers in prose.
  *
  * Temperature stays at 0: tool selection is a decision, not a place we want diversity.
@@ -254,7 +262,7 @@ const toolFields = (tools: unknown[]): Record<string, unknown> =>
 export const toolChat = async (
   o: ToolChatOptions,
 ): Promise<{ content: string | null; toolCalls: ToolCall[]; usage?: Usage }> => {
-  const baseUrl = (o.baseUrl ?? process.env.LLAMA_URL ?? LLAMA_DEFAULT_URL).replace(/\/+$/, '')
+  const baseUrl = (o.baseUrl ?? process.env.LLAMA_URL ?? DEFAULT_URL).replace(/\/+$/, '')
   const url = `${baseUrl}/v1/chat/completions`
 
   let res: Response
@@ -276,18 +284,18 @@ export const toolChat = async (
       dispatcher,
     })
   } catch (e) {
-    throw new LlamaError(
-      `cannot reach llama-server at ${baseUrl} for ${o.label}: ${(e as Error).message} — ` +
-        'start it with `scripts/llama-server.sh` (it must be started with --jinja for tool calls)',
+    throw new ChatError(
+      `cannot reach server at ${baseUrl} for ${o.label}: ${(e as Error).message} — ` +
+        'check the server is running and reachable, and --jinja is enabled for tool calls',
     )
   }
   if (!res.ok) {
-    throw new LlamaError(`llama-server (${o.label}) returned HTTP ${res.status}: ${await res.text().catch(() => '')}`)
+    throw new ChatError(`server (${o.label}) returned HTTP ${res.status}: ${await res.text().catch(() => '')}`)
   }
 
   const envelope = (await res.json()) as any
   if (envelope?.error) {
-    throw new LlamaError(`llama-server (${o.label}) error: ${envelope.error.message ?? 'unknown error'}`)
+    throw new ChatError(`server (${o.label}) error: ${envelope.error.message ?? 'unknown error'}`)
   }
   const msg = envelope?.choices?.[0]?.message
   // A non-streamed envelope carries `usage` unasked — no request-body change here, so the
@@ -341,7 +349,7 @@ export interface StreamResult {
  * Returns the same shape `toolChat` does, so a loop can use either without caring.
  */
 export const streamChat = async (o: StreamChatOptions): Promise<StreamResult> => {
-  const baseUrl = (o.baseUrl ?? process.env.LLAMA_URL ?? LLAMA_DEFAULT_URL).replace(/\/+$/, '')
+  const baseUrl = (o.baseUrl ?? process.env.LLAMA_URL ?? DEFAULT_URL).replace(/\/+$/, '')
   const url = `${baseUrl}/v1/chat/completions`
   const timeout = AbortSignal.timeout(TIMEOUT_MS)
   const signal = o.signal ? AbortSignal.any([o.signal, timeout]) : timeout
@@ -374,15 +382,15 @@ export const streamChat = async (o: StreamChatOptions): Promise<StreamResult> =>
     })
   } catch (e) {
     if (o.signal?.aborted) return { content: null, toolCalls: [], chunks: 0, aborted: true }
-    throw new LlamaError(
-      `cannot reach llama-server at ${baseUrl} for ${o.label}: ${(e as Error).message} — ` +
-        'start it with `scripts/llama-server.sh` (it must be started with --jinja for tool calls)',
+    throw new ChatError(
+      `cannot reach server at ${baseUrl} for ${o.label}: ${(e as Error).message} — ` +
+        'check the server is running and reachable, and --jinja is enabled for tool calls',
     )
   }
   if (!res.ok) {
-    throw new LlamaError(`llama-server (${o.label}) returned HTTP ${res.status}: ${await res.text().catch(() => '')}`)
+    throw new ChatError(`server (${o.label}) returned HTTP ${res.status}: ${await res.text().catch(() => '')}`)
   }
-  if (!res.body) throw new LlamaError(`llama-server (${o.label}) returned no body to stream`)
+  if (!res.body) throw new ChatError(`server (${o.label}) returned no body to stream`)
 
   const acc = newStreamState()
   const reader = res.body.getReader()
@@ -415,8 +423,8 @@ export const streamChat = async (o: StreamChatOptions): Promise<StreamResult> =>
     // conversation keeps the partial assistant message it already displayed.
     if (o.signal?.aborted) return { ...finishStream(acc), aborted: true }
     // An error the server itself reported already names the cause; do not bury it.
-    if (e instanceof LlamaError) throw e
-    throw new LlamaError(`llama-server (${o.label}) stream failed: ${(e as Error).message}`)
+    if (e instanceof ChatError) throw e
+    throw new ChatError(`server (${o.label}) stream failed: ${(e as Error).message}`)
   } finally {
     o.signal?.removeEventListener('abort', onAbort)
     reader.cancel().catch(() => {})
@@ -456,7 +464,7 @@ const feedStreamFrame = (acc: StreamState, frame: string, o: StreamChatOptions):
       continue
     }
     if (chunk?.error) {
-      throw new LlamaError(`llama-server (${o.label}) error: ${chunk.error.message ?? 'unknown error'}`)
+      throw new ChatError(`server (${o.label}) error: ${chunk.error.message ?? 'unknown error'}`)
     }
 
     // BEFORE the delta guard, not after. The usage frame is the one frame with an EMPTY
@@ -524,7 +532,7 @@ const finishStream = (acc: StreamState): StreamResult => ({
  * undefined rather than an error. Failing a run over a label would be worse than recording
  * that the label was unavailable.
  */
-export const serverModel = async (baseUrl: string = LLAMA_DEFAULT_URL): Promise<string | undefined> => {
+export const serverModel = async (baseUrl: string = DEFAULT_URL): Promise<string | undefined> => {
   try {
     const res = await fetch(`${baseUrl.replace(/\/$/, '')}/v1/models`, { dispatcher })
     if (!res.ok) return undefined
@@ -544,7 +552,7 @@ export const serverModel = async (baseUrl: string = LLAMA_DEFAULT_URL): Promise<
  * wrong the first time those differ. Best effort — an older server, or a build with
  * `--no-props`, yields undefined rather than failing a run over a label.
  */
-export const serverProps = async (baseUrl: string = LLAMA_DEFAULT_URL): Promise<BenchConditions | undefined> => {
+export const serverProps = async (baseUrl: string = DEFAULT_URL): Promise<BenchConditions | undefined> => {
   try {
     const res = await fetch(`${baseUrl.replace(/\/$/, '')}/props`, { dispatcher })
     if (!res.ok) return undefined
@@ -603,7 +611,7 @@ export const identifyServer = async (baseUrl?: string): Promise<ServerIdentity> 
     props,
     identified: Boolean(model),
     warning: missing.length
-      ? `the server at ${baseUrl ?? LLAMA_DEFAULT_URL} would not say ${missing.join(' or ')} — ` +
+      ? `the server at ${baseUrl ?? DEFAULT_URL} would not say ${missing.join(' or ')} — ` +
         (model
           ? 'the correctness numbers below stand, but any SPEED quoted from this run names no conditions'
           : 'a number from this run cannot be attributed to a model and should not be quoted as one')
@@ -614,14 +622,14 @@ export const identifyServer = async (baseUrl?: string): Promise<ServerIdentity> 
 /**
  * The request body, built and not sent.
  *
- * Extracted from `llamaChat` so the pinned body can be INSPECTED without running a model. The
+ * Extracted from `chat` so the pinned body can be INSPECTED without running a model. The
  * body is pinned precisely so a second runtime can be compared against it field for field, and
  * a pin whose only witness is a live server is a pin nobody checks: the comparison would cost a
  * 2.5 GB download and a warm GPU, so it would be run once and then trusted.
  *
  * `scripts/pin-body.ts` prints this, and the Rust runtime in the desktop app asserts byte
  * equality against what it prints. Nothing about the request changed when this was lifted out —
- * `llamaChat` calls it, so there is one body rather than a body and a description of one.
+ * `chat` calls it, so there is one body rather than a body and a description of one.
  */
 export const chatBody = (o: ChatOptions): Record<string, unknown> => {
   const body: Record<string, unknown> = {
@@ -655,7 +663,7 @@ export const chatBody = (o: ChatOptions): Record<string, unknown> => {
     // Sized for a grammar that cannot stop mid-array — see MAX_TOKENS_EXTRACTION. A
     // profile may substitute the cap its pack owner actually runs; see ChatOptions.
     max_tokens: o.maxTokens ?? MAX_TOKENS_EXTRACTION,
-    chat_template_kwargs: NO_THINKING,
+    chat_template_kwargs: { ...NO_THINKING, ...o.chatTemplateKwargs },
     messages: [
       { role: 'system', content: o.systemPrompt },
       { role: 'user', content: o.userPrompt },
@@ -670,8 +678,8 @@ export const chatBody = (o: ChatOptions): Record<string, unknown> => {
   return body
 }
 
-export const llamaChat = async (o: ChatOptions): Promise<string> => {
-  const baseUrl = (o.baseUrl ?? process.env.LLAMA_URL ?? LLAMA_DEFAULT_URL).replace(/\/+$/, '')
+export const chat = async (o: ChatOptions): Promise<string> => {
+  const baseUrl = (o.baseUrl ?? process.env.LLAMA_URL ?? DEFAULT_URL).replace(/\/+$/, '')
   const url = `${baseUrl}/v1/chat/completions`
   const body = chatBody(o)
 
@@ -694,27 +702,27 @@ export const llamaChat = async (o: ChatOptions): Promise<string> => {
     })
   } catch (e) {
     // REQ-LOCAL-4: name the endpoint and how to fix it, never a bare transport error.
-    throw new LlamaError(
-      `cannot reach llama-server at ${baseUrl} for ${o.label}: ${(e as Error).message} — ` +
-        'start it with `scripts/llama-server.sh` or set LLAMA_URL',
+    throw new ChatError(
+      `cannot reach server at ${baseUrl} for ${o.label}: ${(e as Error).message} — ` +
+        'check the server is running and reachable, and --jinja is enabled for tool calls',
     )
   }
 
   if (!res.ok) {
     // A non-2xx carries the server's own diagnosis (bad request, context overflow, no
     // model loaded) — surface it verbatim, it is the fix.
-    throw new LlamaError(
-      `llama-server (${o.label}) returned HTTP ${res.status}: ${await res.text().catch(() => '')}`,
+    throw new ChatError(
+      `server (${o.label}) returned HTTP ${res.status}: ${await res.text().catch(() => '')}`,
     )
   }
 
   const envelope = (await res.json()) as any
   if (envelope?.error) {
-    throw new LlamaError(`llama-server (${o.label}) error: ${envelope.error.message ?? 'unknown error'}`)
+    throw new ChatError(`server (${o.label}) error: ${envelope.error.message ?? 'unknown error'}`)
   }
   const content = envelope?.choices?.[0]?.message?.content
   if (typeof content !== 'string') {
-    throw new LlamaError(`${o.label} envelope missing .choices[0].message.content`)
+    throw new ChatError(`${o.label} envelope missing .choices[0].message.content`)
   }
   // After the content check, so a failed call contributes no sample. A completion that
   // could not be read is a correctness event; averaging its latency into a throughput
@@ -729,4 +737,28 @@ export const llamaChat = async (o: ChatOptions): Promise<string> => {
     finishReason: typeof envelope?.choices?.[0]?.finish_reason === 'string' ? envelope.choices[0].finish_reason : undefined,
   })
   return content
+}
+
+export const llamaChat = chat
+
+/**
+ * Provider interface: a backend-agnostic contract for the LLM transport.
+ *
+ * Out-of-tree profiles may bring their own adapter that satisfies this interface,
+ * allowing the harness to talk to Ollama, vLLM, or any other OpenAI-compatible
+ * endpoint without changes to core.
+ */
+export interface Provider {
+  chat(o: ChatOptions): Promise<string>
+  toolChat(o: ToolChatOptions): Promise<{ content: string | null; toolCalls: ToolCall[]; usage?: Usage }>
+  streamChat(o: StreamChatOptions): Promise<StreamResult>
+  identify(baseUrl?: string): Promise<ServerIdentity>
+}
+
+/** The default provider implementation backed by the built-in HTTP client. */
+export const defaultProvider: Provider = {
+  chat,
+  toolChat,
+  streamChat,
+  identify: identifyServer,
 }

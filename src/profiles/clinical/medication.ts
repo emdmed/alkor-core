@@ -24,6 +24,7 @@
  */
 import type { Pack } from '../../core/pack.ts'
 import type { Trace } from '../../core/trace.ts'
+import type { Provider } from '../../core/client.ts'
 import type { Timings } from '../../core/bench.ts'
 import { extract } from '../../modes/extract.ts'
 import { hasMedicationContract, medicationRequest, takesMedicationPass } from './contracts.ts'
@@ -63,6 +64,7 @@ export interface MedicationOptions {
   baseUrl?: string
   trace?: Trace
   cachePrompt?: boolean
+  provider?: Provider
 }
 
 /**
@@ -98,6 +100,7 @@ export const medicationReading = async (o: MedicationOptions): Promise<Medicatio
     baseUrl: o.baseUrl,
     cachePrompt: o.cachePrompt,
     label: 'medication',
+    provider: o.provider,
   })
 
   const cost = { cost: outcome.cost, attempts: outcome.attempts, lostMs: outcome.lostMs, completion: outcome.raw }

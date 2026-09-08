@@ -8,7 +8,8 @@
     ".": "./src/index.ts"
   },
   "bin": {
-    "medextract": "./src/cli.ts"
+    "medextract": "./src/cli.ts",
+    "medextract-server": "./src/server.ts"
   },
   "files": [
     "src",
@@ -26,7 +27,11 @@
     "check": "npm test && npm run typecheck",
     "profiles": "node src/cli.ts profiles",
     "eval": "node src/cli.ts eval",
-    "agent": "node src/cli.ts agent"
+    "agent": "node src/cli.ts agent",
+    "route": "node src/cli.ts route",
+    "pipeline": "node src/cli.ts pipeline",
+    "server": "node src/server.ts",
+    "model-manager": "node scripts/model-manager.ts"
   },
   "dependencies": {
     "smol-toml": "^1.3.1",
