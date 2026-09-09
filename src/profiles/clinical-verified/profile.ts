@@ -1,12 +1,12 @@
 /**
- * The clinical-pipeline profile: mode `pipeline`, no pack, no tools.
+ * The clinical-verified profile: mode `pipeline`, no pack, no tools.
  *
- * A pipeline is a composition of other profiles: the router decides which specialist
- * should handle the input, the specialist extracts or processes it, and the verifier checks
- * the result. This profile does not run models itself; it is a configuration surface that
+ * A pipeline is a composition of other profiles: the clinical specialist routes and
+ * extracts the input, and the verifier checks the result. This profile does not run models
+ * itself; it is a configuration surface that
  * the CLI and the pipeline mode read to know which steps exist and in what order.
  *
- * The pipeline definition lives in `profiles.toml` under the `[clinical-pipeline]` table,
+ * The pipeline definition lives in `profiles.toml` under the `[clinical-verified]` table,
  * as a `steps` array. Each step names a profile and describes what input it reads. The
  * harness loads the profiles, resolves their packs, and runs the steps in order.
  *
@@ -22,7 +22,7 @@ import { loadPack, resolvePackRoot } from '../../core/pack.ts'
 import { runPipelineFidelityEval } from './eval.ts'
 
 export const PROFILE: ProfileModule = {
-  name: 'clinical-pipeline',
+  name: 'clinical-verified',
   mode: 'pipeline',
   needsPack: false,
 

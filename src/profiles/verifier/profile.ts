@@ -27,6 +27,14 @@ export const PROFILE: ProfileModule = {
   name: 'verifier',
   mode: 'extract',
   needsPack: true,
+  topology: {
+    stages: [
+      { name: 'prompt-assembly' },
+      { name: 'llm-call' },
+      { name: 'parse' },
+      { name: 'verify' },
+    ],
+  },
 
   async review(ctx: ReviewContext): Promise<ReviewResult> {
     if (ctx.input.kind !== 'text') {

@@ -32,6 +32,7 @@ import { defaultProvider } from './core/client.ts'
 import { createActivity, withActivity, withActivityScope, type Activity, type ActivityEvent } from './core/activity.ts'
 import type { Pack } from './core/pack.ts'
 import type { ProfileModule } from './core/profile.ts'
+import type { ProfileTopology } from './core/topology.ts'
 import { identifyServer, probeServer, DEFAULT_URL } from './core/client.ts'
 import {
   LlamaManager,
@@ -260,6 +261,49 @@ export const createServer = async (configPath?: string, options: ServerOptions =
     }
   }
 
+  const topologyCache = new Map<string, ProfileTopology>()
+  const modeTopology = (mode: string): ProfileTopology => {
+    if (mode === 'extract') {
+      return { stages: [{ name: 'prompt-assembly' }, { name: 'llm-call' }, { name: 'parse' }] }
+    }
+    if (mode === 'agentic') {
+      return { stages: [{ name: 'llm-call', repeatable: true }, { name: 'tool-call', kind: 'decision', repeatable: true }] }
+    }
+    if (mode === 'router') return { stages: [{ name: 'route', kind: 'decision' }] }
+    return { stages: [] }
+  }
+  const topologyForProfile = async (name: string, mode: string): Promise<ProfileTopology> => {
+    const cached = topologyCache.get(name)
+    if (cached) return cached
+    let topology = modeTopology(mode)
+    try {
+      const profileConfig = requireProfile(cfg, name)
+      const profile = await loadProfileModule(
+        name,
+        resolveProfileModule(name, { configured: profileConfig.module, base: cfg.base }),
+      )
+      topology = profile.topology ?? topology
+      if (!profile.topology && profile.mode === 'agentic' && profile.tools?.length) {
+        topology = {
+          stages: [
+            { name: 'llm-call', repeatable: true },
+            {
+              name: 'tool-call',
+              kind: 'decision',
+              repeatable: true,
+              routes: profile.tools.map((tool) => ({ name: tool.name })),
+            },
+          ],
+        }
+      }
+    } catch {
+      // /health must still describe a misconfigured or unavailable profile. Its declared
+      // mode is trustworthy even when importing the optional implementation is not.
+    }
+    topologyCache.set(name, topology)
+    return topology
+  }
+
   const loadPackForProfile = async (
     profileName: string,
     profile: ProfileModule,
@@ -304,6 +348,13 @@ export const createServer = async (configPath?: string, options: ServerOptions =
     res.writeHead(status, { 'Content-Type': 'application/json', ...cors })
     res.end(JSON.stringify(data, null, 2))
   }
+
+  // POST /run has mode-specific detail, but every caller gets one stable place to read the
+  // produced value. Keep the existing fields as diagnostics and compatibility surface.
+  const runResult = <T extends object>(result: T, output: unknown): T & { output: unknown } => ({
+    ...result,
+    output: output ?? null,
+  })
 
   // SSE helpers
   const sseClients = new Set<ServerResponse>()
@@ -380,10 +431,20 @@ export const createServer = async (configPath?: string, options: ServerOptions =
       // --- Health --------------------------------------------------------------
       if (method === 'GET' && url.pathname === '/health') {
         await refreshReachability()
+        const topologyProfiles = await Promise.all(
+          Object.values(cfg.profiles).map(async ({ name, mode, url, pack, pinned }) => ({
+            name,
+            mode,
+            url,
+            pack,
+            pinned: Boolean(pinned),
+            topology: await topologyForProfile(name, mode),
+          })),
+        )
         ok(res, {
           profiles: Object.keys(cfg.profiles),
           topology: {
-            profiles: Object.values(cfg.profiles).map(({ name, mode, url, pack }) => ({ name, mode, url, pack })),
+            profiles: topologyProfiles,
             pipelines: Object.values(cfg.profiles)
               .filter((profile) => profile.mode === 'pipeline')
               .map((profile) => ({
@@ -641,7 +702,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
                 profile: profileName,
                 wallMs: performance.now() - runStartedAt,
               })
-              ok(res, result)
+              ok(res, runResult(result, result.report ?? result.raw ?? result.text))
               done(200)
               return
             }
@@ -669,7 +730,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
                 profile: profileName,
                 wallMs: performance.now() - runStartedAt,
               })
-              ok(res, result)
+              ok(res, runResult(result, result.answer ?? result.error ?? result))
               done(200)
               return
             }
@@ -732,7 +793,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
                 profile: profileName,
                 wallMs: performance.now() - runStartedAt,
               })
-              ok(res, result)
+              ok(res, runResult(result, result.final))
               done(200)
               return
             }

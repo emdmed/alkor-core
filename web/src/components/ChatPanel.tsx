@@ -240,14 +240,16 @@ const formatResult = (r: unknown): string => {
   try {
     // Pretty-print the final step if it has one.
     const obj = r as Record<string, unknown>
+    const output = obj['output']
     const final = obj['final']
     const stoppedEarly = obj['stoppedEarly']
     const totalMs = obj['totalMs']
     const parts: string[] = []
     if (stoppedEarly) parts.push('[stopped early]')
     if (totalMs != null) parts.push(`total ${(Number(totalMs) / 1000).toFixed(1)}s`)
-    if (final != null) {
-      parts.push(typeof final === 'string' ? final : JSON.stringify(final, null, 2))
+    const produced = output ?? final
+    if (produced != null) {
+      parts.push(typeof produced === 'string' ? produced : JSON.stringify(produced, null, 2))
     } else if (Array.isArray(obj['steps'])) {
       const steps = obj['steps'] as Array<Record<string, unknown>>
       for (const step of steps) {

@@ -78,10 +78,11 @@ url = "http://127.0.0.1:8085"
 model = "~/models/Qwen3-4B-Q4_K_M.gguf"
 ctx = 8192
 
-# The clinical pipeline: a multi-model orchestration that routes, extracts, and verifies.
-# The pipeline definition is the `steps` array below. Each step names a profile and
-# describes what input it reads. The CLI loads the profiles and packs, then runs the
-# steps in order, passing outputs from one step to the next.
+# The verified clinical workflow: extract with the clinical profile, then independently
+# verify the constrained completion against the original document.
+# The clinical profile already routes input shapes to its own tasks before making a model
+# call. A separate top-level router here would not select a step—the extractor is always
+# clinical—so this workflow starts directly with extraction.
 #
 # The verifier's contract is a JSON object with two fields — the ORIGINAL DOCUMENT and the
 # EXTRACTION TO VERIFY — which no single pipeline output holds, so the verify step composes
@@ -89,7 +90,7 @@ ctx = 8192
 # JSON completion for the extraction. Vital-sign review deliberately does not expose a `report`:
 # its public JSON output is the model completion. The verifier decodes this JSON string before
 # it builds its own prompt, and refuses it if it is not a structured JSON value.
-[clinical-pipeline]
+[clinical-verified]
 mode = "pipeline"
 # The pipeline definition: a list of steps. Each step has a name, a profile, and an input
 # reference. Input references: `initial` for the original input, `step-N` for the output
@@ -97,7 +98,6 @@ mode = "pipeline"
 # text, `step-N.report` for the structured report. An OBJECT composes refs into one JSON
 # input for a step that needs more than one file of state.
 steps = [
-  { name = "route", profile = "router" },
   { name = "extract", profile = "clinical", input = "initial" },
-  { name = "verify", profile = "verifier", input = { document = "initial", extraction = "step-1.raw" } }
+  { name = "verify", profile = "verifier", input = { document = "initial", extraction = "step-0.raw" } }
 ]

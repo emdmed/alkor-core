@@ -64,6 +64,17 @@ export const PROFILE: ProfileModule = {
   chatSystemPrompt: CODING_CHAT_PROMPT,
   tools: TOOLS,
   maxSteps: CODING_MAX_STEPS,
+  topology: {
+    stages: [
+      { name: 'llm-call', repeatable: true },
+      {
+        name: 'tool-call',
+        kind: 'decision',
+        repeatable: true,
+        routes: TOOLS.map((tool) => ({ name: tool.name })),
+      },
+    ],
+  },
   async runEval(ctx: EvalContext): Promise<EvalVerdict> {
     const r = await runToolSelectionEval({ baseUrl: ctx.baseUrl, trace: ctx.trace })
     // Tool selection is the gate: argument accuracy is meaningless on a call that picked

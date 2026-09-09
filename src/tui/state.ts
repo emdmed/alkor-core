@@ -5,12 +5,17 @@
  * No clinical concept is named — the view is generic over event kinds.
  */
 import { ACTIVITY_SPEC, type ActivityEvent, type TemplateRefEntry } from '../core/activity-types.ts'
+import type { ProfileTopology } from '../core/topology.ts'
 
 export interface ProfileEntry {
   name: string
   mode: string
   url?: string
   pack?: string
+  /** The configured front-door profile that receives unclassified input. */
+  pinned?: boolean
+  /** Static internal execution shape published by the profile module. */
+  topology?: ProfileTopology
 }
 
 export interface ModelEntry {

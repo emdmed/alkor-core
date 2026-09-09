@@ -87,8 +87,8 @@ The headline example is **not** the pipeline mode's steps — it is a second rou
 inside the clinical profile's `review()`. A shock-suspicious note actually travels:
 
 ```
-POST /run { profile:'clinical-pipeline' }
-  L1 · pipeline.mode steps            route → extract → verify        (runPipeline, core)
+POST /run { profile:'clinical-verified' }
+  L1 · pipeline.mode steps            extract → verify                (runPipeline, core)
   L2 · inside the 'extract' step, clinical.profile.review():
         routeClinicalShape(text) → shape:'shock-suspicion' (rule-based, NO model)
         task = shock-extraction
@@ -240,7 +240,7 @@ No dependencies — a subscriber set and a ring buffer, hand-rolled in the codeb
 
 ## Named follow-ups (not in this build)
 
-- **Fidelity-eval visibility.** `--fidelity` (`profiles/clinical-pipeline/eval.ts`) runs the
+- **Fidelity-eval visibility.** `--fidelity` (`src/profiles/clinical-verified/eval.ts`) runs the
   arms manually (`reviewVitalSigns`, `routeClinicalShape`, verifier calls) and bypasses both
   `runPipeline` and the wrapped provider, so it emits no `pipeline.*` or `llm.*` events.
   Cheap fix: thread the wrapped provider + activity into its review calls (gets `llm.*` per

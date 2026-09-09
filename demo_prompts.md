@@ -119,15 +119,14 @@ node src/cli.ts extract --profile clinical --task shock --note - --constrain --j
 EOF
 ```
 
-### 4b. One command through the clinical pipeline
+### 4b. One command through the verified clinical workflow
 
-`route → extract → verify`, orchestrated by the pipeline step table. Needs the router, clinical
-and verifier models running (ports 8080 / 8081 / 8085):
+`extract → verify`, orchestrated by the pipeline step table. The clinical profile performs
+its own rule-based task routing. This needs the clinical and verifier models running on ports
+8081 and 8085:
 
 ```bash
-LLAMA_PORT=8080 LLAMA_MODEL=~/models/Qwen3-4B-Q4_K_M.gguf scripts/llama-server.sh -ngl 99 --no-webui --parallel 1 &
-
-node src/cli.ts pipeline --profile clinical-pipeline --input "$(cat <<'EOF'
+node src/cli.ts pipeline --profile clinical-verified --input "$(cat <<'EOF'
 64-year-old woman, hypotensive for three hours after a day of profuse watery diarrhoea. BP 75/50. Heart rate 125 bpm, tachycardic. Skin cool. Jugular venous pressure normal to low. Capillary refill delayed. Pulse thready. Lungs clear.
 EOF
 )"

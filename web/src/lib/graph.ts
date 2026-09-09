@@ -1,9 +1,9 @@
 /**
  * Graph model for the pipeline execution view.
  *
- * Turns the flat activity reducer state back into the graph it was produced from:
- * a linear chain of steps (input → route → specialists → output) with routing fans
- * between them, where every step can expand into the internal stages the mode painted.
+ * Turns configured topology plus the flat activity reducer state into one graph:
+ * every pipeline and profile stays visible, a selected run paints live state over its
+ * lane, and each step can expand into the internal stages the mode emitted.
  *
  * Pure and deterministic: the layout is computed, not negotiated with a physics engine,
  * so a given run always draws the same picture. Nothing here touches the DOM or knows
@@ -14,14 +14,16 @@ import type {
   LlmRequestEntry,
   PipelineDefinition,
   PipelineStepEntry,
+  ProfileEntry,
   ProjectState,
   RunEntry,
   StageEntry,
 } from '../../../src/tui/state.ts'
 import { stageTreeForRun } from '../../../src/tui/state.ts'
+import type { ProfileTopologyStage } from '../../../src/core/topology.ts'
 import type { NodeState } from './format.ts'
 
-export type GraphNodeKind = 'input' | 'route' | 'step' | 'stage' | 'branch' | 'output' | 'group'
+export type GraphNodeKind = 'input' | 'route' | 'step' | 'stage' | 'branch' | 'profile' | 'output' | 'group'
 
 export interface GraphLlm {
   constrained: boolean
@@ -52,6 +54,14 @@ export interface GraphNodeData {
   childCount?: number
   chosen?: boolean
   chosenProfile?: string
+  mode?: string
+  configured?: boolean
+  /** A visible-but-deemphasised alternative after a router has committed. */
+  muted?: boolean
+  /** The project's configured front-door routing decision. */
+  entryPoint?: boolean
+  /** Stable un-namespaced id used by expansion state in a composed project graph. */
+  expandKey?: string
   llm?: GraphLlm
   runId?: string
   /** Injected by the view layer: toggles this node's sub-graph. */
@@ -165,6 +175,7 @@ const layoutHeightOf = (n: GraphNode): number => {
     case 'input': return 60
     case 'output': return d.detailText ? 84 : 60
     case 'branch': return 44
+    case 'profile': return 62
     case 'route': return 104
     case 'stage': return 68 + (d.llm?.error ? 18 : 0) + ((d.childCount ?? 0) > 0 ? 24 : 0)
     case 'step':
@@ -372,9 +383,32 @@ const routerCandidates = (state: ProjectState, routerProfile: string, chosen?: s
 }
 
 /** Route decision for this run: reducer-captured route.decided, else the router stage detail. */
-const routeForRun = (state: ProjectState, runId: string): NonNullable<BuildCtx['route']> => {
+const routeForRun = (state: ProjectState, runId: string, tree: StageEntry[] = []): NonNullable<BuildCtx['route']> => {
   const re = [...state.routes].reverse().find((r) => r.runId === runId)
   if (re) return { profile: re.profile, confidence: re.confidence, reason: re.reason, ruleVsModel: re.ruleVsModel }
+  // Older activity buffers may predate run-scoped route.decided events. The stage tree is
+  // already scoped to this run, so its router result is an equally precise fallback.
+  const visit = (stages: StageEntry[]): NonNullable<BuildCtx['route']> | undefined => {
+    for (const stage of stages) {
+      if (stage.name === 'route') {
+        const detail = obj(stage.detail) ?? {}
+        const profile = asStr(detail, 'profile')
+        if (profile) {
+          const confidence = asNum(detail, 'confidence')
+          return {
+            profile,
+            confidence: confidence != null && confidence > 1 ? confidence / 100 : confidence,
+            reason: asStr(detail, 'reason'),
+          }
+        }
+      }
+      const nested = visit(stage.children)
+      if (nested) return nested
+    }
+    return undefined
+  }
+  const stageRoute = visit(tree)
+  if (stageRoute) return stageRoute
   return {}
 }
 
@@ -390,7 +424,7 @@ const buildPipeline = (state: ProjectState, run: RunEntry, tree: StageEntry[], u
     run,
     expanded: userExpanded,
     requests: state.llmRequests,
-    route: routeForRun(state, run.runId),
+    route: routeForRun(state, run.runId, tree),
   }
 
   const chain: ChainItem[] = [{ node: buildInput(run), children: [] }]
@@ -522,6 +556,7 @@ function layout(chain: ChainItem[], ctx: BuildCtx): { nodes: GraphNode[]; edges:
       case 'stage':
       case 'route': return STAGE_W
       case 'branch': return CHIP_W
+      case 'profile': return 196
       case 'group': return 0
     }
   }
@@ -530,7 +565,7 @@ function layout(chain: ChainItem[], ctx: BuildCtx): { nodes: GraphNode[]; edges:
     const count = owner.children.length
     const inset = 14
     const header = 25
-    const label = `${count} ${count === 1 ? 'stage' : 'stages'} · ${owner.node.data.label}`
+    const label = `${owner.node.data.label} · ${count}`
     nodes.push({
       ...node(`group-${owner.node.id}`, 'group', label, owner.node.data.status, {
         childCount: count,
@@ -544,22 +579,27 @@ function layout(chain: ChainItem[], ctx: BuildCtx): { nodes: GraphNode[]; edges:
     })
   }
 
-  const placeStage = (items: ChainItem[], x: number, y: number, gap: number): { endX: number; spanW: number; bottom: number } => {
-    let cx = x
+  const placeStage = (items: ChainItem[], x: number, y: number, gap: number): { right: number; spanW: number; bottom: number } => {
+    let cy = y
+    let right = x
     let bottom = y
     for (const it of items) {
-      nodes.push({ ...it.node, position: { x: cx, y } })
+      nodes.push({ ...it.node, position: { x, y: cy } })
       const itemW = layoutWidthOf(it.node)
-      bottom = Math.max(bottom, y + layoutHeightOf(it.node))
-      cx += itemW + gap
+      const itemBottom = cy + layoutHeightOf(it.node)
+      right = Math.max(right, x + itemW)
+      bottom = Math.max(bottom, itemBottom)
+      cy = itemBottom + gap
       if (expandable(it, ctx) && it.children.length > 0) {
-        const nested = placeStage(it.children, cx - itemW, y + layoutHeightOf(it.node) + 42, SUB_GAP)
-        groupFor(it, cx - itemW, y + layoutHeightOf(it.node) + 42, nested.spanW, nested.bottom)
-        cx = nested.endX + gap
+        const nestedX = x + 24
+        const nested = placeStage(it.children, nestedX, cy + 12, SUB_GAP)
+        groupFor(it, nestedX, cy + 12, nested.spanW, nested.bottom)
+        right = Math.max(right, nested.right)
         bottom = Math.max(bottom, nested.bottom)
+        cy = nested.bottom + gap
       }
     }
-    return { endX: cx - gap, spanW: cx - x - gap, bottom }
+    return { right, spanW: right - x, bottom }
   }
 
   // Lay out the primary path first. Disclosures get their own lane below the
@@ -583,10 +623,11 @@ function layout(chain: ChainItem[], ctx: BuildCtx): { nodes: GraphNode[]; edges:
 
   for (const { item, x: itemLeft } of placed) {
     if (!expandable(item, ctx)) continue
-    const clusterX = Math.max(itemLeft + CLUSTER_INDENT, detailCursor)
+    const ownerWidth = layoutWidthOf(item.node)
+    const clusterX = Math.max(itemLeft + Math.max(CLUSTER_INDENT, (ownerWidth - STAGE_W) / 2), detailCursor)
     const cluster = placeStage(item.children, clusterX, detailY, SUB_GAP)
     groupFor(item, clusterX, detailY, cluster.spanW, cluster.bottom)
-    detailCursor = cluster.endX + 54
+    detailCursor = cluster.right + 54
     detailBottom = Math.max(detailBottom, cluster.bottom + 14)
   }
 
@@ -611,13 +652,9 @@ function layout(chain: ChainItem[], ctx: BuildCtx): { nodes: GraphNode[]; edges:
   for (let i = 0; i < chain.length - 1; i++) {
     const a = chain[i]!
     const b = chain[i + 1]!
-    const kind = a.facet === 'router' ? 'branch' : a.node.data.kind === 'route' ? 'branch' : 'data'
+    const kind = a.node.data.kind === 'route' ? 'branch' : 'data'
     const label = kind === 'branch' && a.node.data.chosenProfile
       ? `selected: ${a.node.data.chosenProfile}`
-      : !(b.node.data.kind === 'output' || b.node.data.kind === 'input')
-      ? b.node.data.inputRef && b.node.data.inputRef !== 'initial'
-        ? b.node.data.inputRef
-        : undefined
       : undefined
 
     edges.push(flowEdge(a.node, b.node, kind, label))
@@ -629,7 +666,7 @@ function layout(chain: ChainItem[], ctx: BuildCtx): { nodes: GraphNode[]; edges:
     if (children.length === 0) return
     edges.push(flowEdge(item.node, children[0]!.node, 'data', undefined, 'detail', 'top'))
     for (let i = 0; i < children.length - 1; i++) {
-      edges.push(flowEdge(children[i]!.node, children[i + 1]!.node))
+      edges.push(flowEdge(children[i]!.node, children[i + 1]!.node, 'data', undefined, 'detail', 'top'))
       expandedEdges(children[i]!)
     }
     expandedEdges(children[children.length - 1]!)
@@ -643,8 +680,14 @@ function layout(chain: ChainItem[], ctx: BuildCtx): { nodes: GraphNode[]; edges:
   // Router fan edges (chosen path is the chain's branch edge; these are the ghosts).
   for (const it of chain) {
     if (!it.fan) continue
+    // When the router detail is visible, alternatives belong to the decision that
+    // produced them—not the summary card above it. This also prevents the fan edge
+    // from painting over the expanded group's title and inbound connector.
+    const fanSource = expandable(it, ctx)
+      ? it.children.find((child) => child.node.data.kind === 'route')?.node ?? it.node
+      : it.node
     for (const chip of it.fan) {
-      edges.push(flowEdge(it.node, chip, 'ghost', undefined, 'detail', 'tl'))
+      edges.push(flowEdge(fanSource, chip, 'ghost', undefined, 'detail', 'tl'))
     }
   }
 
@@ -664,4 +707,337 @@ export const buildGraph = (state: ProjectState, runId: string, expanded: Set<str
   const pipelineEntry = state.pipelines.get(runId)
   const isPipeline = Boolean(pipelineRoot || (pipelineEntry && pipelineEntry.steps.length > 0))
   return isPipeline ? buildPipeline(state, run, tree, expanded) : buildStages(state, run, tree, expanded)
+}
+
+/* ------------------------------------------------------------------ full configured topology */
+
+/** Build an idle pipeline from configuration alone, before its first activity event. */
+const buildConfiguredPipeline = (state: ProjectState, def: PipelineDefinition): GraphBuild => {
+  const run: RunEntry = { runId: `configured-${def.name}`, profile: def.name, status: 'started' }
+  const ctx: BuildCtx = {
+    state,
+    run,
+    expanded: new Set(),
+    requests: state.llmRequests,
+    route: {},
+  }
+  const chain: ChainItem[] = [
+    { node: node('input', 'input', 'input', 'idle', { profile: def.name }), children: [] },
+  ]
+  for (const [index, step] of def.steps.entries()) {
+    const isRouter = profileMode(state, step.profile) === 'router'
+    chain.push({
+      node: node(`step-${index}`, 'step', step.name, 'idle', {
+        stepNo: index,
+        profile: step.profile,
+        router: isRouter,
+        inputRef: step.input ?? (index === 0 ? 'initial' : `step-${index - 1}`),
+      }),
+      children: [],
+      facet: isRouter ? 'router' : undefined,
+    })
+  }
+  chain.push({ node: node('output', 'output', 'output', 'idle', { profile: def.name }), children: [] })
+  const { nodes, edges } = layout(chain, ctx)
+  return { nodes, edges, title: def.name }
+}
+
+const graphBounds = (nodes: GraphNode[]): { left: number; top: number; right: number; bottom: number } => {
+  if (nodes.length === 0) return { left: MAIN_X, top: MAIN_Y, right: MAIN_X, bottom: MAIN_Y }
+  let left = Infinity
+  let top = Infinity
+  let right = -Infinity
+  let bottom = -Infinity
+  for (const n of nodes) {
+    if (n.data.kind === 'group') continue
+    const width = typeof n.style?.width === 'number' ? n.style.width : n.measured?.width ?? (
+      n.data.kind === 'step' ? STEP_W : n.data.kind === 'stage' || n.data.kind === 'route' ? STAGE_W : n.data.kind === 'profile' ? 196 : n.data.kind === 'branch' ? CHIP_W : 240
+    )
+    const height = typeof n.style?.height === 'number' ? n.style.height : layoutHeightOf(n)
+    left = Math.min(left, n.position.x)
+    top = Math.min(top, n.position.y)
+    right = Math.max(right, n.position.x + width)
+    bottom = Math.max(bottom, n.position.y + height)
+  }
+  return { left, top, right, bottom }
+}
+
+/** Namespace one run graph so every configured pipeline can coexist on one canvas. */
+const placeGraph = (graph: GraphBuild, prefix: string, yOffset: number): GraphBuild => {
+  const id = (raw: string): string => `${prefix}/${raw}`
+  return {
+    title: graph.title,
+    nodes: graph.nodes.map((n) => ({
+      ...n,
+      id: id(n.id),
+      position: { x: n.position.x, y: n.position.y + yOffset },
+      data: { ...n.data, expandKey: n.id },
+    })),
+    edges: graph.edges.map((e) => ({
+      ...e,
+      id: id(e.id),
+      source: id(e.source),
+      target: id(e.target),
+    })),
+  }
+}
+
+/**
+ * Render the complete configured project continuously. A selected run paints one lane
+ * with observed state and stages, while every other pipeline remains visible as idle
+ * topology. Router destinations share a canonical profile shelf so no possible route is
+ * removed after the decision; alternatives are only de-emphasised.
+ */
+export const buildProjectGraph = (state: ProjectState, runId: string | undefined, expanded: Set<string>): GraphBuild => {
+  const selected = runId ? state.runs.get(runId) : undefined
+  if (state.topology.pipelines.length === 0 && state.topology.profiles.length === 0) {
+    return selected ? buildGraph(state, selected.runId, expanded) : { nodes: [], edges: [], title: '' }
+  }
+
+  const nodes: GraphNode[] = []
+  const edges: GraphEdge[] = []
+  const routerSources: GraphNode[] = []
+  let laneY = 0
+  let selectedPlaced = false
+
+  const addLane = (raw: GraphBuild, prefix: string, label: string): void => {
+    // Route alternatives are represented once, as real configured profile nodes below.
+    const branchIds = new Set(raw.nodes.filter((n) => n.data.kind === 'branch').map((n) => n.id))
+    const clean: GraphBuild = {
+      ...raw,
+      nodes: raw.nodes.filter((n) => !branchIds.has(n.id)),
+      edges: raw.edges.filter((e) => !branchIds.has(e.source) && !branchIds.has(e.target)),
+    }
+    const placed = placeGraph(clean, prefix, laneY)
+    const bounds = graphBounds(placed.nodes)
+    nodes.push({
+      ...node(`${prefix}/lane`, 'group', label, 'idle'),
+      position: { x: bounds.left - 20, y: bounds.top - 30 },
+      style: { width: bounds.right - bounds.left + 40, height: bounds.bottom - bounds.top + 50 },
+    })
+    nodes.push(...placed.nodes)
+    edges.push(...placed.edges)
+    const summaryRouters = placed.nodes.filter((n) => n.data.kind === 'step' && n.data.router)
+    routerSources.push(...(summaryRouters.length > 0 ? summaryRouters : placed.nodes.filter((n) => n.data.kind === 'route')))
+    laneY = bounds.bottom + 92
+  }
+
+  for (const def of state.topology.pipelines) {
+    const isSelected = selected?.profile === def.name
+    const raw = isSelected ? buildGraph(state, selected.runId, expanded) : buildConfiguredPipeline(state, def)
+    selectedPlaced ||= isSelected
+    addLane(raw, `pipeline-${def.name}`, `${def.name} · pipeline`)
+  }
+
+  // A direct profile run is still useful operational detail, but it sits alongside the
+  // configured topology instead of replacing it.
+  if (selected && !selectedPlaced) {
+    addLane(buildGraph(state, selected.runId, expanded), `run-${selected.runId}`, `${selected.profile} · selected run`)
+  }
+
+  const topologyRoutes = (profileName: string): Array<{ name: string; targetProfile?: string; available?: boolean }> => {
+    const profile = state.topology.profiles.find((candidate) => candidate.name === profileName)
+    const found: Array<{ name: string; targetProfile?: string; available?: boolean }> = []
+    const visit = (stages: ProfileTopologyStage[]): void => {
+      for (const stage of stages) {
+        for (const route of stage.routes ?? []) {
+          found.push(route)
+          if (route.stages) visit(route.stages)
+        }
+      }
+    }
+    if (profile?.topology) visit(profile.topology.stages)
+    return found
+  }
+  const routedTargets = new Set(
+    state.topology.profiles.flatMap((profile) => topologyRoutes(profile.name).flatMap((route) => route.targetProfile ? [route.targetProfile] : [])),
+  )
+  if (state.topology.profiles.some((profile) => profile.mode === 'router' && topologyRoutes(profile.name).every((route) => !route.targetProfile))) {
+    for (const profile of state.topology.profiles) {
+      if (profile.mode !== 'pipeline' && profile.mode !== 'router') routedTargets.add(profile.name)
+    }
+  }
+  const missingTargets = [...routedTargets].filter((name) => !state.topology.profiles.some((profile) => profile.name === name))
+  const allProfiles: Array<ProfileEntry & { configured: boolean }> = [
+    ...state.topology.profiles.map((profile) => ({ ...profile, configured: true })),
+    ...missingTargets.map((name) => ({ name, mode: 'unconfigured', configured: false })),
+  ]
+  const routedProfile = (source: GraphNode): string | undefined =>
+    source.data.kind === 'route' ? source.data.profile : source.data.chosenProfile
+  const chosenProfiles = new Set(routerSources.map(routedProfile).filter((p): p is string => Boolean(p)))
+  const selectedTask = selected
+    ? [...state.stages.values()].reverse().find((stage) => stage.runId === selected.runId && typeof obj(stage.detail)?.['task'] === 'string')
+        ?.detail as Record<string, unknown> | undefined
+    : undefined
+  const chosenTask = selectedTask ? asStr(selectedTask, 'task') : undefined
+  const profileNodes: GraphNode[] = []
+  const crossProfileRoutes: Array<{ source: GraphNode; target: string; chosen: boolean; muted: boolean }> = []
+  let profileY = laneY + 18
+
+  const muteEdge = (edge: GraphEdge): void => {
+    edge.style = { ...edge.style, opacity: 0.22 }
+    edge.labelStyle = { ...edge.labelStyle, opacity: 0.22 }
+    edge.animated = false
+    edge.data = { ...edge.data, muted: true }
+  }
+
+  for (const profile of allProfiles) {
+    const chosen = chosenProfiles.has(profile.name)
+    const isAlternative = routedTargets.has(profile.name)
+    const profileMuted = chosenProfiles.size > 0 && isAlternative && !chosen
+    const profileNode = node(`profile-${profile.name}`, 'profile', profile.name, profile.configured === false ? 'failed' : chosen ? 'done' : 'idle', {
+      profile: profile.name,
+      mode: profile.mode,
+      configured: profile.configured,
+      chosen,
+      muted: profileMuted,
+      detail: profile,
+    })
+    profileNode.position = { x: MAIN_X, y: profileY }
+    profileNodes.push(profileNode)
+
+    let rowRight = MAIN_X + 196
+    let rowBottom = profileY + layoutHeightOf(profileNode)
+    let previous = profileNode
+    let stageX = MAIN_X + 268
+    const renderStages = (
+      stages: ProfileTopologyStage[],
+      path: string,
+      startX: number,
+      y: number,
+      source: GraphNode,
+      inheritedMuted: boolean,
+    ): { right: number; bottom: number } => {
+      let x = startX
+      let bottom = y
+      let from = source
+      for (const [stageIndex, stage] of stages.entries()) {
+        const kind = stage.kind === 'decision' ? 'route' : 'stage'
+        const flags = [stage.optional ? 'optional' : '', stage.repeatable ? 'repeats' : ''].filter(Boolean).join(' · ')
+        const stageNode = node(`blueprint-${profile.name}-${path}-${stageIndex}`, kind, stage.name, 'idle', {
+          profile: profile.name,
+          detailText: flags || undefined,
+          muted: inheritedMuted,
+        })
+        stageNode.position = { x, y }
+        nodes.push(stageNode)
+        const connector = flowEdge(from, stageNode, 'ghost', undefined, 's', 't')
+        if (inheritedMuted) muteEdge(connector)
+        edges.push(connector)
+        bottom = Math.max(bottom, y + layoutHeightOf(stageNode))
+        rowRight = Math.max(rowRight, x + STAGE_W)
+
+        if ((stage.routes?.length ?? 0) > 0) {
+          const externalChoice = stage.routes?.find((route) => route.targetProfile && chosenProfiles.has(route.targetProfile))?.name
+          const localChoice = stage.routes?.some((route) => route.name === chosenTask) ? chosenTask : undefined
+          const choice = externalChoice ?? localChoice
+          let routeY = y
+          let routeRight = x + STAGE_W
+          for (const [routeIndex, route] of (stage.routes ?? []).entries()) {
+            const isChosen = choice === route.name
+            const routeMuted = inheritedMuted || Boolean(choice && !isChosen)
+            const unavailable = route.available === false
+            const branch = node(`blueprint-${profile.name}-${path}-${stageIndex}-route-${routeIndex}`, 'branch', route.name, unavailable ? 'failed' : isChosen ? 'done' : 'idle', {
+              chosen: isChosen,
+              muted: routeMuted,
+              detailText: unavailable ? 'not runnable' : route.targetProfile ? 'profile route' : 'task route',
+              profile: route.targetProfile,
+            })
+            branch.position = { x: x + STAGE_W + 62, y: routeY }
+            nodes.push(branch)
+            const routeEdge = flowEdge(stageNode, branch, isChosen ? 'branch' : 'ghost', isChosen ? 'selected' : undefined, 's', 'left')
+            if (routeMuted) muteEdge(routeEdge)
+            edges.push(routeEdge)
+
+            let branchRight = branch.position.x + CHIP_W
+            let branchBottom = routeY + layoutHeightOf(branch)
+            if (route.stages?.length) {
+              const nested = renderStages(route.stages, `${path}-${stageIndex}-route-${routeIndex}`, branchRight + 54, routeY, branch, routeMuted)
+              branchRight = nested.right
+              branchBottom = Math.max(branchBottom, nested.bottom)
+            }
+            if (route.targetProfile) crossProfileRoutes.push({ source: branch, target: route.targetProfile, chosen: isChosen, muted: routeMuted })
+            routeRight = Math.max(routeRight, branchRight)
+            bottom = Math.max(bottom, branchBottom)
+            routeY = branchBottom + 24
+          }
+          rowRight = Math.max(rowRight, routeRight)
+          x = routeRight + 62
+        } else {
+          x += STAGE_W + 54
+        }
+        from = stageNode
+      }
+      return { right: Math.max(rowRight, x), bottom }
+    }
+
+    if (profile.topology?.stages.length) {
+      const rendered = renderStages(profile.topology.stages, 'root', stageX, profileY, previous, profileMuted)
+      rowRight = Math.max(rowRight, rendered.right)
+      rowBottom = Math.max(rowBottom, rendered.bottom)
+    }
+
+    nodes.push({
+      ...node(`profile-group-${profile.name}`, 'group', `${profile.name} · ${profile.mode}`, profile.configured === false ? 'failed' : 'idle'),
+      position: { x: MAIN_X - 20, y: profileY - 30 },
+      style: { width: rowRight - MAIN_X + 40, height: rowBottom - profileY + 50 },
+    })
+    profileY = rowBottom + 82
+  }
+
+  nodes.push(...profileNodes)
+
+  for (const source of routerSources) {
+    const chosen = routedProfile(source)
+    const sourceProfile = source.data.kind === 'step' ? source.data.profile : selected?.profile
+    const declaredTargets = topologyRoutes(sourceProfile ?? '').flatMap((route) => route.targetProfile ? [route.targetProfile] : [])
+    const fallbackTargets = state.topology.profiles
+      .filter((profile) => profile.mode !== 'pipeline' && profile.mode !== 'router' && profile.name !== sourceProfile)
+      .map((profile) => profile.name)
+    const targets = new Set(declaredTargets.length > 0 ? declaredTargets : fallbackTargets)
+    for (const profile of profileNodes.filter((candidate) => targets.has(String(candidate.data.profile)))) {
+      const isChosen = chosen === profile.data.profile
+      const edge = flowEdge(source, profile, isChosen ? 'branch' : 'ghost', isChosen ? 'selected' : undefined, 'detail', 'top')
+      if (chosen && !isChosen) {
+        muteEdge(edge)
+      }
+      edges.push(edge)
+    }
+  }
+
+  for (const route of crossProfileRoutes) {
+    const target = profileNodes.find((profile) => profile.data.profile === route.target)
+    if (!target) continue
+    const edge = flowEdge(route.source, target, route.chosen ? 'branch' : 'ghost', undefined, 's', 'top')
+    if (route.muted) muteEdge(edge)
+    edges.push(edge)
+  }
+
+  // Several nodes can legitimately route at different scopes. Label only the configured
+  // front door, and only when the graph would otherwise contain an ambiguous set of them.
+  const routingNodes = nodes.filter(
+    (candidate) => candidate.data.kind === 'route' || (candidate.data.kind === 'step' && candidate.data.router),
+  )
+  if (routingNodes.length > 1) {
+    const pinnedRouters = new Set(
+      state.topology.profiles
+        .filter((profile) => profile.mode === 'router' && profile.pinned)
+        .map((profile) => profile.name),
+    )
+    const entryPoint = routingNodes.find(
+      (candidate) => candidate.data.kind === 'step' && pinnedRouters.has(String(candidate.data.profile)),
+    ) ?? routingNodes.find(
+      (candidate) => candidate.data.kind === 'route' && pinnedRouters.has(String(candidate.data.profile)),
+    )
+    if (entryPoint) entryPoint.data.entryPoint = true
+  }
+
+  const count = state.topology.pipelines.length
+  const runTitle = selected ? ` · selected run ${selected.profile} ${shortDigest(selected.runId)}` : ''
+  const missingTitle = missingTargets.length > 0 ? ` · ${missingTargets.length} unresolved route target${missingTargets.length === 1 ? '' : 's'}` : ''
+  return {
+    nodes,
+    edges,
+    title: `${count} pipeline${count === 1 ? '' : 's'} · ${state.topology.profiles.length} configured profiles${missingTitle}${runTitle}`,
+  }
 }

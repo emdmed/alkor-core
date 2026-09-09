@@ -1,5 +1,5 @@
 /**
- * Clinical-pipeline profile tests: smoke test, fidelity eval wiring, and gate logic.
+ * Clinical-verified profile tests: smoke test, fidelity eval wiring, and gate logic.
  *
  * No model calls; the fidelity eval path is tested only for wiring and option handling.
  */
@@ -8,12 +8,12 @@ import assert from 'node:assert/strict'
 import { nullTrace } from '../src/core/trace.ts'
 import { loadConfig, requireProfile } from '../src/core/config.ts'
 import { loadPack, resolvePackRoot } from '../src/core/pack.ts'
-import { PROFILE } from '../src/profiles/clinical-pipeline/profile.ts'
+import { PROFILE } from '../src/profiles/clinical-verified/profile.ts'
 import { emptyTally, absorb, ratio } from '../src/profiles/clinical/scorer.ts'
 
 test('smoke test passes when pipeline steps are well-formed', async () => {
   const cfg = loadConfig()
-  const config = requireProfile(cfg, 'clinical-pipeline')
+  const config = requireProfile(cfg, 'clinical-verified')
   const verdict = await PROFILE.runEval({
     config,
     pack: undefined,
@@ -22,14 +22,14 @@ test('smoke test passes when pipeline steps are well-formed', async () => {
     options: {},
   })
   assert.equal(verdict.pass, true)
-  assert.ok(verdict.summary.includes('3 pipeline steps validated'))
+  assert.ok(verdict.summary.includes('2 pipeline steps validated'))
 })
 
 test('pipeline passes the clinical constrained completion to the verifier', () => {
   const cfg = loadConfig()
-  const config = requireProfile(cfg, 'clinical-pipeline')
+  const config = requireProfile(cfg, 'clinical-verified')
   const steps = config.steps as Array<{ input?: unknown }>
-  assert.deepEqual(steps[2]?.input, { document: 'initial', extraction: 'step-1.raw' })
+  assert.deepEqual(steps[1]?.input, { document: 'initial', extraction: 'step-0.raw' })
 })
 
 test('smoke test fails when pipeline config has no steps', async () => {
@@ -58,7 +58,7 @@ test('smoke test fails when a step has no profile', async () => {
 
 test('fidelity eval option is recognised', async () => {
   const cfg = loadConfig()
-  const config = requireProfile(cfg, 'clinical-pipeline')
+  const config = requireProfile(cfg, 'clinical-verified')
   // Use a non-existent URL so the eval fails fast at the network layer.
   // The eval catches transport errors internally and reports them as failed runs
   // rather than throwing, so we verify the option is read and the pack is resolved.
@@ -129,6 +129,6 @@ test('gate logic: latency above 2x fails', () => {
 })
 
 test('fidelity eval imports without error', async () => {
-  const { runPipelineFidelityEval } = await import('../src/profiles/clinical-pipeline/eval.ts')
+  const { runPipelineFidelityEval } = await import('../src/profiles/clinical-verified/eval.ts')
   assert.equal(typeof runPipelineFidelityEval, 'function')
 })

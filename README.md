@@ -32,7 +32,8 @@ that contract is the artifact production reads. Narrower on purpose.
 
 **It is not an inference server.** It talks to a `llama-server` you started. A server's
 flags are part of a measurement and outlive many runs, so the harness will not start one
-behind your back.
+behind your back. The interactive server (`src/server.ts`) is the exception — it manages
+model lifecycles on demand, starting a backend on first request and sweeping it after idle.
 
 **It is not a medical device**, not clinical decision support, and not validation evidence
 for any regulator. What it measures is up to whoever points it.
@@ -69,18 +70,23 @@ repository exists to make visible.
 src/core/     config.ts    profiles.toml — which profiles exist, and what each reads
               pack.ts      contract packs: a manifest-described directory of contracts
               profile.ts   what a profile must expose; resolved by dynamic import
-              client.ts    llama-server transport (pinned body: seed, cache_prompt,
-                           temperature 0 unless the pack declares another)
+              client.ts    llama-server transport: chat(), toolChat(), streamChat()
+                           pinned request body (seed, temperature 0, cache_prompt)
+                           --constrain compiles JSON Schema into GBNF grammar
+                           one retry on transport failures, none on parse failures
+              llama-manager.ts  on-demand llama-server lifecycle: spawn, idle sweep,
+                           in-flight protection; used only by the interactive server
               tools.ts     the tool CONTRACT — core defines no tools
               trace.ts     JSONL tracing with a per-profile redaction hook
               bench.ts     what a run cost, from the graded pass itself
-              verify.ts    is this span in the document, is this text an edit of it
+              verify.ts    quote verification (literal containment) and
+                           deletion-only derivation (word subsequence)
               assemble.ts  many documents into the one message a task actually sends
 src/modes/    extract.ts   single-shot constrained extraction; one retry, transport only
               agentic.ts   the tool loop, for one task run to completion
               session.ts   the same loop, multi-turn, with a consent gate
               router.ts    rule-based intent routing (clinical / coding / transcriptor / verifier)
-              pipeline.ts  multi-model orchestration: route → extract → verify
+              pipeline.ts  generic multi-profile orchestration
 src/profiles/ clinical/    the reference profile: four tasks, names no vital sign
                            settings.ts  what the pack declares, and the refusals that make
                                         a declaration worth trusting
@@ -98,7 +104,7 @@ src/profiles/ clinical/    the reference profile: four tasks, names no vital sig
               coding/      the agentic worked example: six tools, no pack
               router/      the top-level router profile: rule-based + model fallback
               verifier/    the verification specialist: checks extraction for hallucinations
-              clinical-pipeline/   the 3-step pipeline: router → extract → verify
+              clinical-verified/   the verified workflow: extract → verify
 packs/        clinical/    the reference pack — 4 prompts, 4 schemas + goldens, 59 notes
               verifier/    the verifier contract pack (prompt + schema + cases)
 scripts/      model-manager.ts   start/stop/status llama-server per profile
@@ -116,12 +122,42 @@ profiles.toml the only file that may name a project outside this repository
 The swappable unit is the **execution mode**, not the toolset:
 
 - **`extract`** — single-shot constrained output over one document. No tool loop.
-- **`agentic`** — a tool-calling loop.
+- **`agentic`** — a tool-calling loop; termination is an explicit `done` tool call.
+- **`session`** — multi-turn conversation with tools, streaming, consent gates for
+  mutating operations, and abort support.
 - **`router`** — rule-based classification with an optional model fallback.
-- **`pipeline`** — multi-model orchestration: chain profiles, route outputs between steps.
+- **`pipeline`** — multi-model orchestration: chain profiles, pass outputs between steps.
 
 Extraction and agentic work are different shapes. Forcing extraction into an agent loop
 would be slower, less reliable, and much harder to validate.
+
+## How llama-server is handled
+
+The harness talks to `llama-server` over the standard OpenAI-compatible API (`POST
+/v1/chat/completions`). Three transport functions serve different shapes:
+
+- **`chat()`** — non-streaming, for extraction and eval. Temperature 0, seed 0,
+  `cache_prompt: true` (60-88% prefill reuse across a corpus). When `--constrain` is on,
+  the JSON Schema is passed as `response_format.json_schema` and the server compiles it
+  into a GBNF grammar that makes invalid JSON physically impossible to emit.
+- **`toolChat()`** — non-streaming, for agentic loops. Adds `tools` and `tool_choice:
+  "auto"` to the body. A separate function (not a flag) to prevent accidental use in eval.
+- **`streamChat()`** — SSE streaming for interactive sessions. Parses delta frames,
+  accumulates content, reasoning and tool calls.
+
+Each profile declares its own server URL in `profiles.toml`, so a pipeline may talk to
+multiple llama-server instances on different ports, each loaded with a different model or
+quantisation.
+
+The harness never starts servers for evals — server flags are part of a measurement. The
+interactive server (`src/server.ts`) is the exception: `LlamaManager` spawns a backend on
+first request, polls `/health` until ready, and sweeps it after `MEDEXTRACT_IDLE_MS`
+(default 120s) of idle time. Pinned profiles (the router) are never swept. In-flight
+request counting prevents killing a backend mid-generation.
+
+One retry on transport failures (server unreachable, HTTP error). Parse failures are not
+retried — at temperature 0 the same request produces the same output, and measuring that
+30/30 cases recover zero is more useful than doing it in production.
 
 ## Contract packs
 
@@ -224,9 +260,12 @@ LLAMA_PORT=8082 LLAMA_MODEL=~/models/Qwen3-4B-Q4_K_M.gguf scripts/llama-server.s
 node src/cli.ts eval  --profile coding
 node src/cli.ts agent --profile coding --task "fix the failing test" --workspace /tmp/wk
 
+# single-note extraction
+node src/cli.ts extract --profile clinical --note ward-round.txt --constrain
+
 # multi-model orchestration
 node src/cli.ts route    --profile router --input "dictated: BP 120/80, HR 72"
-node src/cli.ts pipeline --profile clinical-pipeline --input "ward-round.txt"
+node src/cli.ts pipeline --profile clinical-verified --input "ward-round.txt"
 
 # model manager — start/stop/status per profile
 node scripts/model-manager.ts status
@@ -352,11 +391,58 @@ any GPU call, selecting the right sub-task (`vital-signs`, `transcript`, `summar
 prose, or plain note. It is purely rule-based, zero GPU cost, and measured at 100% on 60
 cases.
 
-The **pipeline** (`src/modes/pipeline.ts`) chains these together: route → extract → verify.
-Each step names a profile and an input reference (`initial`, `step-0`, `step-1.raw`, etc.),
-and the harness passes outputs from one step to the next. See `profiles.toml` for the
-`clinical-pipeline` definition and `src/profiles/clinical-pipeline/` for the fidelity eval
-that compares three arms (monolith, specialist, verified) against each other.
+The **pipeline** (`src/modes/pipeline.ts`) chains profiles together. Each step names a
+profile and an input reference, and the harness passes outputs from one step to the next.
+Every step is a **fresh LLM call** — no conversation history carries forward. The pipeline
+maintains a state map that accumulates results, and each step's input is resolved from it:
+
+| Reference | Resolves to |
+|---|---|
+| `"initial"` | the original user input |
+| `"step-N"` | step N's output |
+| `"step-N.raw"` | the raw LLM completion from step N |
+| `"step-N.text"` | the rendered text |
+| `"step-N.report"` | the structured report |
+| `{"key": "ref", ...}` | an object template composing multiple refs into one JSON |
+
+For example, the `clinical-verified` workflow:
+
+```toml
+steps = [
+  { name = "extract", profile = "clinical", input = "initial" },
+  { name = "verify",  profile = "verifier", input = { document = "initial", extraction = "step-0.raw" } }
+]
+```
+
+Step 0 runs the clinical extractor against the original note. Step 1 composes the original
+document and the raw JSON completion from step 0 into `{document, extraction}`, then runs
+the verifier — a different LLM instance on a different port. Each step delegates to its
+profile's own mode (`extract`, `agentic`, or `router`), so the pipeline is a generic
+orchestrator that knows nothing about what any step does.
+
+A failed step stops the pipeline. No retry, no fallback. Checkpointing to disk
+(`context.json` + `step-N.json`) enables crash recovery and step-by-step execution when
+only one GPU is available. See `profiles.toml` for the definition and
+`src/profiles/clinical-verified/` for the fidelity eval that compares three arms (monolith,
+specialist, verified) against each other.
+
+## Traces
+
+Verification operates at three levels:
+
+1. **Provenance** (no LLM) — after every extraction, `verifyQuote()` checks whether each
+   field's `quote` appears in the source document by literal containment (whitespace/case
+   accent normalization). `verifyDerivation()` checks whether the `text` field is a word
+   subsequence of the `quote`. These run inside the profile as post-processing, no
+   additional model call.
+
+2. **Model-based** (`src/profiles/verifier/`) — a separate LLM instance that receives the
+   original document and the extraction JSON, then checks every field's quote against the
+   document. Reports `hallucination`, `modified_quote`, `missing_quote`, or
+   `unsupported_value`. This is the second step of the `clinical-verified` pipeline.
+
+3. **Rule-based** (eval shortcut) — checks that every numeric value in the extraction
+   appears somewhere in the document. Conservative, fast, no GPU.
 
 ## Traces
 
@@ -640,7 +726,10 @@ longer exists, so an entry there gets a new date rather than an edit.
 | clinical internal router (shape-based, 100% on 60 cases) | done, tested |
 | shock category contract (20 cases, rule-based reference arm) | done, tested |
 | verifier (30 cases, 100% catch, 0% FP on 4B model) | done, tested |
-| pipeline fidelity eval (monolith vs specialist vs verified) | done, tested |
+| pipeline mode (multi-profile orchestration, state passing, checkpointing) | done, tested |
+| clinical-verified pipeline (extract → verify, fidelity eval) | done, tested |
+| interactive server (on-demand model lifecycle, idle sweep, in-flight protection) | done, tested |
+| session mode (multi-turn, streaming, consent gates, abort) | done, tested |
 | both models re-measured on the grown corpus | next — the entry `RESULTS.md` is waiting for |
 | `validate` verb | planned |
 

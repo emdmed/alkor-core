@@ -62,6 +62,8 @@ export const ROUTER_DEFAULT = 'clinical'
 /** Profiles the model may choose among when the rules are inconclusive. */
 const MODEL_PROFILES = ['clinical', 'transcriptor', 'verifier']
 
+const ROUTE_PROFILES = [...new Set([...ROUTER_RULES.map((rule) => rule.profile), ...MODEL_PROFILES])]
+
 /** Build model fallback options from a base URL (from --url or profiles.toml). */
 const buildModelFallback = (baseUrl?: string): RouterOptions['model'] | undefined => {
   if (!baseUrl) return undefined
@@ -76,6 +78,17 @@ export const PROFILE: ProfileModule = {
   name: 'router',
   mode: 'router',
   needsPack: false,
+  topology: {
+    stages: [
+      { name: 'rule-match' },
+      { name: 'llm-call', optional: true },
+      {
+        name: 'route',
+        kind: 'decision',
+        routes: ROUTE_PROFILES.map((profile) => ({ name: profile, targetProfile: profile })),
+      },
+    ],
+  },
 
   async review(ctx: ReviewContext): Promise<ReviewResult> {
     const text = ctx.input.kind === 'text' ? ctx.input.text : `(case ${ctx.input.name})`

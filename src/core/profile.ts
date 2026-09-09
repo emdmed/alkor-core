@@ -25,6 +25,7 @@ import { CONFIG_NAME, envSuffix, type Mode, type ProfileConfig } from './config.
 import type { Provider } from './client.ts'
 import type { Redactor, Trace } from './trace.ts'
 import type { Activity } from './activity.ts'
+import type { ProfileTopology } from './topology.ts'
 
 const envKey = (name: string) => `PROFILE_MODULE_${envSuffix(name)}`
 
@@ -76,6 +77,12 @@ export interface ProfileModule {
   tools?: ToolDef[]
   /** Agentic profiles only: default step cap, overridable with --steps. */
   maxSteps?: number
+  /**
+   * Static execution shape for dashboards and other topology clients. Optional so existing
+   * out-of-tree profiles remain compatible; the server supplies a conservative mode-level
+   * blueprint when a profile does not declare its finer-grained shape.
+   */
+  topology?: ProfileTopology
   /**
    * Redaction for this profile's trace lines. `trace.ts` promises this hook and it has to
    * be reachable from somewhere: a trace holds the raw prompt and the raw completion, so

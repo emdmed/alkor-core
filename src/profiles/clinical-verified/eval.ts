@@ -3,16 +3,16 @@
  *
  * Runs the same clinical corpus through three arms and compares:
  * 1. Monolith: Qwen3-4B free-form extraction (unconstrained)
- * 2. Specialist: Router (rules) → Qwen3-4B constrained extraction
- * 3. Verified: Full pipeline (router → extract → verify)
+ * 2. Specialist: Clinical internal router (rules) → Qwen3-4B constrained extraction
+ * 3. Verified: Clinical extraction → independent verification
  *
  * Metrics: detection recall, hallucination rate, value/unit/quote accuracy, latency per case.
  * Gates: pipeline recall ≥ monolith recall, pipeline hallucination ≤ monolith,
  *        pipeline latency ≤ 2x monolith.
  *
- * The verified arm is run manually (route → extract → verify) rather than through the
- * pipeline mode. The pipeline's verify step now composes both refs
- * (`{document = "initial", extraction = "step-1.raw"}` in profiles.toml), and this
+ * The verified arm is run manually (internally routed extraction → verify) rather than
+ * through the pipeline mode. The pipeline's verify step now composes both refs
+ * (`{document = "initial", extraction = "step-0.raw"}` in profiles.toml), and this
  * transform exists because the clinical step's report is NOT the flat {value, quote} shape
  * the verifier is graded on: the vital-signs task reports nothing, and shock-extraction
  * reports exam fields that carry no quotes. Until a report is verifier-shaped, feeding the
@@ -208,7 +208,7 @@ const ruleBasedVerify = (document: string, extraction: Record<string, unknown>):
   return { ok: issues === 0, issues }
 }
 
-/** Run the verified arm: route → extract → verify. */
+/** Run the verified arm: internally routed clinical extraction → verify. */
 const runVerifiedArm = async (opts: {
   pack: Pack
   clinicalBaseUrl?: string

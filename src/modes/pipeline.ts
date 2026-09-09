@@ -138,6 +138,12 @@ const loadCheckpoint = (dir: string): PipelineCheckpoint | undefined => {
 const highestStepResult = (results: PipelineStepResult[]): PipelineStepResult | undefined =>
   results.length === 0 ? undefined : results.reduce((a, b) => (b.step > a.step ? b : a))
 
+/** The newest value a step actually produced, including a rejected verifier report. */
+const finalOutput = (results: PipelineStepResult[]): unknown => {
+  const produced = results.filter((result) => result.output !== undefined)
+  return highestStepResult(produced)?.output
+}
+
 export interface PipelineStepResult {
   step: number
   name: string
@@ -161,7 +167,14 @@ export interface PipelineStepResult {
 export interface PipelineResult {
   /** All steps that ran, in order. */
   steps: PipelineStepResult[]
-  /** The final step's output, whatever its shape. */
+  /**
+   * The last output the pipeline produced, whatever its shape.
+   *
+   * Present on an early stop when the rejected step returned a usable report, or when an
+   * earlier step produced output before a later step threw. The HTTP caller asked for a run,
+   * so losing its produced value merely because the pipeline also reports failure makes the
+   * response impossible to inspect.
+   */
   final?: unknown
   /** The pipeline stopped early because a step failed. */
   stoppedEarly: boolean
@@ -250,7 +263,7 @@ export const runPipeline = async (o: PipelineOptions): Promise<PipelineResult> =
     return {
       steps: results,
       stoppedEarly: false,
-      final: highestStepResult(results)?.output,
+      final: finalOutput(results),
       totalMs,
     }
   }
@@ -297,7 +310,7 @@ export const runPipeline = async (o: PipelineOptions): Promise<PipelineResult> =
       o.activity?.emit({ kind: 'pipeline.step.completed', step: i, name: stepDef.name, profile: stepDef.profile, ok: false, wallMs })
       o.activity?.emit({ kind: 'stage', stageId: stepStageId, parentId: rootStageId, name: stepDef.name, status: 'completed', wallMs, detail: { step: i, ok: false } })
       rootDone(true, performance.now() - startedAt)
-      return { steps: results, stoppedEarly: true, totalMs: performance.now() - startedAt }
+      return { steps: results, final: finalOutput(results), stoppedEarly: true, totalMs: performance.now() - startedAt }
     }
 
     const pack = o.packs.get(stepDef.profile)
@@ -366,7 +379,7 @@ export const runPipeline = async (o: PipelineOptions): Promise<PipelineResult> =
 
       if (!result.ok) {
         rootDone(true, performance.now() - startedAt)
-        return { steps: results, stoppedEarly: true, totalMs: performance.now() - startedAt }
+        return { steps: results, final: finalOutput(results), stoppedEarly: true, totalMs: performance.now() - startedAt }
       }
     } catch (e) {
       const wallMs = performance.now() - stepStart
@@ -394,7 +407,7 @@ export const runPipeline = async (o: PipelineOptions): Promise<PipelineResult> =
         })
       }
       rootDone(true, performance.now() - startedAt)
-      return { steps: results, stoppedEarly: true, totalMs: performance.now() - startedAt }
+      return { steps: results, final: finalOutput(results), stoppedEarly: true, totalMs: performance.now() - startedAt }
     }
   }
 
@@ -404,7 +417,7 @@ export const runPipeline = async (o: PipelineOptions): Promise<PipelineResult> =
   return {
     steps: results,
     stoppedEarly: false,
-    final: highestStepResult(results)?.output,
+    final: finalOutput(results),
     totalMs,
   }
 }

@@ -49,6 +49,16 @@ test('health endpoint returns profiles and session count', async () => {
   assert.ok((data as any).profiles.includes('clinical'))
   assert.ok((data as any).profiles.includes('router'))
   assert.ok(Array.isArray((data as any).topology?.pipelines))
+  const topologyProfiles = (data as any).topology?.profiles as any[]
+  const router = topologyProfiles.find((profile) => profile.name === 'router')
+  assert.equal(router.pinned, true)
+  const routerTargets = router.topology.stages
+    .flatMap((stage: any) => stage.routes ?? [])
+    .map((route: any) => route.targetProfile)
+  assert.deepEqual(routerTargets, ['clinical', 'transcriptor', 'verifier'])
+  const clinical = topologyProfiles.find((profile) => profile.name === 'clinical')
+  assert.ok(clinical.topology.stages[0].routes.some((route: any) => route.name === 'shock-extraction'))
+  assert.equal(clinical.topology.stages[0].routes.find((route: any) => route.name === 'summary').available, false)
   assert.equal(typeof (data as any).sessions, 'number')
   await close()
 })
@@ -402,6 +412,7 @@ test('run endpoint with router profile uses compiled rules', async () => {
   assert.equal(status, 200)
   assert.equal((data as any).ok, true)
   assert.ok((data as any).text.includes('clinical'))
+  assert.deepEqual((data as any).output, (data as any).report)
   await close()
 })
 

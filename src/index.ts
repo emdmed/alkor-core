@@ -60,6 +60,7 @@ export {
   type ReviewContext,
   type ReviewResult,
 } from './core/profile.ts'
+export { type ProfileTopology, type ProfileTopologyRoute, type ProfileTopologyStage } from './core/topology.ts'
 
 // --- The tool CONTRACT. Core defines no tools; a profile brings its own. -------------
 export { dispatchCall, toolSpecs, type Dispatch, type ToolDef } from './core/tools.ts'

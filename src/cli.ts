@@ -70,7 +70,7 @@ const { values } = parseArgs({
     json: { type: 'boolean', default: false },
     calculate: { type: 'boolean', default: false },
     // Pipeline fidelity eval: run three arms (monolith, specialist, verified) against
-    // the clinical corpus and compare. See src/profiles/clinical-pipeline/eval.ts.
+    // the clinical corpus and compare. See src/profiles/clinical-verified/eval.ts.
     fidelity: { type: 'boolean', default: false },
     // Limit the fidelity eval to N cases (for quick iteration).
     'case-limit': { type: 'string' },

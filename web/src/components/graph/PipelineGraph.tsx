@@ -1,17 +1,17 @@
 /**
  * PipelineGraph — the execution view as a node graph.
  *
- * The graph replaces the old tree-and-steps panel: the whole pipeline paints as a
- * chain of cards on a pannable/zoomable canvas. The router steps fan out the
- * destinations they could have picked (the chosen one lights up and continues the
- * chain), and every step expands into the internal stages the mode painted.
+ * The graph replaces the old tree-and-steps panel: every configured pipeline and
+ * profile remains on a pannable/zoomable canvas while the selected run paints live
+ * state over its lane. Router steps connect to every possible destination; choosing
+ * one de-emphasises, but never removes, the alternatives.
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Check, Circle, ChevronsDownUp, ChevronsUpDown, ListTree, LoaderCircle, Rows3, ScrollText, X } from 'lucide-react'
-import { Background, BackgroundVariant, Controls, MiniMap, ReactFlow, ReactFlowProvider } from '@xyflow/react'
+import { Background, BackgroundVariant, Controls, MiniMap, ReactFlow, ReactFlowProvider, useReactFlow } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import type { GraphNode, GraphNodeData } from '../../lib/graph.ts'
-import { buildGraph } from '../../lib/graph.ts'
+import { buildProjectGraph } from '../../lib/graph.ts'
 import { fmtSec } from '../../lib/format.ts'
 import { NODE_TYPES } from './nodes.tsx'
 import { Badge } from '../ui/badge'
@@ -37,6 +37,7 @@ const RunStatusIcon = ({ status }: { status: GraphNodeData['status'] }) =>
   status === 'active' ? <LoaderCircle className="status-spin" /> : status === 'done' ? <Check /> : status === 'failed' ? <X /> : <Circle />
 
 const GraphView = ({ state, onInspect, onToggleActivity, onToggleLog, activityOpen, logOpen }: PipelineGraphProps) => {
+  const { fitView } = useReactFlow()
   const runs = useMemo(() => [...state.runs.values()], [state.runs])
   const [selectedId, setSelectedId] = useState<string>()
   const [userExpanded, setUserExpanded] = useState<Set<string>>(new Set())
@@ -66,8 +67,7 @@ const GraphView = ({ state, onInspect, onToggleActivity, onToggleLog, activityOp
   }
 
   const { nodes, edges, title } = useMemo(() => {
-    if (!selected) return { nodes: [] as GraphNode[], edges: [], title: '' }
-    const graph = buildGraph(state, selected.runId, autoExpanded)
+    const graph = buildProjectGraph(state, selected?.runId, autoExpanded)
     // The model marks the complete active lineage, so both a pipeline step and its
     // active internal stage stay legible at their respective zoom levels.
     const nodes: GraphNode[] = graph.nodes.map((n) =>
@@ -77,8 +77,8 @@ const GraphView = ({ state, onInspect, onToggleActivity, onToggleLog, activityOp
             ...n,
             data: {
               ...n.data,
-              expanded: autoExpanded.has(n.id) ? true : n.data.expanded,
-              onToggle: (n.data.childCount ?? 0) > 0 ? () => toggleNode(n.id) : undefined,
+              expanded: autoExpanded.has(n.data.expandKey ?? n.id) ? true : n.data.expanded,
+              onToggle: (n.data.childCount ?? 0) > 0 ? () => toggleNode(n.data.expandKey ?? n.id) : undefined,
               onInspect: () => onInspect(n.data),
             },
           },
@@ -87,9 +87,23 @@ const GraphView = ({ state, onInspect, onToggleActivity, onToggleLog, activityOp
   }, [state, selected, autoExpanded, onInspect])
   // onInspect is stable? It's recreated on each App render. Keep memo deps honest.
 
+  // React Flow's fitView runs only when the canvas mounts. Expanded stage rails change
+  // the graph's bounds later, so refit only when geometry changes (not for every live
+  // status event) and keep the complete execution path reachable.
+  const geometryKey = nodes
+    .map((n) => `${n.id}:${n.position.x}:${n.position.y}:${String(n.style?.width ?? '')}:${String(n.style?.height ?? '')}`)
+    .join('|')
+  useEffect(() => {
+    if (nodes.length === 0) return
+    const frame = requestAnimationFrame(() => {
+      void fitView({ padding: 0.14, minZoom: 0.08, maxZoom: 1 })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [fitView, geometryKey, nodes.length])
+
   const expandAll = () => {
     const all = new Set<string>()
-    for (const n of nodes) if ((n.data.childCount ?? 0) > 0) all.add(n.id)
+    for (const n of nodes) if ((n.data.childCount ?? 0) > 0) all.add(n.data.expandKey ?? n.id)
     setUserExpanded(all)
   }
   const collapseAll = () => setUserExpanded(new Set())
@@ -99,7 +113,7 @@ const GraphView = ({ state, onInspect, onToggleActivity, onToggleLog, activityOp
       <div className="graph-toolbar">
         <div className="graph-heading">
           <div className="graph-heading-copy">
-            <span className="graph-title">Pipeline execution</span>
+            <span className="graph-title">Project topology</span>
             {title && <span className="graph-subtitle">{title}</span>}
           </div>
           <RunPosition run={selected} nodes={nodes} />
@@ -121,7 +135,7 @@ const GraphView = ({ state, onInspect, onToggleActivity, onToggleLog, activityOp
           </div>
 
           <div className="graph-tools" aria-label="Graph controls">
-            {runs.length > 0 && (
+            {nodes.some((n) => (n.data.childCount ?? 0) > 0) && (
               <div className="control-group">
                 <Button variant="ghost" size="sm" onClick={expandAll} title="Expand every step"><ChevronsUpDown />Expand</Button>
                 <Button variant="ghost" size="sm" onClick={collapseAll} title="Collapse every step"><ChevronsDownUp />Collapse</Button>
@@ -144,14 +158,13 @@ const GraphView = ({ state, onInspect, onToggleActivity, onToggleLog, activityOp
 
       <div className="graph-canvas">
         <ReactFlow
-          key={selected?.runId ?? 'empty'}
           nodes={nodes}
           edges={edges}
           nodeTypes={NODE_TYPES}
           fitView
-          minZoom={0.25}
+          minZoom={0.08}
           maxZoom={1.35}
-          fitViewOptions={{ padding: 0.16, minZoom: 0.25, maxZoom: 1 }}
+          fitViewOptions={{ padding: 0.16, minZoom: 0.08, maxZoom: 1 }}
           nodesConnectable={false}
           elementsSelectable={false}
           onNodeClick={(_e, node) => {
@@ -160,7 +173,7 @@ const GraphView = ({ state, onInspect, onToggleActivity, onToggleLog, activityOp
           }}
           onNodeDoubleClick={(_e, node) => {
             const d = node.data as GraphNodeData
-            if ((d.childCount ?? 0) > 0) toggleNode(node.id)
+            if ((d.childCount ?? 0) > 0) toggleNode(d.expandKey ?? node.id)
           }}
         >
           <Background variant={BackgroundVariant.Dots} gap={24} size={1.2} color="#d4e4e2" />
@@ -176,11 +189,11 @@ const GraphView = ({ state, onInspect, onToggleActivity, onToggleLog, activityOp
 
       {showLegend && <Legend />}
 
-      {runs.length === 0 && (
+      {nodes.length === 0 && (
         <div className="graph-empty">
-          <div>No runs yet</div>
-          <div className="text-muted-foreground text-xs">Follow the selected path from input to output. Alternative routes appear below it.</div>
-          <div className="text-muted-foreground/60 text-xs">Listening for live events…</div>
+          <div>No topology yet</div>
+          <div className="text-muted-foreground text-xs">Connect to load configured pipelines, profiles, and routes.</div>
+          <div className="text-muted-foreground/60 text-xs">Listening for the /health snapshot…</div>
         </div>
       )}
     </div>
@@ -234,8 +247,9 @@ const Legend = () => (
       <span className="graph-legend-row"><span className="legend-edge legend-edge-data" />flow</span>
       <span className="graph-legend-row"><span className="legend-edge legend-edge-branch" />selected</span>
       <span className="graph-legend-row"><span className="legend-edge legend-edge-ghost" />available</span>
+      <span className="graph-legend-row"><span className="legend-edge legend-edge-muted" />not selected</span>
     </div>
-    <div className="graph-legend-note">Click for details · double-click to expand</div>
+    <div className="graph-legend-note">All configured paths remain visible · click for details</div>
   </div>
 )
 

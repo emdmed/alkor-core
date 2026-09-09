@@ -38,6 +38,30 @@ export const PROFILE: ProfileModule = {
   name: 'clinical',
   mode: 'extract',
   needsPack: true,
+  topology: {
+    stages: [{
+      name: 'route',
+      kind: 'decision',
+      routes: [
+        { name: 'vital-signs', stages: [{ name: 'prompt-assembly' }, { name: 'llm-call' }, { name: 'parse' }, { name: 'verify' }] },
+        { name: 'note-format', stages: [{ name: 'prompt-assembly' }, { name: 'llm-call' }, { name: 'parse' }, { name: 'verify' }] },
+        {
+          name: 'transcript',
+          stages: [
+            { name: 'prompt-assembly' },
+            { name: 'llm-call' },
+            { name: 'parse' },
+            { name: 'medication-pass', optional: true },
+            { name: 'verify' },
+            { name: 'transcript-repair', optional: true },
+          ],
+        },
+        { name: 'shock', stages: [{ name: 'shock-classification' }, { name: 'llm-call' }, { name: 'verify' }] },
+        { name: 'shock-extraction', stages: [{ name: 'shock-extraction' }, { name: 'llm-call' }, { name: 'parse' }] },
+        { name: 'summary', available: false },
+      ],
+    }],
+  },
   /**
    * Which corpus `--case` selects from, decided by `--task` for the same reason `review`
    * below is: this pack holds two corpora that are not interchangeable, and a transcript is

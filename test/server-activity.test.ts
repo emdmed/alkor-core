@@ -214,11 +214,12 @@ mode = "router"
 
   const { url, close } = await startServer(tomlPath)
   try {
-    const { status } = await request(`${url}/run`, 'POST', {
+    const { status, data } = await request(`${url}/run`, 'POST', {
       profile: 'pipeline-test',
       input: 'hello',
     })
     assert.equal(status, 200)
+    assert.deepEqual((data as any).output, (data as any).final)
   } finally {
     await close()
     rmSync(dir, { recursive: true, force: true })

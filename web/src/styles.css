@@ -740,6 +740,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 .legend-edge-data { border-top-color: #8ea3ad; }
 .legend-edge-branch { border-top-color: #46957e; }
 .legend-edge-ghost { border-top-color: #b3c3c9; border-top-style: dashed; }
+.legend-edge-muted { border-top-color: #b3c3c9; border-top-style: dashed; opacity: 0.3; }
 
 /* --- drawer (right slide-over) --------------------------------------------- */
 .drawer {
@@ -828,6 +829,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 @media (prefers-reduced-motion: reduce) {
   .drawer { transition: none; }
   .status-spin { animation: none; }
+  .g-profile .g-card { transition: none; }
 }
 
 /* --- inspected node detail (inspector drawer header) ------------------------ */
@@ -983,6 +985,10 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 .g-failed { border-color: #e2a8ab; background: #fff7f7; }
 .g-idle { border-color: #ccd9dc; }
 .g-card.g-idle { opacity: 0.72; }
+.g-card.g-muted-path {
+  opacity: 0.24;
+  filter: saturate(0.35);
+}
 
 .g-input .g-card { background: color-mix(in oklab, var(--primary) 8%, var(--card)); }
 .g-output .g-card { background: color-mix(in oklab, #72b99e 9%, var(--card)); }
@@ -1000,12 +1006,32 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   border-left-width: 1px;
   font-size: 0.76rem;
 }
+.g-chip-copy { display: flex; flex-direction: column; min-width: 0; }
+.g-chip-meta {
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+  line-height: 1.25;
+}
 .g-chip-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: #46957e;
   flex: none;
+}
+.g-profile .g-card {
+  min-height: 62px;
+  justify-content: center;
+  transition: opacity 180ms ease-out, filter 180ms ease-out, border-color 180ms ease-out, background-color 180ms ease-out;
+}
+.g-profile .g-card:has(.g-profile-route) {
+  border-color: #71bda7;
+  background: #f2fbf7;
+}
+.g-profile-route {
+  color: #397d69;
+  font-size: 0.66rem;
+  font-weight: 700;
 }
 .g-now {
   position: absolute;
@@ -1025,6 +1051,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 .g-stage { width: 248px; }
 .g-input, .g-output { width: 240px; }
 .g-chip-wrap { width: 168px; }
+.g-profile { width: 196px; }
 
 .g-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .g-chev { display: inline-flex; color: var(--muted-foreground); flex: none; }
@@ -1042,6 +1069,19 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.g-entry-tag {
+  flex: none;
+  margin-left: auto;
+  padding: 1px 5px;
+  border: 1px solid color-mix(in oklab, var(--primary) 58%, var(--border));
+  border-radius: 8px;
+  background: var(--secondary);
+  color: var(--primary);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
 }
 .g-meta {
   font-size: 0.7rem;
@@ -1105,28 +1145,69 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 /* --- ReactFlow chrome --------------------------------------------------------- */
 .react-flow { background: transparent; }
 .react-flow__node { cursor: default; }
+/* `input` and `output` are custom node types here, but React Flow also ships
+   built-in styles under those type names. Reset that 150px box so our card is
+   the only visible surface and owns the complete focus/hit area. */
+.react-flow__node-input,
+.react-flow__node-output {
+  width: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  text-align: inherit;
+}
+.react-flow__node-input.selectable:hover,
+.react-flow__node-input.selectable.selected,
+.react-flow__node-output.selectable:hover,
+.react-flow__node-output.selectable.selected {
+  box-shadow: none;
+}
 .react-flow__node-group {
   pointer-events: none;
   z-index: 0 !important;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 .g-group {
   box-sizing: border-box;
+  position: relative;
   width: 100%;
   height: 100%;
   border: 1px solid color-mix(in oklab, var(--border) 82%, var(--primary));
   border-radius: 14px;
-  background: color-mix(in oklab, var(--secondary) 42%, transparent);
+  background: color-mix(in oklab, var(--secondary) 34%, transparent);
   padding: 7px 10px;
 }
 .g-group-label {
+  position: absolute;
+  top: 7px;
+  right: 10px;
   display: block;
+  max-width: calc(50% - 14px);
   color: var(--muted-foreground);
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
 }
-.g-group-current { border-color: var(--primary); }
+.g-group-current {
+  border-color: color-mix(in oklab, var(--primary) 72%, var(--border));
+  background: color-mix(in oklab, var(--secondary) 58%, transparent);
+}
+.react-flow__node:focus { outline: none; }
+.react-flow__node:focus-visible .g-card {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
 .react-flow__handle {
   opacity: 0;
   pointer-events: none;
@@ -1156,4 +1237,4 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 
 .react-flow__edge { cursor: default; }
 .react-flow__edge-path { stroke-linecap: round; }
-.react-flow__edge-text { fill: var(--muted-foreground); font-size: 10px; }
+.react-flow__edge-text { fill: var(--muted-foreground); font-size: 0.7rem; }

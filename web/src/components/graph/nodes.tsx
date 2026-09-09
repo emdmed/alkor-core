@@ -18,7 +18,7 @@ const StatusGlyph = ({ status }: { status: GraphNodeData['status'] }) =>
 
 /** Small coloured graph node card — every real (non-group) node is one of these. */
 const Card = ({ data, children }: { data: GraphNodeData; children?: React.ReactNode }) => (
-  <div className={`g-card ${data.kind === 'branch' ? 'g-chip' : ''} ${statusClass(data.status)}${data.current ? ' g-current' : ''}`}>
+  <div className={`g-card ${data.kind === 'branch' ? 'g-chip' : ''} ${statusClass(data.status)}${data.current ? ' g-current' : ''}${data.muted ? ' g-muted-path' : ''}`}>
     {data.current && <span className="g-now" aria-label="Current operation">NOW</span>}
     {children}
   </div>
@@ -36,6 +36,7 @@ const Title = ({ data, chevron }: { data: GraphNodeData; chevron?: boolean }) =>
     ) : null}
     <span className="g-glyph" aria-label={data.status}><StatusGlyph status={data.status} /></span>
     <span className="g-label">{data.label}</span>
+    {data.entryPoint && <span className="g-entry-tag" aria-label="Main routing entry point">ENTRY</span>}
   </div>
 )
 
@@ -167,6 +168,7 @@ export const RouteNode = (props: NodeProps<GraphNode>) => {
         {data.task && <div className="g-detail">→ task <b>{data.task}</b></div>}
         {data.profile && <div className="g-detail">→ profile <b>{data.profile}</b></div>}
         {data.reason && <div className="g-detail">{data.reason}</div>}
+        {data.detailText && <div className="g-detail">{data.detailText}</div>}
       </Card>
     </div>
   )
@@ -178,11 +180,33 @@ export const BranchNode = (props: NodeProps<GraphNode>) => {
   const { data } = props
   return (
     <div className="g-chip-wrap">
+      <Handle id="left" type="target" position={Position.Left} />
       <Handle id="tl" type="target" position={Position.Top} />
       <Handle id="t" type="target" position={Position.Top} />
+      <Handle id="s" type="source" position={Position.Right} />
       <Card data={data}>
         {data.chosen && <span className="g-chip-dot" />}
-        <span className="g-label">{data.label}</span>
+        <span className="g-chip-copy">
+          <span className="g-label">{data.label}</span>
+          {data.detailText && <span className="g-chip-meta">{data.detailText}</span>}
+        </span>
+      </Card>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ configured profile */
+
+export const ProfileNode = (props: NodeProps<GraphNode>) => {
+  const { data } = props
+  return (
+    <div className="g-profile">
+      <Handle id="top" type="target" position={Position.Top} />
+      <Handle id="s" type="source" position={Position.Right} />
+      <Card data={data}>
+        <Title data={data} />
+        {data.configured === false ? <Meta className="g-err-text">route target not configured</Meta> : data.mode && <Meta>{data.mode} profile</Meta>}
+        {data.chosen && <span className="g-profile-route">selected route</span>}
       </Card>
     </div>
   )
@@ -203,5 +227,6 @@ export const NODE_TYPES = {
   stage: StageNode,
   route: RouteNode,
   branch: BranchNode,
+  profile: ProfileNode,
   group: GroupNode,
 } as const

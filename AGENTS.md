@@ -79,7 +79,7 @@ node src/cli.ts eval --profile clinical --constrain
 node src/cli.ts eval --profile router
 node src/cli.ts eval --profile verifier
 node src/cli.ts eval --profile clinical --task shock --constrain
-node src/cli.ts eval --profile clinical-pipeline --fidelity
+node src/cli.ts eval --profile clinical-verified --fidelity
 ```
 
 ## Non-negotiable rules

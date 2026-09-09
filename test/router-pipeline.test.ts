@@ -188,7 +188,39 @@ test('pipeline stops early on step failure', async () => {
   assert.equal(result.steps.length, 1)
   assert.equal(result.steps[0]!.ok, false)
   assert.equal(result.steps[0]!.error, 'mock extractor')
-  assert.equal(result.final, undefined)
+  assert.equal(result.final, 'error')
+})
+
+test('pipeline preserves the last produced output when a later step throws', async () => {
+  const throwing: ProfileModule = {
+    name: 'throwing',
+    mode: 'extract',
+    needsPack: false,
+    async review(): Promise<ReviewResult> {
+      throw new Error('verifier unavailable')
+    },
+    async runEval(): Promise<EvalVerdict> {
+      return { pass: false, summary: 'not reached' }
+    },
+  }
+  const profiles = new Map<string, ProfileModule>([
+    ['extractor', mockExtractProfile('extractor', { value: 'extracted' })],
+    ['throwing', throwing],
+  ])
+
+  const result = await runPipeline({
+    initialInput: 'test document',
+    steps: buildPipeline([
+      { name: 'extract', profile: 'extractor' },
+      { name: 'verify', profile: 'throwing', input: 'step-0' },
+    ]),
+    profiles,
+    packs: new Map([['extractor', undefined], ['throwing', undefined]]),
+    baseUrls: new Map([['extractor', undefined], ['throwing', undefined]]),
+  })
+
+  assert.equal(result.stoppedEarly, true)
+  assert.deepEqual(result.final, { value: 'extracted' })
 })
 
 test('pipeline passes initial input to first step', async () => {
