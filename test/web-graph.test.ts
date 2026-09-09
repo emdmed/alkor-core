@@ -339,6 +339,18 @@ test('dashboard graph keeps every pipeline and opens nested route paths by defau
   assert.ok(graph.nodes.some((node) => node.data.label === 'beta-work'))
   assert.equal(graph.expanded.has(alpha.data.expandKey ?? alpha.id), true)
   assert.equal(graph.expanded.has(beta.data.expandKey ?? beta.id), true)
+  const firstLaneBottom = laneGroups[0]!.position.y + Number(laneGroups[0]!.style?.height)
+  assert.ok(laneGroups[1]!.position.y - firstLaneBottom >= 32, 'pipeline groups keep a clear section gutter')
+  for (const lane of laneGroups) {
+    const prefix = `pipeline-lane-${lane.id.slice('pipeline-lane-group-'.length)}/`
+    const nested = graph.nodes.filter((node) => node.data.kind === 'group' && node.id.startsWith(prefix))
+    const laneRight = lane.position.x + Number(lane.style?.width)
+    const laneBottom = lane.position.y + Number(lane.style?.height)
+    assert.ok(nested.every((node) => node.position.x >= lane.position.x + 20))
+    assert.ok(nested.every((node) => node.position.x + Number(node.style?.width) <= laneRight - 20))
+    assert.ok(nested.every((node) => node.position.y >= lane.position.y + 24))
+    assert.ok(nested.every((node) => node.position.y + Number(node.style?.height) <= laneBottom - 20))
+  }
 
   const collapsed = buildExpandedPipelinesGraph(
     state,
@@ -382,6 +394,49 @@ test('selecting a run paints its lane without hiding other pipelines or routes',
   assert.equal(clinical.data.muted, false)
   assert.equal(verifier.data.chosen, false)
   assert.equal(verifier.data.muted, true)
+})
+
+test('expanded runtime stages keep the pipeline output after the complete trail', () => {
+  const state = emptyState()
+  state.topology = {
+    profiles: [
+      { name: 'flow', mode: 'pipeline' },
+      { name: 'worker', mode: 'extract', topology: { stages: [{ name: 'prompt-assembly' }, { name: 'llm-call' }] } },
+    ],
+    pipelines: [{ name: 'flow', steps: [{ name: 'extract', profile: 'worker', input: 'initial' }] }],
+  }
+  state.runs.set('run-1', { runId: 'run-1', profile: 'flow', status: 'completed', wallMs: 1200 })
+  state.pipelines.set('run-1', {
+    runId: 'run-1',
+    steps: [{ step: 0, name: 'extract', profile: 'worker', status: 'completed', wallMs: 900 }],
+  })
+  state.stages.set('pipeline', {
+    stageId: 'pipeline', runId: 'run-1', name: 'pipeline', status: 'completed', children: [],
+  })
+  state.stages.set('worker', {
+    stageId: 'worker', runId: 'run-1', parentId: 'pipeline', name: 'worker', status: 'completed', detail: { step: 0 }, children: [],
+  })
+  state.stages.set('prepare', {
+    stageId: 'prepare', runId: 'run-1', parentId: 'worker', name: 'prompt-assembly', status: 'completed', children: [],
+  })
+  state.stages.set('model', {
+    stageId: 'model', runId: 'run-1', parentId: 'worker', name: 'llm-call', status: 'completed', children: [],
+  })
+
+  const graph = buildExpandedPipelinesGraph(state, 'run-1', new Set(), new Set())
+  const execution = graph.nodes.filter((node) => node.id.startsWith('pipeline-lane-flow/pipeline-flow/'))
+  const output = execution.find((node) => node.data.kind === 'output')!
+  const predecessors = execution.filter((node) => node.data.kind !== 'output' && node.data.kind !== 'group')
+
+  const widthOf = (node: (typeof predecessors)[number]): number =>
+    node.data.kind === 'step' ? 264 : node.data.kind === 'stage' || node.data.kind === 'route' ? 248 : 240
+  const sameRow = predecessors.filter((node) => node.position.y === output.position.y)
+
+  assert.ok(sameRow.length > 2, 'the regression requires expanded runtime stages')
+  assert.ok(
+    sameRow.every((node) => node.position.x + widthOf(node) + 56 <= output.position.x),
+    'output keeps a full trail gutter after every preceding operation',
+  )
 })
 
 test('project graph renders every configured pipeline and profile before any run', () => {

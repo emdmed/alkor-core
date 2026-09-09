@@ -847,14 +847,14 @@ export const buildProgressGraph = (
   }
 }
 
-const graphBounds = (nodes: GraphNode[]): { left: number; top: number; right: number; bottom: number } => {
+const graphBounds = (nodes: GraphNode[], includeGroups = false): { left: number; top: number; right: number; bottom: number } => {
   if (nodes.length === 0) return { left: MAIN_X, top: MAIN_Y, right: MAIN_X, bottom: MAIN_Y }
   let left = Infinity
   let top = Infinity
   let right = -Infinity
   let bottom = -Infinity
   for (const n of nodes) {
-    if (n.data.kind === 'group') continue
+    if (n.data.kind === 'group' && !includeGroups) continue
     const width = typeof n.style?.width === 'number' ? n.style.width : n.measured?.width ?? (
       n.data.kind === 'step' ? STEP_W : n.data.kind === 'stage' || n.data.kind === 'route' ? STAGE_W : n.data.kind === 'profile' ? 196 : n.data.kind === 'branch' ? CHIP_W : 240
     )
@@ -932,7 +932,9 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
     const placed = placeGraph(stripped, prefix, laneY - MAIN_Y)
     if (alignOutput) {
       const output = placed.nodes.find((candidate) => candidate.data.kind === 'output')
-      if (output) output.position.x = columnX(pipelineOutputRank)
+      // Align short configured lanes to the shared output column, but never pull an
+      // expanded runtime output backward over the stages that now precede it.
+      if (output) output.position.x = Math.max(output.position.x, columnX(pipelineOutputRank))
     }
 
     const bounds = graphBounds(placed.nodes)
@@ -1059,7 +1061,9 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
   const crossProfileRoutes: Array<{ source: GraphNode; target: string; chosen: boolean; muted: boolean }> = []
   const lanesBottom = graphBounds(nodes).bottom
   const profileX = columnX(0)
-  let profileY = lanesBottom + 58
+  // The preceding lane group extends 20px below its content and this profile group
+  // begins 30px above its root. Reserve a further 32px between those boundaries.
+  let profileY = lanesBottom + 82
 
   const muteEdge = (edge: GraphEdge): void => {
     edge.style = { ...edge.style, opacity: 0.52 }
@@ -1397,9 +1401,9 @@ export const buildPipelinesGraph = (
   for (const pipeline of state.topology.pipelines) {
     const isSelected = Boolean(selected && selectedDefinition?.name === pipeline.name)
     const raw = buildConfiguredProgressTopology(state, pipeline, expanded, isSelected ? selected!.runId : undefined)
-    const rawBounds = graphBounds(raw.nodes)
+    const rawBounds = graphBounds(raw.nodes, true)
     const placed = placeGraph(raw, `pipeline-lane-${pipeline.name}`, nextY - rawBounds.top)
-    const bounds = graphBounds(placed.nodes)
+    const bounds = graphBounds(placed.nodes, true)
     nodes.push(...placed.nodes)
     edges.push(...placed.edges)
 
