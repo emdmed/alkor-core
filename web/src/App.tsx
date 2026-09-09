@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { ChevronUp } from 'lucide-react'
 import { Header } from './components/Header.tsx'
 import { StatusStrip } from './components/StatusStrip.tsx'
 import { PipelineGraph } from './components/graph/PipelineGraph.tsx'
@@ -18,8 +19,8 @@ export const App = () => {
   // but do not take a third of the canvas before the operator asks for it.
   const [rightOpen, setRightOpen] = useState(false)
   const [rightTab, setRightTab] = useState<'activity' | 'inspector'>('activity')
-  const [chatOpen, setChatOpen] = useState(true)
-  const [logOpen, setLogOpen] = useState(true)
+  const [chatOpen, setChatOpen] = useState(() => typeof window === 'undefined' || window.innerWidth > 760)
+  const [logOpen, setLogOpen] = useState(false)
   const [inspected, setInspected] = useState<GraphNodeData | null>(null)
 
   const openInspector = (data: GraphNodeData) => {
@@ -87,7 +88,7 @@ export const App = () => {
           <EventLog state={state} onToggle={() => setLogOpen(false)} />
         ) : (
           <button className="log-reopen" onClick={() => setLogOpen(true)}>
-            ▂ EVENT LOG · reopen
+            <ChevronUp aria-hidden="true" /> Event log <span>Open</span>
           </button>
         )}
       </div>

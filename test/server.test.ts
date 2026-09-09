@@ -13,6 +13,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer as createMedextractServer } from '../src/server.ts'
+import type { SpawnFn } from '../src/core/llama-manager.ts'
 
 const startServer = async (configPath?: string): Promise<{ server: Server; url: string; close: () => Promise<void> }> => {
   const server = await createMedextractServer(configPath)
@@ -118,6 +119,118 @@ test('run with every backend down refuses with 503, not a silent failure', async
     assert.ok(String((data as any).error).includes('llama-server'))
   } finally {
     await close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a session keeps its prompt in memory while its llama-server starts on demand', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'medextract-session-start-test-'))
+
+  // Reserve and release a port so the first readiness probe sees a genuinely dark backend.
+  const reservation = createServer(() => {})
+  reservation.listen(0, '127.0.0.1')
+  await once(reservation, 'listening')
+  const { port } = reservation.address() as { port: number }
+  await new Promise<void>((resolve) => reservation.close(() => resolve()))
+
+  const tomlPath = join(dir, 'profiles.toml')
+  writeFileSync(
+    tomlPath,
+    `[coding]\nmode = "agentic"\nurl = "http://127.0.0.1:${port}"\nmodel = "/models/fake.gguf"\n`,
+  )
+
+  const prompts: string[] = []
+  let starts = 0
+  let backend: Server | undefined
+  let announceSpawn!: () => void
+  const spawned = new Promise<void>((resolve) => (announceSpawn = resolve))
+  const spawn: SpawnFn = (_binary, args) => {
+    starts++
+    let stopped = false
+    let exitResolve!: (result: { code: number | null; signal: NodeJS.Signals | null }) => void
+    const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+      (resolve) => (exitResolve = resolve),
+    )
+    const timer = setTimeout(() => {
+      if (stopped) return
+      backend = createServer(async (req, res) => {
+        if (req.url === '/health') {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end('{"status":"ok"}')
+          return
+        }
+        if (req.url === '/v1/models') {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end('{"data":[{"id":"fake-model"}]}')
+          return
+        }
+        if (req.url === '/props') {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end('{}')
+          return
+        }
+        if (req.url === '/v1/chat/completions') {
+          const chunks: Buffer[] = []
+          for await (const chunk of req) chunks.push(chunk as Buffer)
+          const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+          prompts.push(body.messages.at(-1)?.content)
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(
+            JSON.stringify({
+              choices: [{ message: { content: 'ready answer', tool_calls: [] } }],
+              usage: { prompt_tokens: 2, completion_tokens: 2, total_tokens: 4 },
+            }),
+          )
+          return
+        }
+        res.writeHead(404)
+        res.end()
+      })
+      backend.listen(Number(args[args.indexOf('--port') + 1]), '127.0.0.1')
+    }, 40)
+    announceSpawn()
+    return {
+      pid: 1234,
+      exit,
+      kill: (signal) => {
+        stopped = true
+        clearTimeout(timer)
+        backend?.close()
+        exitResolve({ code: null, signal: signal ?? 'SIGTERM' })
+        return true
+      },
+      stdout: () => '',
+      stderr: () => '',
+    }
+  }
+
+  const medextract = await createMedextractServer(tomlPath, {
+    llamaManager: { spawn, pollMs: 5, startTimeoutMs: 2000 },
+  })
+  medextract.listen(0, '127.0.0.1')
+  await once(medextract, 'listening')
+  const url = `http://127.0.0.1:${(medextract.address() as { port: number }).port}`
+
+  try {
+    const created = await request(`${url}/session`, 'POST', { profile: 'coding', stream: false })
+    assert.equal(created.status, 200)
+    assert.equal(starts, 0, 'creating an empty session does not wake the model')
+
+    const pending = request(`${url}/session/${(created.data as any).id}/send`, 'POST', {
+      text: 'held until ready',
+    })
+    await spawned
+    assert.equal(prompts.length, 0, 'the prompt is not dispatched while the backend is loading')
+
+    const sent = await pending
+    assert.equal(sent.status, 200)
+    assert.equal((sent.data as any).answer, 'ready answer')
+    assert.deepEqual(prompts, ['held until ready'])
+    assert.equal(starts, 1)
+  } finally {
+    medextract.closeAllConnections()
+    medextract.close()
+    await once(medextract, 'close')
     rmSync(dir, { recursive: true, force: true })
   }
 })

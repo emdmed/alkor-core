@@ -33,7 +33,12 @@ import { createActivity, withActivity, withActivityScope, type Activity, type Ac
 import type { Pack } from './core/pack.ts'
 import type { ProfileModule } from './core/profile.ts'
 import { identifyServer, probeServer, DEFAULT_URL } from './core/client.ts'
-import { LlamaManager, withTouching, type ManagedSpec } from './core/llama-manager.ts'
+import {
+  LlamaManager,
+  withTouching,
+  type LlamaManagerOptions,
+  type ManagedSpec,
+} from './core/llama-manager.ts'
 
 const isMain = (() => {
   try {
@@ -79,7 +84,12 @@ const corsHeaders = (origin: string | undefined): Record<string, string> => {
   }
 }
 
-export const createServer = async (configPath?: string): Promise<Server> => {
+export interface ServerOptions {
+  /** Process seams used by server tests; production uses the real llama-server lifecycle. */
+  llamaManager?: Pick<LlamaManagerOptions, 'binary' | 'pollMs' | 'probe' | 'spawn' | 'startTimeoutMs'>
+}
+
+export const createServer = async (configPath?: string, options: ServerOptions = {}): Promise<Server> => {
   const cfg = loadConfig(configPath)
   const activity = createActivity()
 
@@ -98,6 +108,7 @@ export const createServer = async (configPath?: string): Promise<Server> => {
     idleMs,
     spawnArgs,
     enabled: manageModels,
+    ...options.llamaManager,
     emit: (e) => {
       activity.emit({
         kind: 'model.lifecycle',
@@ -270,7 +281,7 @@ export const createServer = async (configPath?: string): Promise<Server> => {
   }
 
   // In-memory sessions
-  const sessions = new Map<string, { profile: string; session: Session }>()
+  const sessions = new Map<string, { profile: string; baseUrl: string; session: Session }>()
 
   // JSON body parser
   const readBody = async (req: IncomingMessage): Promise<unknown> => {
@@ -577,19 +588,22 @@ export const createServer = async (configPath?: string): Promise<Server> => {
           return neededBackends.size > 0
         })()
         if (needsModel) {
-          for (const needed of neededBackends) {
-            const ready = await manager.ensure(needed)
-            if (!ready) {
-              backendReachability.set(needed, false)
-              serviceUnavailable(
-                res,
-                `no model backend is reachable at ${needed} — ${manager.describe(needed)}. ` +
-                  'Start llama-server on it first (scripts/llama-server.sh), or check MEDEXTRACT_MANAGE_MODELS.',
-              )
-              done(503)
-              return
-            }
-            backendReachability.set(needed, true)
+          // Keep the parsed request (including its prompt) in this handler while every
+          // backend starts. Pipeline models are independent, so load them concurrently;
+          // only dispatch the run after all of them have answered their readiness probe.
+          const readiness = await Promise.all(
+            [...neededBackends].map(async (needed) => ({ needed, ready: await manager.ensure(needed) })),
+          )
+          const unavailable = readiness.find(({ ready }) => !ready)
+          for (const { needed, ready } of readiness) backendReachability.set(needed, ready)
+          if (unavailable) {
+            serviceUnavailable(
+              res,
+              `no model backend is reachable at ${unavailable.needed} — ${manager.describe(unavailable.needed)}. ` +
+                'Start llama-server on it first (scripts/llama-server.sh), or check MEDEXTRACT_MANAGE_MODELS.',
+            )
+            done(503)
+            return
           }
         }
 
@@ -750,23 +764,6 @@ export const createServer = async (configPath?: string): Promise<Server> => {
         const { profile, config: profileConfig } = await loadProfile(profileName)
         const baseUrl = profileConfig.url as string | undefined
 
-        await emitModelIdentified(baseUrl)
-
-        // A session only exists to talk to a model; if the backend is down and spawnable,
-        // bring it up now so the first send does not discover "nothing happened" mid-chat.
-        if (baseUrl) {
-          const ready = await manager.ensure(baseUrl)
-          if (!ready && manager.status(baseUrl).managed) {
-            serviceUnavailable(
-              res,
-              `no model backend is reachable at ${baseUrl} — ${manager.describe(baseUrl)}. ` +
-                'Start llama-server on it first (scripts/llama-server.sh), or check MEDEXTRACT_MANAGE_MODELS.',
-            )
-            done(503)
-            return
-          }
-        }
-
         const rawPrompt = profile.chatSystemPrompt ?? profile.systemPrompt ?? ''
         const systemPrompt = typeof rawPrompt === 'function' ? rawPrompt(undefined) : rawPrompt
         const tools = profile.tools ?? []
@@ -783,7 +780,10 @@ export const createServer = async (configPath?: string): Promise<Server> => {
         })
 
         const id = randomUUID()
-        sessions.set(id, { profile: profileName, session })
+        const effectiveBaseUrl = baseUrl ?? process.env.LLAMA_URL ?? DEFAULT_URL
+        // Session creation carries no user prompt, so it must not wake a dormant model.
+        // Retaining the URL here lets the first (and every post-idle) send wait for it.
+        sessions.set(id, { profile: profileName, baseUrl: effectiveBaseUrl, session })
         activity.emit({ kind: 'session.created', sessionId: id, profile: profileName })
         ok(res, { id, profile: profileName })
         done(200)
@@ -815,6 +815,23 @@ export const createServer = async (configPath?: string): Promise<Server> => {
             done(400)
             return
           }
+
+          // `text` is now owned by this request and remains in memory while a dormant
+          // llama-server starts. Concurrent sends share LlamaManager.ensure's one startup
+          // promise; no prompt reaches the transport until the readiness probe succeeds.
+          const ready = await manager.ensure(entry.baseUrl)
+          backendReachability.set(entry.baseUrl, ready)
+          if (!ready) {
+            serviceUnavailable(
+              res,
+              `no model backend is reachable at ${entry.baseUrl} — ${manager.describe(entry.baseUrl)}. ` +
+                'Start llama-server on it first (scripts/llama-server.sh), or check MEDEXTRACT_MANAGE_MODELS.',
+            )
+            done(503)
+            return
+          }
+          await emitModelIdentified(entry.baseUrl)
+
           const controller = new AbortController()
           res.on('close', () => {
             if (!res.writableFinished) controller.abort()

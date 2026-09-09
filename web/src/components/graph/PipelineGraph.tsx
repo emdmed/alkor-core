@@ -7,11 +7,12 @@
  * chain), and every step expands into the internal stages the mode painted.
  */
 import { useMemo, useState } from 'react'
+import { Check, Circle, ChevronsDownUp, ChevronsUpDown, ListTree, LoaderCircle, Rows3, ScrollText, X } from 'lucide-react'
 import { Background, BackgroundVariant, Controls, MiniMap, ReactFlow, ReactFlowProvider } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import type { GraphNode, GraphNodeData } from '../../lib/graph.ts'
 import { buildGraph } from '../../lib/graph.ts'
-import { fmtSec, nodeMark } from '../../lib/format.ts'
+import { fmtSec } from '../../lib/format.ts'
 import { NODE_TYPES } from './nodes.tsx'
 import { Badge } from '../ui/badge'
 import { Button } from '../ui/button'
@@ -32,7 +33,8 @@ const shortId = (id: string): string => `#${id.slice(0, 6)}`
 const statusColor = (status: GraphNodeData['status']): string =>
   status === 'active' ? '#46957e' : status === 'failed' ? '#bd656b' : status === 'done' ? '#4d87b4' : '#c3d2d5'
 
-const statusGlyph = (status: GraphNodeData['status']): string => nodeMark[status]
+const RunStatusIcon = ({ status }: { status: GraphNodeData['status'] }) =>
+  status === 'active' ? <LoaderCircle className="status-spin" /> : status === 'done' ? <Check /> : status === 'failed' ? <X /> : <Circle />
 
 const GraphView = ({ state, onInspect, onToggleActivity, onToggleLog, activityOpen, logOpen }: PipelineGraphProps) => {
   const runs = useMemo(() => [...state.runs.values()], [state.runs])
@@ -95,40 +97,48 @@ const GraphView = ({ state, onInspect, onToggleActivity, onToggleLog, activityOp
   return (
     <div className="graph-wrap">
       <div className="graph-toolbar">
-        <span className="graph-title">PIPELINE EXECUTION</span>
-        {title && <span className="graph-subtitle">{title}</span>}
-        <RunPosition run={selected} nodes={nodes} />
-
-        <div className="graph-runs">
-          {runs.length === 0 && <span className="text-muted-foreground text-xs">waiting for the first run…</span>}
-          {runs.slice(-8).map((run) => {
-            const on = run.runId === selected?.runId
-            return (
-              <button key={run.runId} className={`run-chip${on ? ' run-chip-on' : ''}`} onClick={() => setSelectedId(run.runId)} title={run.runId}>
-                <span className={on ? 'text-primary' : 'text-muted-foreground'}>{statusGlyph(run.status === 'started' ? 'active' : run.status === 'failed' ? 'failed' : 'done')}</span>
-                <span>{run.profile}</span>
-                <span className="run-chip-id">{shortId(run.runId)}</span>
-              </button>
-            )
-          })}
+        <div className="graph-heading">
+          <div className="graph-heading-copy">
+            <span className="graph-title">Pipeline execution</span>
+            {title && <span className="graph-subtitle">{title}</span>}
+          </div>
+          <RunPosition run={selected} nodes={nodes} />
         </div>
 
-        <div className="graph-tools">
-          {runs.length > 0 && (
-            <>
-              <Button variant="outline" size="sm" onClick={expandAll}>Expand all</Button>
-              <Button variant="ghost" size="sm" onClick={collapseAll}>Collapse all</Button>
-            </>
-          )}
-          <Button variant={showLegend ? 'secondary' : 'ghost'} size="sm" onClick={() => setShowLegend((v) => !v)}>
-            Legend
-          </Button>
-          <Button variant={activityOpen ? 'secondary' : 'outline'} size="sm" onClick={onToggleActivity}>
-            Activity
-          </Button>
-          <Button variant={logOpen ? 'secondary' : 'outline'} size="sm" onClick={onToggleLog}>
-            Log
-          </Button>
+        <div className="graph-commandbar">
+          <div className="graph-runs" aria-label="Recent runs">
+            {runs.length === 0 && <span className="graph-waiting">Waiting for the first run…</span>}
+            {runs.slice(-8).map((run) => {
+              const on = run.runId === selected?.runId
+              return (
+                <button key={run.runId} className={`run-chip${on ? ' run-chip-on' : ''}`} onClick={() => setSelectedId(run.runId)} title={run.runId}>
+                  <span className={on ? 'text-primary' : 'text-muted-foreground'}><RunStatusIcon status={run.status === 'started' ? 'active' : run.status === 'failed' ? 'failed' : 'done'} /></span>
+                  <span>{run.profile}</span>
+                  <span className="run-chip-id">{shortId(run.runId)}</span>
+                </button>
+              )
+            })}
+          </div>
+
+          <div className="graph-tools" aria-label="Graph controls">
+            {runs.length > 0 && (
+              <div className="control-group">
+                <Button variant="ghost" size="sm" onClick={expandAll} title="Expand every step"><ChevronsUpDown />Expand</Button>
+                <Button variant="ghost" size="sm" onClick={collapseAll} title="Collapse every step"><ChevronsDownUp />Collapse</Button>
+              </div>
+            )}
+            <div className="control-group">
+              <Button variant={showLegend ? 'secondary' : 'ghost'} size="sm" onClick={() => setShowLegend((v) => !v)}>
+                <ListTree />Legend
+              </Button>
+              <Button variant={activityOpen ? 'secondary' : 'ghost'} size="sm" onClick={onToggleActivity}>
+                <Rows3 />Activity
+              </Button>
+              <Button variant={logOpen ? 'secondary' : 'ghost'} size="sm" onClick={onToggleLog}>
+                <ScrollText />Events
+              </Button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -139,12 +149,11 @@ const GraphView = ({ state, onInspect, onToggleActivity, onToggleLog, activityOp
           edges={edges}
           nodeTypes={NODE_TYPES}
           fitView
-          minZoom={0.62}
+          minZoom={0.25}
           maxZoom={1.35}
-          fitViewOptions={{ padding: 0.16, minZoom: 0.62, maxZoom: 1 }}
+          fitViewOptions={{ padding: 0.16, minZoom: 0.25, maxZoom: 1 }}
           nodesConnectable={false}
           elementsSelectable={false}
-          proOptions={{ hideAttribution: true }}
           onNodeClick={(_e, node) => {
             const d = node.data as GraphNodeData
             if (d.kind !== 'group') onInspect(d)
@@ -213,7 +222,7 @@ const RunPosition = ({
 const Legend = () => (
   <div className="graph-legend" aria-label="Graph legend">
     <div className="graph-legend-group">
-      <span className="graph-legend-title">STATUS</span>
+      <span className="graph-legend-title">Status</span>
       <span className="graph-legend-row"><span className="g-glyph ok" />active</span>
       <span className="graph-legend-row"><span className="legend-now" />current</span>
       <span className="graph-legend-row"><span className="g-glyph info" />done</span>
@@ -221,7 +230,7 @@ const Legend = () => (
       <span className="graph-legend-row"><span className="g-glyph faint" />idle</span>
     </div>
     <div className="graph-legend-group">
-      <span className="graph-legend-title">EDGES</span>
+      <span className="graph-legend-title">Edges</span>
       <span className="graph-legend-row"><span className="legend-edge legend-edge-data" />flow</span>
       <span className="graph-legend-row"><span className="legend-edge legend-edge-branch" />selected</span>
       <span className="graph-legend-row"><span className="legend-edge legend-edge-ghost" />available</span>

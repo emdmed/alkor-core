@@ -11,7 +11,7 @@
  * work into it.
  */
 import { useEffect, useRef, useState } from 'react'
-import { Send, X } from 'lucide-react'
+import { Send, Sparkles, X } from 'lucide-react'
 import {
   type PipelineDefinition,
   type ProjectState,
@@ -118,7 +118,7 @@ export const ChatPanel = ({ open, onToggle, state, run }: ChatPanelProps) => {
   if (!open) {
     return (
       <button className="chat-tab" onClick={onToggle} aria-label="open chat">
-        CHAT
+        RUN
       </button>
     )
   }
@@ -126,7 +126,10 @@ export const ChatPanel = ({ open, onToggle, state, run }: ChatPanelProps) => {
   return (
     <aside className="chat-panel">
       <div className="chat-head">
-        <span className="chat-title">CHAT</span>
+        <div>
+          <span className="chat-title">Run pipeline</span>
+          <span className="chat-head-note">Send input and follow its execution</span>
+        </div>
         <Button variant="ghost" size="sm" onClick={onToggle} aria-label="close chat">
           <X size={14} />
         </Button>
@@ -155,7 +158,7 @@ export const ChatPanel = ({ open, onToggle, state, run }: ChatPanelProps) => {
         <div className="chat-presets">
           {PRESETS.map((p) => (
             <button key={p} className="chat-preset" onClick={() => pickPreset(p)} type="button">
-              {p}
+              <Sparkles size={12} aria-hidden="true" />{p}
             </button>
           ))}
         </div>
@@ -164,7 +167,10 @@ export const ChatPanel = ({ open, onToggle, state, run }: ChatPanelProps) => {
       {/* Transcript */}
       <div className="chat-scroll" ref={scrollRef}>
         {messages.length === 0 && (
-          <div className="chat-empty">send a prompt to watch the pipeline run here</div>
+          <div className="chat-empty">
+            <span className="chat-empty-title">Ready for input</span>
+            <span>Choose a starting prompt above or enter your own below.</span>
+          </div>
         )}
         {messages.map((msg) => (
           <div key={msg.id} className={cn('chat-msg', msg.status === 'error' && 'chat-msg-err')}>
@@ -198,7 +204,7 @@ export const ChatPanel = ({ open, onToggle, state, run }: ChatPanelProps) => {
         <textarea
           ref={textareaRef}
           className="chat-textarea"
-          placeholder="prompt the pipeline…"
+          placeholder="Paste text or enter an extraction request…"
           rows={3}
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -216,7 +222,7 @@ export const ChatPanel = ({ open, onToggle, state, run }: ChatPanelProps) => {
             onClick={handleSend}
             disabled={pending || !input.trim() || !selectedProfile}
           >
-            <Send size={13} className="mr-1" /> send
+            <Send size={13} /> Run
           </Button>
         </div>
       </div>

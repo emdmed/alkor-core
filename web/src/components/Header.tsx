@@ -4,6 +4,7 @@ import { connMeta, modelName } from '../lib/format.ts'
 import { Badge } from './ui/badge'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
+import { CirclePause, CirclePlay, Eraser, PlugZap } from 'lucide-react'
 
 export interface HeaderProps {
   state: ProjectState
@@ -32,11 +33,17 @@ export const Header = ({ state, serverUrl, onServerUrlChange, onConnect, paused,
   const anyDormant = models.some((m) => !m.reachable && m.managed)
 
   return (
-    <header className="app-header flex items-center gap-3 px-3 border-b border-border bg-card text-card-foreground">
-      <div className="flex items-baseline gap-1.5 min-w-0 flex-1 text-sm">
-        <span className="font-semibold text-foreground">medextract</span>
-        <span className="text-muted-foreground/50">/</span>
-        <span className="text-muted-foreground whitespace-nowrap">{hostOf(serverUrl)}</span>
+    <header className="app-header">
+      <div className="brand-lockup">
+        <div className="brand-row">
+          <span className="brand-name">medextract</span>
+          <span className="brand-sep">/</span>
+          <span className="brand-host">{hostOf(serverUrl)}</span>
+        </div>
+        <span className="brand-context">local extraction workspace</span>
+      </div>
+
+      <div className="header-health" aria-label="Service status">
         <Badge variant={meta.tone === 'ok' ? 'default' : meta.tone === 'warn' ? 'secondary' : 'destructive'} className="ml-1">
           {meta.label}
         </Badge>
@@ -58,17 +65,14 @@ export const Header = ({ state, serverUrl, onServerUrlChange, onConnect, paused,
             MODELS DORMANT
           </Badge>
         )}
-        {refusedReason && <span className="text-destructive text-xs ml-1">{refusedReason}</span>}
+        {refusedReason && <span className="header-error">{refusedReason}</span>}
         {model && (
-          <>
-            <span className="text-muted-foreground/50">│</span>
-            <span className="text-primary whitespace-nowrap">{model}</span>
-          </>
+          <span className="header-model">{model}</span>
         )}
       </div>
 
       <form
-        className="flex gap-1.5"
+        className="connection-form"
         onSubmit={(e) => {
           e.preventDefault()
           onConnect()
@@ -79,23 +83,24 @@ export const Header = ({ state, serverUrl, onServerUrlChange, onConnect, paused,
           value={serverUrl}
           spellCheck={false}
           aria-label="medextract server URL"
-          className="w-56"
+          className="connection-input"
           onChange={(e) => onServerUrlChange(e.target.value)}
         />
-        <Button type="submit" size="sm">Connect</Button>
+        <Button type="submit" size="sm"><PlugZap aria-hidden="true" />Connect</Button>
       </form>
 
-      <div className="flex gap-1.5">
+      <div className="header-actions">
         <Button
           variant={paused ? 'secondary' : 'outline'}
           size="sm"
           type="button"
           onClick={onTogglePause}
         >
+          {paused ? <CirclePlay aria-hidden="true" /> : <CirclePause aria-hidden="true" />}
           {paused ? 'Resume' : 'Pause'}
         </Button>
         <Button variant="ghost" size="sm" type="button" onClick={onClear}>
-          Clear
+          <Eraser aria-hidden="true" />Clear
         </Button>
       </div>
     </header>

@@ -1,6 +1,7 @@
 import type { ProjectState } from '../../../src/tui/state.ts'
 import { cacheHitRatio, failureRate, inFlightCount } from '../../../src/tui/state.ts'
-import { Badge } from './ui/badge'
+import { Activity, CircleCheck, Gauge, Network, Radio, TimerReset } from 'lucide-react'
+import type { ReactNode } from 'react'
 
 export const StatusStrip = ({ state }: { state: ProjectState }) => {
   const active = inFlightCount(state.llmRequests)
@@ -12,25 +13,29 @@ export const StatusStrip = ({ state }: { state: ProjectState }) => {
   const events = state.eventLog.length
 
   return (
-    <div className="status-strip flex items-center gap-1.5 px-3 border-b border-border bg-card text-xs">
-      <Badge variant={active > 0 ? 'default' : 'secondary'}>
-        {active} active request{active === 1 ? '' : 's'}
-      </Badge>
-      <Badge variant="secondary">
-        {finished} completed run{finished === 1 ? '' : 's'}
-      </Badge>
-      {finished > 0 && (
-        <Badge variant={failures > 0 ? 'destructive' : 'secondary'}>
-          {Math.round(failures * 100)}% failure
-        </Badge>
-      )}
-      {cache != null && (
-        <Badge variant="default">
-          {Math.round(cache * 100)}% prompt cache
-        </Badge>
-      )}
-      <Badge variant="secondary">{sessions} session{sessions === 1 ? '' : 's'}</Badge>
-      <Badge variant="secondary">{http} http · {events} events</Badge>
-    </div>
+    <dl className="status-strip" aria-label="Workspace metrics">
+      <Metric icon={<Radio />} value={active} label="active" live={active > 0} />
+      <Metric icon={<CircleCheck />} value={finished} label="completed" />
+      {finished > 0 && <Metric icon={<Gauge />} value={`${Math.round(failures * 100)}%`} label="failure" danger={failures > 0} />}
+      {cache != null && <Metric icon={<TimerReset />} value={`${Math.round(cache * 100)}%`} label="cache" />}
+      <Metric icon={<Network />} value={sessions} label={sessions === 1 ? 'session' : 'sessions'} />
+      <Metric icon={<Activity />} value={http} label="http" detail={`${events} events`} />
+    </dl>
   )
 }
+
+const Metric = ({ icon, value, label, detail, live, danger }: {
+  icon: ReactNode
+  value: string | number
+  label: string
+  detail?: string
+  live?: boolean
+  danger?: boolean
+}) => (
+  <div className={`status-metric${live ? ' is-live' : ''}${danger ? ' is-danger' : ''}`}>
+    <span className="status-icon" aria-hidden="true">{icon}</span>
+    <dt>{label}</dt>
+    <dd>{value}</dd>
+    {detail && <span className="status-detail">{detail}</span>}
+  </div>
+)

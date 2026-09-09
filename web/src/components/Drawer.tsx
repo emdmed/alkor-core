@@ -23,10 +23,5 @@ export const Drawer = ({ open, onClose, title, children }: DrawerProps) => (
       </Button>
     </div>
     <div className="drawer-body">{children}</div>
-    {!open && (
-      <button className="drawer-tab" onClick={onClose} aria-label={`open ${title}`}>
-        {title}
-      </button>
-    )}
   </aside>
 )

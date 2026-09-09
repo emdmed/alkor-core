@@ -7,11 +7,14 @@
  */
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import type { GraphNode, GraphNodeData } from '../../lib/graph.ts'
-import { fmtSec, nodeMark } from '../../lib/format.ts'
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { fmtSec } from '../../lib/format.ts'
+import { Check, ChevronDown, ChevronRight, Circle, LoaderCircle, X } from 'lucide-react'
 
 const statusClass = (status: GraphNodeData['status']): string =>
   status === 'active' ? 'g-active' : status === 'failed' ? 'g-failed' : status === 'done' ? 'g-done' : 'g-idle'
+
+const StatusGlyph = ({ status }: { status: GraphNodeData['status'] }) =>
+  status === 'active' ? <LoaderCircle className="status-spin" /> : status === 'done' ? <Check /> : status === 'failed' ? <X /> : <Circle />
 
 /** Small coloured graph node card — every real (non-group) node is one of these. */
 const Card = ({ data, children }: { data: GraphNodeData; children?: React.ReactNode }) => (
@@ -31,7 +34,7 @@ const Title = ({ data, chevron }: { data: GraphNodeData; chevron?: boolean }) =>
         <span className="g-chev"><ChevronRight size={12} /></span>
       )
     ) : null}
-    <span className="g-glyph">{nodeMark[data.status]}</span>
+    <span className="g-glyph" aria-label={data.status}><StatusGlyph status={data.status} /></span>
     <span className="g-label">{data.label}</span>
   </div>
 )
