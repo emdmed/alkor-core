@@ -7,7 +7,7 @@ exist to be piped into a running `llama-server` and to show roughly what each co
 Start the clinical model first (the one-command pipeline needs all three):
 
 ```bash
-LLAMA_PORT=8081 LLAMA_MODEL=~/models/Qwen3-4B-Q4_K_M.official.gguf scripts/llama-server.sh \
+LLAMA_PORT=8081 LLAMA_MODEL=~/models/gemma-4-E4B-it-Q4_0.gguf scripts/llama-server.sh \
   -ngl 99 --no-webui --parallel 1
 ```
 

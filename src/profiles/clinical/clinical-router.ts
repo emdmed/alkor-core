@@ -2,13 +2,13 @@
  * Clinical internal router: shape detection, routing rules, confidence scoring.
  *
  * The router classifies the *shape* of a clinical input and selects the right
- * contract, with a confidence score and a fallback to the caller's explicit
+ * contract workflow(s), with a confidence score and a fallback to the caller's explicit
  * `--task` override. It is fast and deterministic (rule-based, no model call),
  * and runs *before* any GPU pass so the wrong schema is never sent.
  *
- * Shapes are properties of the input bytes, not contract names. The mapping from
- * shape to task is 1:1 except for `note`, which defaults to `vital-signs` and can
- * be overridden by the pack's `defaultTask`.
+ * Shapes are properties of the input bytes, not contract names. Most shapes map to one
+ * task. A payload satisfying more than one definitive shape returns an ordered task plan;
+ * for example, a combined shock/qSOFA payload runs shock before sepsis.
  */
 
 import { type ClinicalShape, DEFAULT_TASK_FOR_SHAPE, TASKS, type Task } from './contracts.ts'
@@ -21,7 +21,10 @@ export interface ClinicalRouteRule {
 }
 
 export interface ClinicalRouteResult {
+  /** First workflow in the ordered route plan, retained for single-route callers. */
   task: Task
+  /** Every workflow that should run, in execution order. */
+  tasks: Task[]
   shape: ClinicalShape
   confidence: number
   reason: string
@@ -30,11 +33,6 @@ export interface ClinicalRouteResult {
 // --- Shape detection ----------------------------------------------------------------------
 
 const SHOCK_EXAM_KEYS = [
-  'systolic_bp',
-  'diastolic_bp',
-  'heart_rate',
-  'respiratory_rate',
-  'temperature',
   'capillary_refill',
   'mental_status',
   'skin_appearance',
@@ -43,7 +41,50 @@ const SHOCK_EXAM_KEYS = [
   'jugular_venous_pressure',
   'pulse_volume',
   'lung_exam',
+  'heart_rate',
 ]
+
+// A qSOFA payload is the three numbers a Quick SOFA screen reads: respiratory rate, systolic
+// blood pressure, and GCS. `gcs` is the discriminator that keeps it apart from the shock exam
+// payload — the shock payload never carries a GCS — so it is required, not merely present in
+// the candidate list.
+const QSOFA_KEYS = ['respiratory_rate', 'systolic_bp', 'gcs', 'qsofa']
+
+
+const isSepsisJson = (input: string): boolean => {
+  const tryParse = (text: string): Record<string, unknown> | null => {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(text)
+    } catch {
+      return null
+    }
+    if (!parsed || typeof parsed !== 'object') return null
+    return parsed as Record<string, unknown>
+  }
+
+  const whole = tryParse(input)
+  if (whole) return (whole as Record<string, unknown>).gcs !== undefined && QSOFA_KEYS.some((k) => k in whole)
+
+  // Try parsing from the first '{' to handle mixed inputs.
+  const brace = input.indexOf('{')
+  const bracket = input.indexOf('[')
+  const start = brace === -1 ? bracket : bracket === -1 ? brace : Math.min(brace, bracket)
+  if (start === -1) return false
+
+  let search = input
+  while (true) {
+    const closeBrace = search.lastIndexOf('}')
+    const closeBracket = search.lastIndexOf(']')
+    const end = Math.max(closeBrace, closeBracket)
+    if (end <= start) break
+    const sub = search.slice(start, end + 1)
+    const parsed = tryParse(sub)
+    if (parsed && (parsed as Record<string, unknown>).gcs !== undefined) return QSOFA_KEYS.some((k) => k in parsed)
+    search = search.slice(0, end)
+  }
+  return false
+}
 
 const isExamJson = (input: string): boolean => {
   const tryParse = (text: string): Record<string, unknown> | null => {
@@ -173,6 +214,12 @@ const isShockSuspicion = (input: string): boolean => {
 
 export const DEFAULT_CLINICAL_RULES: ClinicalRouteRule[] = [
   {
+    name: 'qsofa-json',
+    shape: 'qsofa-json',
+    detect: isSepsisJson,
+    confidence: 1.0,
+  },
+  {
     name: 'exam-json',
     shape: 'exam-json',
     detect: isExamJson,
@@ -225,32 +272,48 @@ export const taskForShape = (shape: ClinicalShape, defaultTask?: string): Task =
 // --- Router --------------------------------------------------------------------------------
 
 /**
- * Classify the clinical input shape and return the matching task.
+ * Classify the clinical input shape and return the ordered matching workflow plan.
  *
- * Rules are ordered by confidence; a higher-confidence rule overrides an earlier
- * match. Definitive rules (confidence 1.0) short-circuit further evaluation.
+ * Rules are ordered by confidence for the primary, backwards-compatible `task`. All
+ * equally definitive matches remain in `tasks`, because one payload can require more
+ * than one workflow.
  *
  * @param input — the raw document text or payload
  * @param defaultTask — the pack's declared `defaultTask`, used only for the `note` shape
  */
 export const routeClinicalShape = (input: string, defaultTask?: string): ClinicalRouteResult => {
-  let best: ClinicalRouteResult | undefined
+  let confidence = -1
+  const matches: Array<{ task: Task; shape: ClinicalShape; rule: string }> = []
 
   for (const rule of DEFAULT_CLINICAL_RULES) {
     if (rule.detect(input)) {
-      if (!best || rule.confidence > best.confidence) {
-        best = {
-          task: taskForShape(rule.shape, defaultTask),
-          shape: rule.shape,
-          confidence: rule.confidence,
-          reason: `rule: ${rule.name}`,
-        }
+      if (rule.confidence > confidence) {
+        confidence = rule.confidence
+        matches.length = 0
       }
-      if (rule.confidence >= 1.0) break
+      if (rule.confidence === confidence) {
+        matches.push({ task: taskForShape(rule.shape, defaultTask), shape: rule.shape, rule: rule.name })
+      }
     }
   }
 
-  if (best) return best
+  if (matches.length > 0) {
+    const order: Task[] = ['shock-extraction', 'shock', 'sepsis', 'vital-signs', 'note-format', 'transcript', 'summary']
+    const matchedTasks = [...new Set(matches.map((match) => match.task))]
+    // A prose shock route is a two-contract workflow: extract the closed exam payload first,
+    // then hand that measured payload to the classifier. Structured shock payloads enter the
+    // classifier directly.
+    const tasks = [...new Set(matchedTasks.flatMap((task) => task === 'shock-extraction' ? [task, 'shock' as const] : [task]))]
+      .sort((a, b) => order.indexOf(a) - order.indexOf(b))
+    const primary = matches.find((match) => match.task === tasks[0]) ?? matches[0]!
+    return {
+      task: tasks[0]!,
+      tasks,
+      shape: primary.shape,
+      confidence,
+      reason: `${matches.length === 1 ? 'rule' : 'rules'}: ${matches.map((match) => match.rule).join(', ')}`,
+    }
+  }
 
   // Nothing matched: fall back to the pack's default task, or vital-signs.
   const fallback: Task =
@@ -258,6 +321,7 @@ export const routeClinicalShape = (input: string, defaultTask?: string): Clinica
 
   return {
     task: fallback,
+    tasks: [fallback],
     shape: 'note',
     confidence: 0,
     reason: 'default: no shape matched',

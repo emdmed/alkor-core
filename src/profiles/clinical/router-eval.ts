@@ -74,6 +74,18 @@ export const CLINICAL_ROUTER_CASES: RouterCase[] = [
     discriminates: 'shock suspicion criteria in clinical prose',
   })),
 
+  ...Array.from({ length: 10 }, (_, i) => ({
+    input: JSON.stringify({
+      respiratory_rate: 18 + (i % 9),
+      systolic_bp: 90 + (i % 11),
+      gcs: 13 + (i % 3),
+    }),
+    expectedShape: 'qsofa-json' as ClinicalShape,
+    expectedTask: 'sepsis',
+    difficulty: 1 as 1 | 2 | 3,
+    discriminates: 'qSOFA payload JSON',
+  })),
+
   // --- Difficulty 2: competing markers, one dominates ---
   ...Array.from({ length: 5 }, (_, i) => ({
     input: `Dictation: BP ${130 + i}/${85 + i}, HR ${75 + i}. Patient also reports dizziness.`,

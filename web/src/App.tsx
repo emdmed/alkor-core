@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronUp } from 'lucide-react'
 import { Header } from './components/Header.tsx'
 import { StatusStrip } from './components/StatusStrip.tsx'
@@ -13,17 +13,55 @@ import type { GraphNodeData } from './lib/graph.ts'
 
 const DEFAULT_URL = (import.meta.env.VITE_MEDEXTRACT_URL as string | undefined) ?? 'http://127.0.0.1:3000'
 
+/** Match a media query against the live viewport and keep listening for changes. */
+const useMedia = (query: string) => {
+  const [matches, setMatches] = useState(
+    () => typeof window === 'undefined' ? false : window.matchMedia(query).matches,
+  )
+  useEffect(() => {
+    const mql = window.matchMedia(query)
+    const onChange = (e: MediaQueryListEvent) => setMatches(e.matches)
+    setMatches(mql.matches)
+    mql.addEventListener('change', onChange)
+    return () => mql.removeEventListener('change', onChange)
+  }, [query])
+  return matches
+}
+
+const WIDE = '(min-width: 1360px)'
+const NARROW = '(max-width: 759px)'
+
 export const App = () => {
   const { state, serverUrl, setServerUrl, connect, paused, setPaused, clear, run, models } = useMedextract(DEFAULT_URL)
-  // The graph is the primary workspace. Keep the supporting drawer available,
-  // but do not take a third of the canvas before the operator asks for it.
+  const isWide = useMedia(WIDE)
+  const isNarrow = useMedia(NARROW)
+
+  // Shell modes (see dashboard_improvement.md):
+  //  wide      — run panel may stay open; the drawer may reserve its footprint.
+  //  intermediate — the drawer overlays; the run panel defaults collapsed.
+  //  narrow    — the run panel and drawer are coordinated overlays: one open, one closed.
+  const [chatOpen, setChatOpen] = useState(() =>
+    typeof window === 'undefined' ? false : window.matchMedia(WIDE).matches,
+  )
   const [rightOpen, setRightOpen] = useState(false)
   const [rightTab, setRightTab] = useState<'activity' | 'inspector'>('activity')
-  const [chatOpen, setChatOpen] = useState(() => typeof window === 'undefined' || window.innerWidth > 760)
   const [logOpen, setLogOpen] = useState(false)
   const [inspected, setInspected] = useState<GraphNodeData | null>(null)
+  const lastFocus = useRef<HTMLElement | null>(null)
+
+  // The run panel can no longer lean on the graph once the viewport stops being wide.
+  useEffect(() => {
+    if (!isWide) setChatOpen(false)
+  }, [isWide])
+
+  const rememberFocus = () => {
+    const el = document.activeElement
+    if (el instanceof HTMLElement) lastFocus.current = el
+  }
 
   const openInspector = (data: GraphNodeData) => {
+    if (isNarrow && chatOpen) setChatOpen(false)
+    rememberFocus()
     setInspected(data)
     setRightTab('inspector')
     setRightOpen(true)
@@ -31,6 +69,8 @@ export const App = () => {
 
   const toggleActivity = () => {
     if (!rightOpen || rightTab !== 'activity') {
+      if (isNarrow && chatOpen) setChatOpen(false)
+      rememberFocus()
       setRightTab('activity')
       setRightOpen(true)
     } else {
@@ -40,12 +80,44 @@ export const App = () => {
 
   const toggleInspector = () => {
     if (!rightOpen || rightTab !== 'inspector') {
+      if (isNarrow && chatOpen) setChatOpen(false)
+      rememberFocus()
       setRightTab('inspector')
       setRightOpen(true)
     } else {
       setRightOpen(false)
     }
   }
+
+  const toggleChat = () => {
+    if (!chatOpen) {
+      if (isNarrow && rightOpen) setRightOpen(false)
+      rememberFocus()
+      setChatOpen(true)
+    } else {
+      setChatOpen(false)
+    }
+  }
+
+  // Escape closes the topmost overlay and returns focus to whoever opened it.
+  const closePanel = useCallback((close: 'top' | 'chat') => {
+    if (close === 'chat') setChatOpen(false)
+    setRightOpen(false)
+    lastFocus.current?.focus()
+    lastFocus.current = null
+  }, [])
+
+  useEffect(() => {
+    if (!rightOpen && !chatOpen && !logOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (chatOpen) closePanel('chat')
+      else if (rightOpen) closePanel('top')
+      else setLogOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [rightOpen, chatOpen, logOpen, closePanel])
 
   return (
     <div className="app">
@@ -61,7 +133,7 @@ export const App = () => {
       />
       <StatusStrip state={state} />
       <main className="graph-main">
-        <ChatPanel open={chatOpen} onToggle={() => setChatOpen((v) => !v)} state={state} run={run} />
+        <ChatPanel open={chatOpen} onToggle={toggleChat} state={state} run={run} onOpenActivity={isNarrow ? toggleActivity : undefined} />
         <div className="graph-area">
           <PipelineGraph
             state={state}

@@ -73,7 +73,7 @@ npm run check     # both, which is what CI runs
 To run evals, start a `llama-server` first — the harness will not start one for you:
 
 ```bash
-LLAMA_PORT=8081 LLAMA_MODEL=~/models/Qwen3-4B-Q4_K_M.gguf scripts/llama-server.sh \
+LLAMA_PORT=8081 LLAMA_MODEL=~/models/gemma-4-E4B-it-Q4_0.gguf scripts/llama-server.sh \
   -ngl 99 --no-webui --parallel 1
 node src/cli.ts eval --profile clinical --constrain
 node src/cli.ts eval --profile router

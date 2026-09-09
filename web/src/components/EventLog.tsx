@@ -51,7 +51,7 @@ export const EventLog = ({ state, onToggle }: { state: ProjectState; onToggle: (
           <span>EVENT LOG</span>
         </div>
 
-        <div className="flex-1 flex gap-1 flex-wrap items-center" onClick={(event) => event.stopPropagation()}>
+        <div className="eventlog-filters" onClick={(event) => event.stopPropagation()}>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm">
@@ -79,13 +79,13 @@ export const EventLog = ({ state, onToggle }: { state: ProjectState; onToggle: (
           )}
         </div>
 
-        <div className="flex gap-2.5 items-center text-xs" onClick={(event) => event.stopPropagation()}>
+        <div className="eventlog-aux" onClick={(event) => event.stopPropagation()}>
           {!atBottom && (
             <Button variant="ghost" size="sm" onClick={() => setAtBottom(true)}>
               jump to latest ▾
             </Button>
           )}
-          <span className="text-muted-foreground">{events.length} shown</span>
+          <span className="eventlog-count">{events.length} shown</span>
         </div>
       </header>
 

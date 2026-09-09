@@ -207,3 +207,48 @@ export const evaluateVitals = (
     shockIndex: h.value / b.systolic,
   }
 }
+
+/**
+ * What medprotocol says about one patient's Quick SOFA screen.
+ *
+ * Delegated to the CLI for the reason every other number in this profile is: the sepsis
+ * contract's reference arm is `positive`, and a second hand-rolled implementation of the
+ * Thresholds here would let the eval and the product disagree about where sepsis suspicion
+ * begins without either of them noticing. The THREE criteria are medprotocol's — respiratory
+ * rate >= 22, systolic blood pressure <= 100, and GCS < 15 — and a positive screen is any two.
+ */
+export interface QSOFAScreen {
+  /** 0-3, the number of criteria met. */
+  score: number
+  /** Score >= 2. */
+  positive: boolean
+  /** The three inputs, echoed back so one parse of each lives in this pipeline. */
+  respiratoryRate: number
+  systolic: number
+  gcs: number
+}
+
+/**
+ * Evaluate a Quick SOFA screen through the CLI.
+ *
+ * `rr`, `sbp` and `gcs` are the three inputs the CLI requires, and all three are required
+ * here too: a qSOFA screen with one of them missing is a screen that never ran, and a
+ * reference arm that guesses a missing criterion is a rule that reports a number it did not
+ * derive. The CLI refuses rather than defaults, and so does this.
+ */
+export const evaluateQSOFA = (rule: MedprotocolRule, rr: number, sbp: number, gcs: number): QSOFAScreen => {
+  const o = run(rule, ['sepsis', 'qsofa', '--rr', String(rr), '--sbp', String(sbp), '--gcs', String(gcs)])
+  if (typeof o.score !== 'number' || typeof o.positive !== 'boolean') {
+    throw new ProfileError(
+      `medprotocol sepsis qsofa returned no usable score/positive for rr ${rr} sbp ${sbp} gcs ${gcs}: ` +
+        JSON.stringify(o).slice(0, 200),
+    )
+  }
+  return {
+    score: o.score,
+    positive: o.positive,
+    respiratoryRate: rr,
+    systolic: sbp,
+    gcs,
+  }
+}

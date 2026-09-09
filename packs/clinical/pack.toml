@@ -245,6 +245,22 @@ shockExtractionSchema       = "schemas/shock-extraction.schema.json"
 shockExtractionSchemaGolden = "schemas/shock-extraction.golden.json"
 shockExtractionCases        = "evals/shock-extraction-cases.json"
 
+# --- Sepsis screening: a fixed Quick SOFA payload in, a positive/negative verdict out. ---
+# The SECOND contract here that extracts nothing, and it shares the shock contract's shape for
+# the same reason they are separate: a closed payload of already-decided numerics in, a verdict
+# out, with the numeric screen computed by the medprotocol CLI and the model graded against it.
+#
+# ITS OWN SCHEMA, PROMPT AND CORPUS for the same reason shock has its own: the qSOFA screen is
+# three numbers and four fields of commentary, not the shock examination's five findings and
+# eight, and a payload in the shock shape would grade the wrong question. The verification angle
+# is the same as shock's — the model must read the CLI's verdict rather than re-derive the
+# thresholds — and the corps is `exams/`, reached through the `exam` documents kind shared with
+# shock.
+sepsisPrompt       = "prompts/sepsis.md"
+sepsisSchema       = "schemas/sepsis.schema.json"
+sepsisSchemaGolden = "schemas/sepsis.golden.json"
+sepsisCases        = "evals/sepsis-cases.json"
+
 literaturePrompt       = "prompts/literature.md"
 literatureSchema       = "schemas/literature.schema.json"
 literatureSchemaGolden = "schemas/literature.golden.json"
@@ -289,10 +305,12 @@ literatureSchemaName = "literature_search"
 shockSchemaName = "shock_category"
 # The shock-extraction pass, its own label so a server log can tell extraction from reasoning.
 shockExtractionSchemaName = "shock_exam_extraction"
+# The sepsis-screening pass, its own label for the same reason.
+sepsisSchemaName = "sepsis_screen"
 
-# Which task `eval --profile clinical` runs when none is named. `--task all` runs the four,
+# Which task `eval --profile clinical` runs when none is named. `--task all` runs the seven,
 # and each clears its own floor: averaging them would let a ceiling on one hide a failure in
-# another, which matters here because vital signs is the mature task and the other two are
+# another, which matters here because vital signs is the mature task and the newer ones are
 # not.
 defaultTask = "vital-signs"
 
@@ -521,6 +539,31 @@ jvpElevatedAboveCmH2O = 7
 # A true index of 0.704 rounds to 0.7 and is never flagged if rounded before comparison,
 # so the comparison uses the unrounded value computed from medprotocol's parse.
 shockIndexAbove = 0.7
+
+# --- The cut-points the qSOFA screen turns on. --------------------------------------------
+#
+# All four are the published criteria and all four are DATA for the reason every other rule in
+# this file is: a consuming application screening at a respiratory rate of 22 is running the same
+# screen this eval measures, and one screening at 20 — or calling a GCS of 14 altered — is running
+# a different one. Both would still produce a positive or negative verdict. Neither would produce
+# a complaint.
+#
+# REQUIRED rather than defaulted, on the same terms as [clinical.shockExam] above: a defaulted
+# threshold is a silent decision about where sepsis suspicion begins, made in src/ and reported as
+# the pack's.
+#
+# They are also the pack's statement of what the medprotocol CLI does, and `loadSepsisCases`
+# cross-checks them against the CLI's authoritative `score` at load — so a threshold that drifted
+# from the tool that decides the screen is a load error, not a corpus issue.
+[clinical.sepsisScreen]
+# Respiratory rate at or above this meets the first qSOFA criterion.
+respiratoryRateAtLeast = 22
+# Systolic blood pressure at or below this meets the second.
+systolicAtMost = 100
+# GCS BELOW this is altered mental status; a GCS of 15 is alert, of 14 is not.
+gcsBelow = 15
+# A positive screen is at least this many criteria met.
+criteriaForPositive = 2
 
 [clinical.setMatching]
 negators =["no", "not", "never", "denies", "denied", "without", "sin", "niega", "ningun", "ninguna", "nunca"]

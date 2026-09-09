@@ -34,8 +34,8 @@ const Metric = ({ icon, value, label, detail, live, danger }: {
 }) => (
   <div className={`status-metric${live ? ' is-live' : ''}${danger ? ' is-danger' : ''}`}>
     <span className="status-icon" aria-hidden="true">{icon}</span>
-    <dt>{label}</dt>
     <dd>{value}</dd>
+    <dt>{label}</dt>
     {detail && <span className="status-detail">{detail}</span>}
   </div>
 )

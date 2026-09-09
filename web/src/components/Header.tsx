@@ -19,6 +19,9 @@ export interface HeaderProps {
 
 const hostOf = (url: string): string => url.replace(/^https?:\/\//, '').replace(/\/+$/, '')
 
+const toneCls = (tone: 'ok' | 'warn' | 'err'): string =>
+  tone === 'ok' ? 'tone-ok' : tone === 'warn' ? 'tone-warn' : 'tone-err'
+
 export const Header = ({ state, serverUrl, onServerUrlChange, onConnect, paused, onTogglePause, onClear, models }: HeaderProps) => {
   const meta = connMeta(state.connection)
   const model = modelName(state.models)
@@ -34,23 +37,20 @@ export const Header = ({ state, serverUrl, onServerUrlChange, onConnect, paused,
 
   return (
     <header className="app-header">
-      <div className="brand-lockup">
-        <div className="brand-row">
-          <span className="brand-name">medextract</span>
-          <span className="brand-sep">/</span>
-          <span className="brand-host">{hostOf(serverUrl)}</span>
-        </div>
-        <span className="brand-context">local extraction workspace</span>
+      <div className="brand-lockup" title={serverUrl}>
+        <span className="brand-name">medextract</span>
+        <span className="brand-host">{hostOf(serverUrl)}</span>
       </div>
 
-      <div className="header-health" aria-label="Service status">
-        <Badge variant={meta.tone === 'ok' ? 'default' : meta.tone === 'warn' ? 'secondary' : 'destructive'} className="ml-1">
+      <div className="header-health" role="status" aria-label="Service status">
+        <span className={`health-state ${toneCls(meta.tone)}`} title={meta.label}>
+          <span className="health-dot" aria-hidden="true" />
           {meta.label}
-        </Badge>
+        </span>
         {allBackendsDown && unmanagedDown.length > 0 && (
           <Badge
             variant="destructive"
-            className="ml-1"
+            className="health-chip"
             title={`no model backend reachable (${models.map((m) => m.baseUrl).join(', ')})`}
           >
             MODEL OFFLINE
@@ -59,15 +59,15 @@ export const Header = ({ state, serverUrl, onServerUrlChange, onConnect, paused,
         {allBackendsDown && anyDormant && unmanagedDown.length === 0 && (
           <Badge
             variant="secondary"
-            className="ml-1"
+            className="health-chip"
             title="managed backends are dormant — they spawn on the next run that needs one"
           >
             MODELS DORMANT
           </Badge>
         )}
-        {refusedReason && <span className="header-error">{refusedReason}</span>}
+        {refusedReason && <span className="header-error" title={refusedReason}>{refusedReason}</span>}
         {model && (
-          <span className="header-model">{model}</span>
+          <span className="header-model" title={model}>{model}</span>
         )}
       </div>
 

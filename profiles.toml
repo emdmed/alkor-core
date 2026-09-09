@@ -40,16 +40,14 @@ ctx = 32768
 # and Spanish. Unlike every other pack the harness reads, this one lives IN this repository
 # — it is the worked example, so it has to be here to be read.
 #
-# Qwen3-4B-Q4_K_M is what the numbers in the README were measured against; the pack's
-# models.default.toml names the exact weights and the sampling.
+# Gemma 4 E4B Q4_0 is the current default; the pack's models.default.toml pins the exact
+# weights and sampling. Historical measurements keep their original model names.
 [clinical]
 mode = "extract"
 pack = "packs/clinical"
 url = "http://127.0.0.1:8081"
-# The `.official` suffix is load-bearing: it is the file whose sha256 matches the one the
-# pack declares. A local copy 384 bytes larger, matching no upstream repo, is the kind
-# of thing that makes a published number unreproducible on anyone else's machine.
-model = "~/models/Qwen3-4B-Q4_K_M.official.gguf"
+# This exact local artifact is pinned by sha256 in the pack's model declaration.
+model = "~/models/gemma-4-E4B-it-Q4_0.gguf"
 ctx = 32768
 
 # The router: a rule-based (and optionally model-based) classifier that decides which
@@ -100,4 +98,19 @@ mode = "pipeline"
 steps = [
   { name = "extract", profile = "clinical", input = "initial" },
   { name = "verify", profile = "verifier", input = { document = "initial", extraction = "step-0.raw" } }
+]
+
+# A deterministic qSOFA verification path. The clinical model produces the sepsis reply;
+# the second step checks its echoes, cited criteria, verdict, and score against the same
+# pack thresholds and medprotocol command used by the clinical answer key.
+[sepsis-verify]
+mode = "extract"
+pack = "packs/clinical"
+url = "http://127.0.0.1:8081"
+
+[sepsis-verified]
+mode = "pipeline"
+steps = [
+  { name = "extract", profile = "clinical", input = "initial" },
+  { name = "verify", profile = "sepsis-verify", input = { document = "initial", extraction = "step-0.raw" } }
 ]

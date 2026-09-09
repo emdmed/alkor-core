@@ -190,6 +190,25 @@ export const CONTRACTS = {
     documentKind: 'exam',
   },
   /**
+   * The sepsis-screening pass: a fixed Quick SOFA payload in, whether the screen is positive out.
+   *
+   * The second contract in this table that extracts nothing, and it shares the shock contract's
+   * shape for the same reason they are separate: a closed payload of already-decided numerics in,
+   * a verdict out, with the numeric screen computed by the medprotocol CLI and the model graded
+   * against it. Its `documentKind` is `exam`, so the harness reads exams/{case}.exam.json; what
+   * reaches the model is `renderSepsis`'s rendering of that file, not the file, for the same
+   * reason shock's rendering lives in code and not in the eval.
+   */
+  sepsis: {
+    id: 'sepsis',
+    promptKey: 'sepsisPrompt',
+    schemaKey: 'sepsisSchema',
+    goldenKey: 'sepsisSchemaGolden',
+    schemaNameField: 'sepsisSchemaName',
+    samplingKey: 'sepsis',
+    documentKind: 'exam',
+  },
+  /**
    * The shock-extraction pass: a free-text clinical note in, the structured ShockExam payload
    * the reasoning contract consumes out. This is the upstream half of a pipeline that ends
    * with the shock task: prose → extraction → reasoning. It shares the same output shape as
@@ -227,14 +246,15 @@ export const CONTRACTS = {
  * contract that sits looking complete and reports nothing, which is the state it was in for
  * exactly as long as it took to write an eval mode for it.
  */
-export type Task = 'vital-signs' | 'summary' | 'note-format' | 'transcript' | 'shock' | 'shock-extraction'
-export const TASKS: Task[] = ['vital-signs', 'summary', 'note-format', 'transcript', 'shock', 'shock-extraction']
+export type Task = 'vital-signs' | 'summary' | 'note-format' | 'transcript' | 'shock' | 'shock-extraction' | 'sepsis'
+export const TASKS: Task[] = ['vital-signs', 'summary', 'note-format', 'transcript', 'shock', 'shock-extraction', 'sepsis']
 
-export type ClinicalShape = 'exam-json' | 'shock-suspicion' | 'dialogue' | 'dictation' | 'vitals-note' | 'note' | 'summary-input'
+export type ClinicalShape = 'exam-json' | 'qsofa-json' | 'shock-suspicion' | 'dialogue' | 'dictation' | 'vitals-note' | 'note' | 'summary-input'
 
 /** The default task each shape routes to. The `note` shape is overridden by the pack's `defaultTask`. */
 export const DEFAULT_TASK_FOR_SHAPE: Record<ClinicalShape, Task> = {
   'exam-json': 'shock',
+  'qsofa-json': 'sepsis',
   'shock-suspicion': 'shock-extraction',
   'summary-input': 'summary',
   dialogue: 'transcript',

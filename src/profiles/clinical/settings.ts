@@ -69,6 +69,11 @@ export interface ClinicalSettings {
    * has no extraction contract, and assembly refuses rather than guessing a label.
    */
   shockExtractionSchemaName?: string
+  /**
+   * `json_schema.name` for the sepsis-screening pass, on the same terms: absent means the pack
+   * has no sepsis contract, and assembly refuses rather than guessing a label.
+   */
+  sepsisSchemaName?: string
   quoteVerification: QuoteRule
   textDerivation: DerivationRule
   summaryAssembly: AssemblyRule
@@ -157,6 +162,7 @@ export type SchemaNameField =
   | 'medicationSchemaName'
   | 'shockSchemaName'
   | 'shockExtractionSchemaName'
+  | 'sepsisSchemaName'
 
 /**
  * The four names a pack must state, as data rather than as four type annotations.

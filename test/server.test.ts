@@ -58,6 +58,7 @@ test('health endpoint returns profiles and session count', async () => {
   assert.deepEqual(routerTargets, ['clinical', 'transcriptor', 'verifier'])
   const clinical = topologyProfiles.find((profile) => profile.name === 'clinical')
   assert.ok(clinical.topology.stages[0].routes.some((route: any) => route.name === 'shock-extraction'))
+  assert.equal(clinical.topology.stages[0].routes.find((route: any) => route.name === 'shock-extraction').feeds, 'shock')
   assert.equal(clinical.topology.stages[0].routes.find((route: any) => route.name === 'summary').available, false)
   assert.equal(typeof (data as any).sessions, 'number')
   await close()

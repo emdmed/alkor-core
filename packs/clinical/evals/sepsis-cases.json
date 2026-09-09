@@ -1,0 +1,115 @@
+{
+  "_comment": "Answer key for the sepsis-suspicion reasoning task: a fixed Quick SOFA payload in, whether the screen is positive out. Like shock there is no note and nothing is extracted — the input is a closed set of three numerics, and what is measured is whether the model reports the screen medprotocol computed rather than re-deriving the thresholds itself.",
+  "_input": "ONE payload per case, at exams/{case}.exam.json, reached through the `exam` documents kind. Case names ARE payload names here — no payload is shared by two cases, because a payload is already the answer to one question.",
+  "_source": "Sepsis screening by Quick SOFA (qSOFA): a positive screen is any two of respiratory rate >= 22 breaths/min, altered mental status (GCS < 15), and systolic blood pressure <= 100 mmHg. Used outside the ICU for rapid bedside screening. The numeric screen — score and positive result — is computed by the medprotocol CLI and is the answer key this corpus grades against.",
+  "_whatThisIsNot": "A POSITIVE QSOFA SCREEN IS NOT A DIAGNOSIS OF SEPSIS, and the floors below must never be quoted as though it were. qSOFA identifies patients with suspected infection who are at risk of deterioration; it is a screening trigger, not a diagnostic criterion. A model scoring 1.0 here has shown it reports a computed screen faithfully and narrates the criteria correctly. That is the whole claim and it is a useful one; it is not a claim about anyone's sepsis.",
+  "_expectIsCrossChecked": "`expect` restates what the medprotocol qsofa command computes from the same payload, and the loader REFUSES the pack when the two disagree. Independently, the per-criterion derivation is reconciled against the CLI's authoritative `score` at load, so a pack threshold that drifted from the tool that decides the screen is a load error naming the case. Both checks make the same argument the shock answer key does: the expectation is written twice and checked once before a single number is reported.",
+  "_floors": {
+    "screenAgreementFloor": "The gate: did the model report the positive/negative screen the CLI computes. The floor tolerates a handful of cases and stops early, on the shock reasoning — a corpus this size moves in coarse steps and a wrong verdict has nothing to be except wrong, since the payload is closed and the screen is stated in the prompt.",
+    "echoFidelityFloor": "Did the model repeat the three qSOFA inputs as the payload states them. 1.0, and unlike the agreement floor it has no error budget: copying three numbers out of a seven-line payload is not reasoning, and a right verdict reached from misread inputs is right about a patient the payload does not contain.",
+    "criteriaFidelityFloor": "Did the model list exactly the criteria the inputs meet. 1.0. A criterion cited that is not met is the model re-deriving the screen and asserting a falsehood; a met criterion omitted is the model failing to read the (already-computed) criteria_met line. Both are the exact failure this contract exists to expose, so neither has any budget."
+  },
+  "screenAgreementFloor": 0.84,
+  "echoFidelityFloor": 1.0,
+  "criteriaFidelityFloor": 1.0,
+  "cases": [
+    {
+      "name": "sp-01-three-meet",
+      "class": "textbook",
+      "difficulty": 1,
+      "expect": true,
+      "discriminates": "All three qSOFA criteria met and the screen positive. Here as a floor rather than a test: a model that misses this has not understood the task, and every harder case below would be uninterpretable without it."
+    },
+    {
+      "name": "sp-02-rr-met-only",
+      "class": "textbook",
+      "difficulty": 1,
+      "expect": false,
+      "discriminates": "Exactly one criterion — the respiratory rate — and therefore a negative screen. Establishes that one criterion is not enough, the rule the whole corpus turns on."
+    },
+    {
+      "name": "sp-03-sbp-met-only",
+      "class": "textbook",
+      "difficulty": 2,
+      "expect": false,
+      "discriminates": "The systolic criterion alone. Pairs with sp-02 and sp-04 so that no single-criterion case can be passed by memorising one; each of the three must be individually insufficient."
+    },
+    {
+      "name": "sp-04-ams-met-only",
+      "class": "textbook",
+      "difficulty": 2,
+      "expect": false,
+      "discriminates": "Altered mental status alone. The third single-criterion case, completing the set: none of the three features is sufficient on its own."
+    },
+    {
+      "name": "sp-05-two-rr-sbp",
+      "class": "textbook",
+      "difficulty": 2,
+      "expect": true,
+      "discriminates": "Exactly two criteria — respiratory rate and systolic — with an alert patient and therefore a positive screen. The canonical two-of-three case."
+    },
+    {
+      "name": "sp-06-two-rr-ams",
+      "class": "textbook",
+      "difficulty": 2,
+      "expect": true,
+      "discriminates": "The second combination of exactly two: respiratory rate and altered mental status, normotensive. Pairs with sp-07 so no two-criterion case can ride on one pairing."
+    },
+    {
+      "name": "sp-07-two-sbp-ams",
+      "class": "textbook",
+      "difficulty": 2,
+      "expect": true,
+      "discriminates": "The third combination of exactly two: systolic and altered mental status, with a normal respiratory rate. Completes the set of two-of-three — every pair must individually be positive."
+    },
+    {
+      "name": "sp-08-none",
+      "class": "textbook",
+      "difficulty": 1,
+      "expect": false,
+      "discriminates": "No criterion met and a score of 0. The clean negative, the complement of sp-01."
+    },
+    {
+      "name": "sp-09-rr-at-boundary",
+      "class": "boundary",
+      "difficulty": 3,
+      "expect": false,
+      "discriminates": "The respiratory rate exactly at its cut: 22 IS met, but only one criterion so the screen is still negative. Pins the >= comparison in the direction that matters, the way sh-13 pins the jugular venous pressure cut."
+    },
+    {
+      "name": "sp-10-sbp-at-boundary",
+      "class": "boundary",
+      "difficulty": 3,
+      "expect": false,
+      "discriminates": "Systolic exactly at its cut: 100 IS met, but only one criterion, so the screen is negative. The day someone reimplements the comparison as strictly-below, this case fails the run."
+    },
+    {
+      "name": "sp-11-gcs-at-boundary",
+      "class": "boundary",
+      "difficulty": 3,
+      "expect": false,
+      "discriminates": "GCS 14 is altered mental status — the threshold is AT 15, so 14 meets it — but it is the only criterion met, so the screen is still negative. Pins which side of the GCS cut counts."
+    },
+    {
+      "name": "sp-12-gcs-alert-at-15",
+      "class": "boundary",
+      "difficulty": 3,
+      "expect": false,
+      "discriminates": "GCS exactly 15 is NOT altered mental status, because the cut is below 15. Pairs with sp-11 to pin both sides of the same comparison, the way sh-17 and sh-18 pin the shock precondition."
+    },
+    {
+      "name": "sp-13-rr-just-below",
+      "class": "boundary",
+      "difficulty": 4,
+      "expect": true,
+      "discriminates": "The respiratory rate is 21 — one below the cut and NOT met — but systolic and altered mental status ARE met, so the screen is positive anyway. A model that circles the rr number instead of reading criteria_met answers negative, because the headline number looks wrong until the rule is applied."
+    },
+    {
+      "name": "sp-14-sbp-just-above",
+      "class": "boundary",
+      "difficulty": 4,
+      "expect": true,
+      "discriminates": "The systolic is 101 — one above the cut and NOT met — but respiratory rate and altered mental status ARE met, so the screen is positive. The mirror of sp-13 from the other side, so the corpus cannot be passed by a habit as narrow as '101 is normotensive, so negative'."
+    }
+  ]
+}

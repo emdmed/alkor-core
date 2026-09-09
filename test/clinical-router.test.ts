@@ -15,6 +15,7 @@ import {
 } from '../src/profiles/clinical/clinical-router.ts'
 import { type ClinicalShape, DEFAULT_TASK_FOR_SHAPE, type Task } from '../src/profiles/clinical/contracts.ts'
 import { loadPack } from '../src/core/pack.ts'
+import { createActivity } from '../src/core/activity.ts'
 
 // --- Shape detection -----------------------------------------------------------------------
 
@@ -39,6 +40,27 @@ test('exam-json shape: JSON with actual shock payload keys routes to shock', () 
   )
   assert.equal(r.shape, 'exam-json')
   assert.equal(r.task, 'shock')
+})
+
+test('a combined shock and qSOFA payload routes through both workflows in order', () => {
+  const r = routeClinicalShape(JSON.stringify({
+    respiratory_rate: 24,
+    systolic_bp: 88,
+    gcs: 12,
+    hypotension: { systolic: 88, diastolic: 54, duration_minutes: 45 },
+    heart_rate: 118,
+    skin_temperature: 'warm',
+    jugular_venous_pressure: 'normal_or_low',
+    capillary_refill: 'brisk',
+    pulse_volume: 'bounding',
+    lung_exam: 'clear',
+  }))
+
+  assert.equal(r.task, 'shock')
+  assert.deepEqual(r.tasks, ['shock', 'sepsis'])
+  assert.equal(r.confidence, 1)
+  assert.match(r.reason, /qsofa-json/)
+  assert.match(r.reason, /exam-json/)
 })
 
 test('exam-json shape: JSON without shock keys falls through to note', () => {
@@ -137,6 +159,7 @@ test('shock-suspicion shape: two shock criteria routes to shock-extraction', () 
   const r = routeClinicalShape('Patient hypotensive, tachycardic, cool peripheries.')
   assert.equal(r.shape, 'shock-suspicion')
   assert.equal(r.task, 'shock-extraction')
+  assert.deepEqual(r.tasks, ['shock-extraction', 'shock'])
   assert.equal(r.confidence, 0.92)
 })
 
@@ -326,6 +349,67 @@ test('clinical profile checkpoints route to contextDir and resumes', async () =>
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('clinical profile executes a multi-route plan sequentially and emits it for the dashboard', async () => {
+  const { PROFILE } = await import('../src/profiles/clinical/profile.ts')
+  const calls: string[] = []
+  const provider = {
+    async chat(o: { label: string }): Promise<string> {
+      calls.push(o.label)
+      if (o.label === 'shock') return JSON.stringify({
+        skin_temperature: 'warm',
+        jugular_venous_pressure: 'normal_or_low',
+        shock_category: 'septic',
+        supporting_findings: ['skin_temperature', 'jugular_venous_pressure'],
+        discordant_findings: [],
+        indeterminate_reason: null,
+        assessment_confidence: 0.9,
+        notes: null,
+      })
+      if (o.label === 'sepsis') return JSON.stringify({
+        respiratory_rate: 24,
+        systolic_bp: 88,
+        gcs: 12,
+        qsofa_score: 3,
+        positive: true,
+        criteria_met: ['respiratory_rate', 'systolic_bp', 'altered_mental_status'],
+        screen_reason: 'all three criteria met',
+        assessment_confidence: 0.9,
+        notes: null,
+      })
+      throw new Error(`unexpected model call ${o.label}`)
+    },
+  } as any
+  const activity = createActivity()
+  const trace = { write: () => {}, close: () => {} } as any
+  const input = JSON.stringify({
+    respiratory_rate: 24,
+    systolic_bp: 88,
+    gcs: 12,
+    hypotension: { systolic: 88, diastolic: 54, duration_minutes: 45 },
+    heart_rate: 118,
+    skin_temperature: 'warm',
+    jugular_venous_pressure: 'normal_or_low',
+    capillary_refill: 'brisk',
+    pulse_volume: 'bounding',
+    lung_exam: 'clear',
+  })
+
+  const result = await PROFILE.review!({
+    pack,
+    trace,
+    input: { kind: 'text', text: input, label: 'combined' },
+    options: {},
+    provider,
+    activity,
+  } as any)
+
+  assert.deepEqual(calls, ['shock', 'sepsis'])
+  assert.equal(result.ok, true)
+  assert.deepEqual((result.report as any).routes, ['shock', 'sepsis'])
+  const route = activity.recent().find((event: any) => event.kind === 'stage' && event.name === 'route') as any
+  assert.deepEqual(route.detail.tasks, ['shock', 'sepsis'])
 })
 
 test('clinical profile caches completed result and returns it on resume', async () => {

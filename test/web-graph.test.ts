@@ -346,3 +346,85 @@ test('an internal task decision dims the complete unchosen task path', () => {
   assert.equal(beta.data.muted, true)
   assert.equal(betaCall.data.muted, true)
 })
+
+test('an internal routing node can select more than one path', () => {
+  const state = emptyState()
+  state.topology = {
+    profiles: [{
+      name: 'worker',
+      mode: 'extract',
+      topology: {
+        stages: [{
+          name: 'route',
+          kind: 'decision',
+          routes: [
+            { name: 'shock', stages: [{ name: 'classify' }] },
+            { name: 'sepsis', stages: [{ name: 'screen' }] },
+            { name: 'other', stages: [{ name: 'other-call' }] },
+          ],
+        }],
+      },
+    }],
+    pipelines: [],
+  }
+  state.runs.set('run-1', { runId: 'run-1', profile: 'worker', status: 'started' })
+  state.stages.set('route-1', {
+    stageId: 'route-1', runId: 'run-1', name: 'route', status: 'completed',
+    detail: { tasks: ['shock', 'sepsis'] }, children: [],
+  })
+
+  const graph = buildProjectGraph(state, 'run-1', new Set())
+  const sepsis = graph.nodes.find((node) => node.data.kind === 'branch' && node.data.label === 'sepsis')!
+  const shock = graph.nodes.find((node) => node.data.kind === 'branch' && node.data.label === 'shock')!
+  const other = graph.nodes.find((node) => node.data.kind === 'branch' && node.data.label === 'other')!
+  const classify = graph.nodes.find((node) => node.data.label === 'classify')!
+  const continuation = graph.edges.find((edge) => edge.source === classify.id && edge.target === sepsis.id)
+
+  assert.equal(sepsis.data.chosen, true)
+  assert.equal(sepsis.data.muted, false)
+  assert.equal(shock.data.chosen, true)
+  assert.equal(shock.data.muted, false)
+  assert.equal(continuation?.data?.kind, 'branch')
+  assert.ok(sepsis.position.x > classify.position.x, 'the second workflow follows the first')
+  assert.equal(other.data.chosen, false)
+  assert.equal(other.data.muted, true)
+})
+
+test('a route that feeds a sibling is laid out upstream and selects the shared continuation', () => {
+  const state = emptyState()
+  state.topology = {
+    profiles: [{
+      name: 'worker',
+      mode: 'extract',
+      topology: {
+        stages: [{
+          name: 'route',
+          kind: 'decision',
+          routes: [
+            { name: 'prepare', stages: [{ name: 'parse' }], feeds: 'classify' },
+            { name: 'classify', stages: [{ name: 'infer' }] },
+            { name: 'other', stages: [{ name: 'other-call' }] },
+          ],
+        }],
+      },
+    }],
+    pipelines: [],
+  }
+  state.runs.set('run-1', { runId: 'run-1', profile: 'worker', status: 'started' })
+  state.stages.set('route-1', {
+    stageId: 'route-1', runId: 'run-1', name: 'route', status: 'completed', detail: { task: 'prepare' }, children: [],
+  })
+
+  const graph = buildProjectGraph(state, 'run-1', new Set())
+  const prepare = graph.nodes.find((node) => node.data.kind === 'branch' && node.data.label === 'prepare')!
+  const parse = graph.nodes.find((node) => node.data.label === 'parse')!
+  const classify = graph.nodes.find((node) => node.data.kind === 'branch' && node.data.label === 'classify')!
+  const other = graph.nodes.find((node) => node.data.kind === 'branch' && node.data.label === 'other')!
+  const feed = graph.edges.find((edge) => edge.source === parse.id && edge.target === classify.id)
+
+  assert.ok(classify.position.x > parse.position.x, 'the consumer sits after its producer')
+  assert.equal(classify.position.y, prepare.position.y, 'the dependency reads as one horizontal workflow')
+  assert.equal(classify.data.chosen, true, 'selecting the producer also selects its continuation')
+  assert.equal(feed?.data?.kind, 'branch', 'the selected dependency is visibly connected')
+  assert.equal(other.data.muted, true, 'unrelated sibling routes remain de-emphasised')
+})

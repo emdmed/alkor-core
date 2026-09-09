@@ -451,9 +451,9 @@ Every run writes JSONL to `${XDG_STATE_HOME:-~/.local/state}/medextract/traces/<
 raw completion, which for a clinical profile means the note. A profile that handles patient
 data supplies a `redact` hook and must set one before tracing anything real.
 
-## Four tasks over two corpora
+## Six tasks over four corpora
 
-The reference pack grades four contracts, and `--task` chooses:
+The reference pack grades six contracts, and `--task` chooses:
 
 ```bash
 node src/cli.ts eval --profile clinical --constrain                     # vital-signs, the default
@@ -461,7 +461,8 @@ node src/cli.ts eval --profile clinical --constrain --task summary      # a whol
 node src/cli.ts eval --profile clinical --constrain --task note-format  # one note, four sections, every item cited
 node src/cli.ts eval --profile clinical --constrain --task transcript   # a dictation, sorted into the same four
 node src/cli.ts eval --profile clinical --constrain --task shock        # a JSON exam payload, category + residue
-node src/cli.ts eval --profile clinical --constrain --task all          # the five, each gated on its own floor
+node src/cli.ts eval --profile clinical --constrain --task sepsis       # a qSOFA payload, positive/negative + criteria
+node src/cli.ts eval --profile clinical --constrain --task all          # the seven, each gated on its own floor
 ```
 
 | task | input | what it returns | gate |
@@ -471,17 +472,19 @@ node src/cli.ts eval --profile clinical --constrain --task all          # the fi
 | `note-format` | one note | four sections; every item carries a `quote` and a derived `text` | item recall ≥ 75%, **plus** provenance ≥ 90%, derivation ≥ 90% and *nothing invented* (100%) |
 | `transcript` | one **dictated transcript** — speech, out of order, correcting itself | the same four sections, same `quote` and `text` | item recall ≥ 65%, same three sub-gates at 85 / 85 / 100% — **provisional, unmeasured** |
 | `shock` | one **JSON exam payload** — vital signs, capillary refill, mental status | category + `indeterminate_reason` + agreement with rule-based reference | agreement ≥ 70%, concordance ≥ 80%, coverage ≥ 90%, format valid 100%, schema valid 100% |
+| `sepsis` | one **qSOFA payload** — respiratory rate, systolic BP, GCS | positive/negative screen + `criteria_met` + agreement with the medprotocol CLI | screen agreement ≥ 84%, echo 100%, criteria fidelity 100% — **provisional, unmeasured** |
 
 Three things about this arrangement are the reason it is worth having, and none of them are
 visible in a single-task pack:
 
-**One corpus, three readings — and a second corpus that is genuinely different.** The
+**One corpus, three readings — and the rest genuinely different.** The
 note-format cases name a case in the vital-signs corpus and read *that* note: 30 notes grade
 three tasks, and a note fixed once is fixed for all of them. The summary task brings its own
 documents because its unit of input is a patient rather than an encounter. The transcript task
 brings its own because a dictation is not a note — the pack declares a second `documents` kind
-for it (spec 3) rather than filing speech under a filename that calls it prose. The shock task
-brings its own because a JSON payload is not prose — the pack declares an `exams` kind for it.
+for it (spec 3) rather than filing speech under a filename that calls it prose. The shock and
+sepsis tasks bring their own because a JSON payload is not prose — the pack declares an `exams`
+kind for it.
 
 **One structure, two inputs.** `transcript` sends the *note-format schema*, byte for byte,
 under its own `json_schema.name`. A clinician reads one structure, and a second schema for it
@@ -592,8 +595,8 @@ because it is the evidence those changes were made from, not as a current result
 
 21 notes / 88 graded slots for `vital-signs`, 3 records / 13 items for `summary`, 6 notes /
 18 items for `note-format`. Temperature 0, `seed` 0, caps from the pack, one run per case, on
-an AMD Renoir iGPU. Qwen3-4B is the local file whose sha256 `packs/clinical/models.default.toml`
-pins, verified before the run; gemma-3-4b-it is `ggml-org/gemma-3-4b-it-GGUF`. Full
+an AMD Renoir iGPU. Qwen3-4B was the then-default local file, sha256 `7485fe6f…`, verified
+before the run; gemma-3-4b-it is `ggml-org/gemma-3-4b-it-GGUF`. Full
 conditions, per-tier detection and per-case failures: `packs/clinical/RESULTS.md`.
 
 | model | grammar | detection (gate) | value | unit | provenance | halluc | failed | tok/s | median/note |
@@ -648,10 +651,10 @@ LLAMA_PORT=8081 LLAMA_MODEL=~/models/Qwen3-4B-Q4_K_M.official.gguf scripts/llama
 node src/cli.ts eval --profile clinical --constrain            # add --url for another port
 ```
 
-The `.official` suffix is load-bearing: it is the copy whose sha256 matches the one the pack
-declares. The trace's `run` event records which difficulty tiers a result covers and the
-server conditions a timing was taken under, so a row is never read against a corpus or a
-machine it did not run on.
+The `.official` suffix identifies the historical copy whose sha256 was `7485fe6f…`; the pack
+now declares Gemma 4 E4B as its default. The trace's `run` event records which difficulty tiers
+a result covers and the server conditions a timing was taken under, so a row is never read
+against a corpus or a machine it did not run on.
 
 Every case's full completion goes into the trace, and a `run` event at the top of each trace
 records the model the server reported, the URL, whether a grammar was used and the sampling.
@@ -723,8 +726,9 @@ longer exists, so an entry there gets a new date rather than an edit.
 | offline re-scoring (`eval --from-trace`) | done, tested — a claim about a past run is checkable |
 | typecheck and CI | done — `npm test && npm run typecheck` on every push |
 | router (intent classification, 98.1% on 54 cases) | done, tested |
-| clinical internal router (shape-based, 100% on 60 cases) | done, tested |
+| clinical internal router (shape-based, 100% on 70 cases) | done, tested |
 | shock category contract (20 cases, rule-based reference arm) | done, tested |
+| sepsis screen contract (14 cases, medprotocol reference arm) | done, tested — awaiting a measured run for RESULTS.md |
 | verifier (30 cases, 100% catch, 0% FP on 4B model) | done, tested |
 | pipeline mode (multi-profile orchestration, state passing, checkpointing) | done, tested |
 | clinical-verified pipeline (extract → verify, fidelity eval) | done, tested |

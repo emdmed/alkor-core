@@ -11,7 +11,7 @@
  * work into it.
  */
 import { useEffect, useRef, useState } from 'react'
-import { Send, Sparkles, X } from 'lucide-react'
+import { List, Send, Sparkles, X } from 'lucide-react'
 import {
   type PipelineDefinition,
   type ProjectState,
@@ -34,6 +34,8 @@ interface ChatPanelProps {
   onToggle: () => void
   state: ProjectState
   run: (profile: string, input: string) => Promise<unknown>
+  /** Narrow-shell coordination: jump straight from the run console to the drawer. */
+  onOpenActivity?: () => void
 }
 
 const PRESETS = [
@@ -42,7 +44,7 @@ const PRESETS = [
   'Extract allergies and prior surgeries',
 ]
 
-export const ChatPanel = ({ open, onToggle, state, run }: ChatPanelProps) => {
+export const ChatPanel = ({ open, onToggle, state, run, onOpenActivity }: ChatPanelProps) => {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [pending, setPending] = useState(false)
@@ -70,6 +72,14 @@ export const ChatPanel = ({ open, onToggle, state, run }: ChatPanelProps) => {
     if (open) textareaRef.current?.focus()
   }, [open])
 
+  // The composer grows to a controlled maximum instead of resizing by hand.
+  const fitTextarea = () => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 120)}px`
+  }
+
   const handleSend = async () => {
     const text = input.trim()
     if (!text || !selectedProfile || pending) return
@@ -79,6 +89,7 @@ export const ChatPanel = ({ open, onToggle, state, run }: ChatPanelProps) => {
     setMessages((prev) => [...prev, msg])
     setInput('')
     setPending(true)
+    requestAnimationFrame(fitTextarea)
 
     try {
       const result = await run(selectedProfile, text)
@@ -111,6 +122,7 @@ export const ChatPanel = ({ open, onToggle, state, run }: ChatPanelProps) => {
   const pickPreset = (text: string) => {
     setInput(text)
     textareaRef.current?.focus()
+    requestAnimationFrame(fitTextarea)
   }
 
   const clearMessages = () => setMessages([])
@@ -130,9 +142,16 @@ export const ChatPanel = ({ open, onToggle, state, run }: ChatPanelProps) => {
           <span className="chat-title">Run pipeline</span>
           <span className="chat-head-note">Send input and follow its execution</span>
         </div>
-        <Button variant="ghost" size="sm" onClick={onToggle} aria-label="close chat">
-          <X size={14} />
-        </Button>
+        <div className="chat-head-actions">
+          {onOpenActivity && (
+            <Button variant="ghost" size="sm" onClick={onOpenActivity} aria-label="open activity" className="chat-head-activity">
+              <List size={14} aria-hidden="true" />Activity
+            </Button>
+          )}
+          <Button variant="ghost" size="sm" onClick={onToggle} aria-label="close chat">
+            <X size={14} />
+          </Button>
+        </div>
       </div>
 
       {/* Pipeline selector */}
@@ -153,7 +172,7 @@ export const ChatPanel = ({ open, onToggle, state, run }: ChatPanelProps) => {
         </select>
       </div>
 
-      {/* Presets */}
+      {/* Presets — compact actions that say what to do next on their own. */}
       {messages.length === 0 && (
         <div className="chat-presets">
           {PRESETS.map((p) => (
@@ -166,12 +185,6 @@ export const ChatPanel = ({ open, onToggle, state, run }: ChatPanelProps) => {
 
       {/* Transcript */}
       <div className="chat-scroll" ref={scrollRef}>
-        {messages.length === 0 && (
-          <div className="chat-empty">
-            <span className="chat-empty-title">Ready for input</span>
-            <span>Choose a starting prompt above or enter your own below.</span>
-          </div>
-        )}
         {messages.map((msg) => (
           <div key={msg.id} className={cn('chat-msg', msg.status === 'error' && 'chat-msg-err')}>
             <div className="chat-msg-head">
@@ -199,15 +212,18 @@ export const ChatPanel = ({ open, onToggle, state, run }: ChatPanelProps) => {
         )}
       </div>
 
-      {/* Footer: textarea + send */}
+      {/* Footer: composer + send */}
       <div className="chat-foot">
         <textarea
           ref={textareaRef}
           className="chat-textarea"
           placeholder="Paste text or enter an extraction request…"
-          rows={3}
+          rows={2}
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={(e) => {
+            setInput(e.target.value)
+            fitTextarea()
+          }}
           onKeyDown={handleKeyDown}
           disabled={!selectedProfile}
         />

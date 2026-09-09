@@ -33,7 +33,7 @@ cannot strip and the two agree about what this repository is allowed to contain.
 To extract anything, or to run an eval, you need a `llama-server` you started yourself:
 
 ```bash
-LLAMA_PORT=8081 LLAMA_MODEL=~/models/Qwen3-4B-Q4_K_M.gguf scripts/llama-server.sh \
+LLAMA_PORT=8081 LLAMA_MODEL=~/models/gemma-4-E4B-it-Q4_0.gguf scripts/llama-server.sh \
   -ngl 99 --no-webui --parallel 1
 node src/cli.ts extract --profile clinical --case vs-en-03-prose --constrain
 node src/cli.ts eval    --profile clinical --constrain

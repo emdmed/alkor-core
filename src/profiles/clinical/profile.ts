@@ -20,6 +20,7 @@ import type { Pack } from '../../core/pack.ts'
 import { PackError } from '../../core/pack.ts'
 import { runVitalSignsEval } from './eval.ts'
 import { runShockEval } from './shock-eval.ts'
+import { runSepsisEval, sepsisDocumentNames } from './sepsis-eval.ts'
 import { gatePasses, runNoteFormatEval, runSummaryEval, runTranscriptEval, type TaskResult } from './set-eval.ts'
 import { loadSettings } from './settings.ts'
 import { TASKS, type Task } from './contracts.ts'
@@ -30,6 +31,7 @@ import { reviewVitalSigns, vitalDocumentNames } from './review.ts'
 import { reviewTranscript, transcriptDocumentNames } from './review-transcript.ts'
 import { reviewShock } from './review-shock.ts'
 import { shockDocumentNames } from './shock-eval.ts'
+import { reviewSepsis } from './review-sepsis.ts'
 import { reviewNoteFormat } from './review-note-format.ts'
 import { reviewShockExtraction, type ShockExtractionReviewOptions } from './review-shock-extraction.ts'
 import { runShockExtractionEval, shockExtractionDocumentNames } from './shock-extraction-eval.ts'
@@ -56,8 +58,14 @@ export const PROFILE: ProfileModule = {
             { name: 'transcript-repair', optional: true },
           ],
         },
+        {
+          name: 'shock-extraction',
+          stages: [{ name: 'shock-extraction' }, { name: 'llm-call' }, { name: 'parse' }],
+          // Prose takes the long path; an already-structured exam may enter `shock` directly.
+          feeds: 'shock',
+        },
         { name: 'shock', stages: [{ name: 'shock-classification' }, { name: 'llm-call' }, { name: 'verify' }] },
-        { name: 'shock-extraction', stages: [{ name: 'shock-extraction' }, { name: 'llm-call' }, { name: 'parse' }] },
+        { name: 'sepsis', stages: [{ name: 'sepsis-screening' }, { name: 'llm-call' }, { name: 'verify' }] },
         { name: 'summary', available: false },
       ],
     }],
@@ -72,6 +80,7 @@ export const PROFILE: ProfileModule = {
     if (task === 'transcript') return transcriptDocumentNames(pack)
     if (task === 'shock') return shockDocumentNames(pack)
     if (task === 'shock-extraction') return shockExtractionDocumentNames(pack)
+    if (task === 'sepsis') return sepsisDocumentNames(pack)
     return vitalDocumentNames(pack)
   },
   /**
@@ -94,10 +103,10 @@ export const PROFILE: ProfileModule = {
    * signs, and quietly re-pointing an existing command at a different contract because a pack
    * changed a key is how a caller ends up parsing the wrong schema.
    *
-   * Only two of the four tasks are reachable here. Summary reads a whole record assembled
-   * from many notes rather than one document, and note formatting reads the same note the
-   * vital-signs corpus holds — neither is refused for a shortage of code, and both are named
-   * in the error so the refusal is a statement rather than a gap.
+   * Only some tasks are reachable here. Summary reads a whole record assembled from many notes
+   * rather than one document, and note formatting reads the same note the vital-signs corpus
+   * holds — neither is refused for a shortage of code, and both are named in the error so the
+   * refusal is a statement rather than a gap.
    */
   async review(ctx: ReviewContext): Promise<ReviewResult> {
     const contextDir = (ctx.options['context-dir'] ?? ctx.options.contextDir) as string | undefined
@@ -125,8 +134,8 @@ export const PROFILE: ProfileModule = {
       return { pass: true, summary: `re-scored, no gate applied — ${rescoreSummaryLine(results)}` }
     }
 
-    // Asked ONCE, before any task runs, and handed to all three. Three tasks asking the same
-    // server the same two questions is three round-trips for one answer and three chances to
+    // Asked ONCE, before any task runs, and handed to all of them. Seven tasks asking the same
+    // server the same two questions is seven round-trips for one answer and seven chances to
     // disagree about what the run was measured against.
     const identity = await identifyServer(ctx.baseUrl)
     // Printed FIRST, above the numbers rather than below them. A run that cannot name what
@@ -142,9 +151,9 @@ export const PROFILE: ProfileModule = {
       runs: Number(ctx.options.runs ?? 1),
       difficulty: ctx.options.difficulty as string | undefined,
       cachePrompt: ctx.options.cachePrompt !== false,
-      // Reaches the transcript eval and is ignored by the other three, which have no citation
-      // to repair. Refused rather than ignored when the run asks for ONLY those tasks: a flag
-      // that quietly dropped a flag would report a number under.
+      // Reaches the transcript eval and is ignored by the others — the extract- and reason-shaped
+      // tasks have no citation to repair. Refused rather than ignored when the run asks for ONLY
+      // those tasks: a flag that quietly dropped a flag would report a number under.
       repair: Boolean(ctx.options.repair),
       // ON unless turned off, which is the opposite of `repair` and deliberately so: the
       // medication pass is part of what this pack says reading a dictation means, so an eval
@@ -172,13 +181,14 @@ export const PROFILE: ProfileModule = {
       // quietly dropped a flag would report a number under conditions the header names and
       // the run did not use.
       else if (task === 'shock') results.push(await runShockEval(shared))
+      else if (task === 'sepsis') results.push(await runSepsisEval(shared))
       else if (task === 'shock-extraction') results.push(await runShockExtractionEval(shared))
       else results.push(await runTranscriptEval(shared))
     }
 
     // EVERY task clears its own floor, and every sub-gate within a task clears its own.
     // Averaging them would let a ceiling on one hide a failure in another, which matters
-    // here more than it sounds: vital signs is the mature task and the other three are new,
+    // here more than it sounds: vital signs is the mature task and the others are new,
     // so a mean would be carried by the one that was never in doubt.
     //
     // `gatePasses` also refuses a gate whose denominator was zero. A floor cleared by
@@ -238,7 +248,7 @@ const resolveCaseDocument = (pack: Pack, caseName: string): string => {
 }
 
 /**
- * Which tasks a run grades. `--task all` runs the three; no flag runs the pack's default.
+ * Which tasks a run grades. `--task all` runs all of them; no flag runs the pack's default.
  *
  * An unknown name is refused rather than falling back to the default: a typo that silently
  * graded vital signs would report a number for a task nobody asked about, and its output
@@ -270,6 +280,7 @@ const executeClinicalTask = async (ctx: ReviewContext, shared: { pack: Pack; bas
   if (task === 'vital-signs') return reviewVitalSigns(shared)
   if (task === 'transcript') return reviewTranscript({ ...shared, repair: Boolean(ctx.options.repair) })
   if (task === 'shock') return reviewShock({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider, activity: ctx.activity })
+  if (task === 'sepsis') return reviewSepsis({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider, activity: ctx.activity })
   if (task === 'shock-extraction') return reviewShockExtraction({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider, activity: ctx.activity })
   if (task === 'note-format') return reviewNoteFormat({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider, activity: ctx.activity })
 
@@ -278,6 +289,56 @@ const executeClinicalTask = async (ctx: ReviewContext, shared: { pack: Pack; bas
       'its input is a whole record assembled from many notes, not one document — ' +
       'run `eval --task summary` instead',
   )
+}
+
+const executeClinicalRoute = async (
+  ctx: ReviewContext,
+  shared: { pack: Pack; baseUrl?: string; trace: ReviewContext['trace']; constrain: boolean; input: ReviewContext['input']; calculate: boolean; provider?: Provider; activity?: Activity },
+  tasks: Task[],
+): Promise<ReviewResult> => {
+  if (tasks.length === 1) return executeClinicalTask(ctx, shared, tasks[0]!)
+
+  const results: Array<{ task: Task; result: ReviewResult }> = []
+  let shockInput: ReviewContext['input'] | undefined
+  let shockExtractionAttempted = false
+  for (const task of tasks) {
+    if (task === 'shock' && shockExtractionAttempted && !shockInput) {
+      results.push({
+        task,
+        result: { text: 'shock classification skipped: shock extraction produced no usable exam', ok: false },
+      })
+      continue
+    }
+    const taskShared = task === 'shock' && shockInput ? { ...shared, input: shockInput } : shared
+    const result = await executeClinicalTask(ctx, taskShared, task)
+    results.push({ task, result })
+
+    if (task === 'shock-extraction') {
+      shockExtractionAttempted = true
+      const exam = (result.report as { exam?: unknown } | undefined)?.exam
+      if (result.ok && exam) shockInput = { kind: 'text', text: JSON.stringify(exam), label: result.label }
+    }
+  }
+
+  const output = Object.fromEntries(results.map(({ task, result }) => {
+    let value = result.report
+    if (value === undefined && result.raw !== undefined) {
+      try {
+        value = JSON.parse(result.raw)
+      } catch {
+        value = result.raw
+      }
+    }
+    return [task, { ok: result.ok, output: value ?? result.text }]
+  }))
+
+  return {
+    text: results.map(({ result }) => result.text).join('\n'),
+    ok: results.every(({ result }) => result.ok),
+    document: shared.input.kind === 'text' ? shared.input.text : undefined,
+    label: shared.input.kind === 'text' ? shared.input.label : shared.input.name,
+    report: { routes: tasks, results: output },
+  }
 }
 
 const reviewSingleStep = async (ctx: ReviewContext): Promise<ReviewResult> => {
@@ -292,7 +353,7 @@ const reviewSingleStep = async (ctx: ReviewContext): Promise<ReviewResult> => {
     activity: ctx.activity,
   }
 
-  let task: Task
+  let tasks: Task[]
   if (ctx.options.task === undefined || ctx.options.task === 'default') {
     const text = resolveInputText(ctx)
     const route = routeClinicalShape(text, loadSettings(ctx.pack!).defaultTask)
@@ -300,22 +361,23 @@ const reviewSingleStep = async (ctx: ReviewContext): Promise<ReviewResult> => {
       kind: 'stage',
       name: 'route',
       status: 'completed',
-      detail: { shape: route.shape, confidence: route.confidence, task: route.task },
+      detail: { shape: route.shape, confidence: route.confidence, task: route.task, tasks: route.tasks },
     })
     ctx.trace.write({
       event: 'route',
       kind: 'clinical',
       shape: route.shape,
       task: route.task,
+      tasks: route.tasks,
       confidence: route.confidence,
       reason: route.reason,
     })
-    task = route.task
+    tasks = route.tasks
   } else {
-    task = reviewTask(ctx.options.task)
+    tasks = [reviewTask(ctx.options.task)]
   }
 
-  return executeClinicalTask(ctx, shared, task)
+  return executeClinicalRoute(ctx, shared, tasks)
 }
 
 /**
@@ -340,10 +402,10 @@ const reviewWithCheckpoint = async (ctx: ReviewContext, contextDir: string): Pro
   }
 
   // Caller explicitly named a task — skip the router and use it directly.
-  let task: Task
+  let tasks: Task[]
   let text: string
   if (ctx.options.task !== undefined && ctx.options.task !== 'default') {
-    task = reviewTask(ctx.options.task)
+    tasks = [reviewTask(ctx.options.task)]
     text = resolveInputText(ctx)
   } else {
     // Resolve or resume the route.
@@ -359,19 +421,20 @@ const reviewWithCheckpoint = async (ctx: ReviewContext, contextDir: string): Pro
         kind: 'stage',
         name: 'route',
         status: 'completed',
-        detail: { shape: route.shape, confidence: route.confidence, task: route.task },
+        detail: { shape: route.shape, confidence: route.confidence, task: route.task, tasks: route.tasks },
       })
       ctx.trace.write({
         event: 'route',
         kind: 'clinical',
         shape: route.shape,
         task: route.task,
+        tasks: route.tasks,
         confidence: route.confidence,
         reason: route.reason,
       })
       writeFileSync(routeFile, JSON.stringify({ route, text }, null, 2))
     }
-    task = route.task
+    tasks = route.tasks ?? [route.task]
   }
 
   const shared = {
@@ -385,7 +448,7 @@ const reviewWithCheckpoint = async (ctx: ReviewContext, contextDir: string): Pro
     activity: ctx.activity,
   }
 
-  const result = await executeClinicalTask(ctx, shared, task)
+  const result = await executeClinicalRoute(ctx, shared, tasks)
   // Only cache successful results so a transient failure (network, model not loaded)
   // can be retried on the next run without re-routing.
   if (result.ok) writeFileSync(resultFile, JSON.stringify(result, null, 2))

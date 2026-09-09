@@ -67,8 +67,8 @@ one run per case, sequential, `cache_prompt` on. `llama-server` with `--jinja --
 --parallel 1 -ngl 99`, ctx 32768, thinking off, AMD Renoir iGPU (Vulkan). Caps from the pack:
 1024 for vital signs, 2048 for the other two.
 
-Qwen3-4B-Q4_K_M is the local file whose sha256 `models.default.toml` pins (`7485fe6f…`,
-verified before the run; `Q4_K - Medium` as the server reports it). gemma-3-4b-it is
+Qwen3-4B-Q4_K_M was the local file whose sha256 `models.default.toml` pinned at the time
+(`7485fe6f…`, verified before the run; `Q4_K - Medium` as the server reports it). gemma-3-4b-it is
 `ggml-org/gemma-3-4b-it-GGUF` snapshot `d097622…`, also `Q4_K - Medium`.
 
 ### Vital signs — the gate is detection, floor 90%
@@ -238,8 +238,8 @@ the rule does not is `indeterminate_reason`: narration ran 100% on every run tha
 anything, and a 2x2 cannot produce a sentence.
 
 Model: **Qwen3-4B-Q4_K_M** (server-reported, and the same weights `models.default.toml`
-declares). Constrained arm only. Corpus: 20 payloads in `exams/`, 11 the rule decides and 9 it
-declines.
+declared at the time). Constrained arm only. Corpus: 20 payloads in `exams/`, 11 the rule decides
+and 9 it declines.
 
 ### The four runs
 
@@ -402,6 +402,55 @@ trace here is. Runs 2-4 each hold the model's reply, the rule's answer and the c
 rule would have cited, per case. Run 4's `run` and `record` events additionally name the
 medprotocol version and command — a result reproduced against a different build of that CLI is
 a result about a different rule, and the trace is the only thing that would say so.
+
+### 2026-09-09 — Gemma 4 E4B becomes the default
+
+The same constrained 20-case corpus, current prompt and medprotocol v0.7.10 reference arm were
+run with **Gemma 4 E4B Q4_0**, the exact `ggml-org/gemma-4-E4B-it-GGUF` artifact now pinned in
+`models.default.toml` (sha256 `a555b900…`). Temperature 0, context 32768, one slot, sequential,
+`cache_prompt` on.
+
+| agreement | echo | not invented | abstention | restraint | verdict |
+|---|---|---|---|---|---|
+| **100% (20/20)** | 100% (20/20) | 100% (20/20) | 100% (9/9) | 100% (11/11) | **PASS** |
+
+No case failed and all nine declines carried a reason. On this 8-core CPU with no GPU, generation
+was 8.7 tok/s, median latency 19.5 s and total wall time 485.7 s; the cold first case was 107.7 s.
+Those timings belong to this machine. Trace `2026-09-09T13-29-48-960Z.jsonl`.
+
+This model replaces Qwen3-4B as the pack default because it is the first measured model to clear
+every shock case and every sub-gate. It does not rewrite the Qwen measurements above, and it does
+not claim results on the pack's other tasks: those need their own runs against these weights.
+
+---
+
+## Sepsis screen — not yet measured
+
+The second contract in this pack that extracts nothing. A fixed Quick SOFA payload in — the three
+numbers respiratory rate, systolic blood pressure and GCS — and whether the screen is positive out,
+graded against the medprotocol `sepsis qsofa` command rather than against a hand-written key. Like
+shock, the answer key is code: `evaluateQSOFA` in `src/profiles/clinical/medprotocol.ts` IS the
+screen, and `loadSepsisCases` reconciles the corpus's expectations against it at load rather than
+trusting them.
+
+**WHAT THE HEADLINE NUMBER WILL BE.** Agreement with medprotocol's positive/negative verdict on the
+fourteen payloads in `exams/` — a screening trigger for sepsis suspicion, **not a diagnosis of
+sepsis and not a claim about any patient**. A positive qSOFA screen (any two of RR ≥ 22, SBP ≤ 100,
+GCS < 15) identifies patients with suspected infection at risk of deterioration; nothing in this
+task or its floors may be quoted as a diagnostic accuracy.
+
+**WHY THE MODEL IS HERE AT ALL, WHEN THE SCREEN IS A COMMAND.** The screen is a table lookup, and
+the CLI does it exactly right at zero tokens. What is measured is the residue — whether a 4B model
+reads the computed verdict and the pre-decided criteria rather than re-deriving the thresholds and
+substituting arithmetic the payload does not support. The floors that will be reported beside the
+rule arms are screen agreement (≥ 84%), echo fidelity (100%) and criteria fidelity (100%); the last
+two have no error budget because copying three numbers out of six lines is not reasoning.
+
+No run has been made. This entry exists so the section a measured run will fill is named, and
+so the routine barely-applicable first answer — "it's probably fine, a table lookup" — has nowhere
+to hide: the shock contract's own trajectory (52% → 82% → 85% → 95% across four prompt and
+delegation changes on a similar shape) is the measured reason such a claim is unsafe. The run and
+its trace will be added here, dated, when the numbers exist.
 
 ---
 

@@ -37,6 +37,27 @@
 
 /* Calm clinical workspace: a warm-white base with legible, low-saturation state colour. */
 :root {
+  /* Shell rhythm: the 4px base scale the dashboard's regions compose on. */
+  --s-half: 4px;
+  --s-1: 8px;
+  --s-2: 12px;
+  --s-3: 16px;
+
+  /* Shell region heights (see dashboard_improvement.md). */
+  --h-header: 44px;
+  --h-strip: 28px;
+  --h-dock: 28px;
+  --h-run-head: 42px;
+  --w-run: 288px;
+  --w-drawer: 328px;
+
+  /* Wide-desktop threshold: below it, overlays stop reserving workspace. */
+  --bp-wide: 1360px;
+
+  /* The palette is light; keep form controls, scrollbars, and the caret in that register. */
+  color-scheme: light;
+  caret-color: var(--primary);
+
   --radius: 0.875rem;
   --background: oklch(97.5% 0.012 180);
   --foreground: oklch(28% 0.025 235);
@@ -85,6 +106,11 @@ body {
   line-height: 1.45;
 }
 
+/* Use the dynamic viewport so mobile browser chrome never folds the shell short. */
+@supports (height: 100dvh) {
+  .app { height: 100dvh; }
+}
+
 ::selection { background: color-mix(in oklab, var(--primary) 25%, white); color: var(--foreground); }
 input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .inspected-json {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -97,77 +123,96 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 }
 
 .app-header {
-  min-height: 56px;
+  min-height: var(--h-header);
   display: grid;
-  grid-template-columns: minmax(220px, auto) minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 16px;
-  padding: 8px 12px;
+  gap: 14px;
+  padding: 4px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--card);
   color: var(--card-foreground);
 }
+/* Header actuators stay 30px so the bar holds to 44–48px while hit targets remain usable. */
+.app-header [data-slot="button"],
+.app-header .connection-input { height: 30px; }
+
+.brand-lockup {
+  min-width: 0;
+  max-width: min(300px, 26vw);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  line-height: 1;
+}
+.brand-name { color: var(--foreground); font-weight: 750; font-size: 1rem; letter-spacing: -0.02em; white-space: nowrap; }
+.brand-host { color: var(--muted-foreground); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.72rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Connection cluster: server state, model availability, and any refusal reason read as one group. */
+.header-health {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
+}
+.health-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  white-space: nowrap;
+}
+.health-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.health-state.tone-ok { color: #397d69; }
+.health-state.tone-ok .health-dot { background: #46957e; }
+.health-state.tone-warn { color: oklch(50% 0.09 75); }
+.health-state.tone-warn .health-dot { background: #dfbd78; }
+.health-state.tone-err { color: var(--destructive); }
+.health-state.tone-err .health-dot { background: var(--destructive); }
+.header-health .health-chip { flex: none; font-size: 0.62rem; line-height: 1.2; }
+.header-model, .header-error { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.header-model { color: var(--primary); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.74rem; max-width: 260px; }
+.header-error { color: var(--destructive); font-size: 0.72rem; max-width: min(320px, 30vw); }
+.connection-form { display: flex; align-items: center; gap: 6px; }
+.connection-input { width: 190px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.header-actions { display: flex; align-items: center; gap: 4px; padding-left: 10px; border-left: 1px solid var(--border); }
 
 .status-strip {
-  min-height: 36px;
+  min-height: var(--h-strip);
   display: flex;
-  align-items: stretch;
-  gap: 0;
+  align-items: center;
   margin: 0;
-  padding: 0 12px;
+  padding: 0 var(--s-2);
   border-bottom: 1px solid var(--border);
   background: color-mix(in oklab, var(--secondary) 32%, var(--background));
   overflow-x: auto;
   scrollbar-width: thin;
 }
-
 .status-strip > * { flex: none; }
 .status-metric {
-  min-width: 116px;
-  display: grid;
-  grid-template-columns: 16px auto 1fr;
-  align-items: center;
-  column-gap: 6px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
   padding: 0 14px;
-  border-right: 1px solid var(--border);
   color: var(--muted-foreground);
-  font-size: 0.72rem;
+  font-size: 0.7rem;
+  white-space: nowrap;
 }
 .status-metric:first-child { padding-left: 2px; }
-.status-metric dt { grid-column: 3; white-space: nowrap; }
-.status-metric dd {
-  grid-column: 2;
-  grid-row: 1;
-  margin: 0;
-  color: var(--foreground);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
+.status-metric + .status-metric {
+  border-left: 1px solid color-mix(in oklab, var(--border) 72%, transparent);
 }
-.status-icon { grid-column: 1; grid-row: 1; display: inline-flex; color: var(--muted-foreground); }
-.status-icon svg { width: 14px; height: 14px; stroke-width: 1.8; }
+.status-icon { display: inline-flex; align-self: center; color: var(--muted-foreground); }
+.status-icon svg { width: 13px; height: 13px; stroke-width: 1.8; }
+.status-metric dd { order: 1; margin: 0; color: var(--foreground); font-weight: 700; font-variant-numeric: tabular-nums; }
+.status-metric dt { order: 2; }
 .status-metric.is-live .status-icon, .status-metric.is-live dd { color: #46957e; }
 .status-metric.is-danger .status-icon, .status-metric.is-danger dd { color: var(--destructive); }
-.status-detail { grid-column: 4; margin-left: 6px; white-space: nowrap; color: var(--muted-foreground); }
-
-/* --- Layout -------------------------------------------------------------------------- */
-
-.panes {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr) minmax(300px, 1fr);
-  gap: 8px;
-  padding: 8px;
-}
-
-@media (max-width: 1100px) {
-  .panes { grid-template-columns: 1fr 1fr; }
-  .panes > :last-child { grid-column: 1 / -1; }
-}
-@media (max-width: 760px) {
-  .panes { grid-template-columns: 1fr; }
-  .panes > * { grid-column: auto; }
-}
+.status-detail { order: 3; margin-left: 2px; color: color-mix(in oklab, var(--muted-foreground) 72%, transparent); }
 
 /* --- Semantic colour helpers (name says what it means, not what it is) */
 .ok { color: var(--primary); }
@@ -176,23 +221,6 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 .info { color: oklch(72% 0.13 230); }           /* #58a6ff */
 .muted { color: var(--muted-foreground); }
 .faint { color: var(--muted-foreground); opacity: 0.6; }
-
-/* --- Brand --------------------------------------------------------------------------- */
-
-.brand-lockup { min-width: 0; display: flex; flex-direction: column; line-height: 1.15; }
-.brand-row { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
-.brand-name { color: var(--foreground); font-weight: 750; font-size: 1rem; letter-spacing: -0.02em; }
-.brand-sep { color: var(--secondary-foreground); opacity: 0.5; }
-.brand-host { color: var(--muted-foreground); white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.76rem; }
-.brand-context { margin-top: 4px; color: var(--muted-foreground); font-size: 0.68rem; }
-.header-health { min-width: 0; display: flex; align-items: center; gap: 6px; overflow: hidden; }
-.header-health [data-slot="badge"] { margin-left: 0; }
-.header-model, .header-error { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.72rem; }
-.header-model { color: var(--primary); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-.header-error { color: var(--destructive); }
-.connection-form { display: flex; align-items: center; gap: 6px; }
-.connection-input { width: 228px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-.header-actions { display: flex; align-items: center; gap: 4px; padding-left: 8px; border-left: 1px solid var(--border); }
 
 /* --- Execution pane ------------------------------------------------------------------- */
 
@@ -276,63 +304,6 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 
 .dtree-node .w-3\.5 { flex: none; }
 
-/* --- Event log ------------------------------------------------------------------------ */
-
-.eventlog {
-  height: 250px;
-  display: flex;
-  flex-direction: column;
-  margin: 0 8px 8px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: var(--card);
-  overflow: hidden;
-}
-.eventlog-top {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 4px 10px;
-  border-bottom: 1px solid var(--border);
-  flex-wrap: wrap;
-}
-.eventlog-title { color: var(--primary); font-weight: 600; }
-
-.eventlog-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 2px 0;
-}
-
-.ev-row {
-  display: flex;
-  gap: 10px;
-  padding: 1px 10px;
-  cursor: pointer;
-  align-items: baseline;
-  white-space: nowrap;
-}
-.ev-row:hover { background: color-mix(in oklab, var(--primary) 6%, transparent); }
-.ev-pinned { background: color-mix(in oklab, oklch(72% 0.15 75) 10%, transparent); }
-.ev-time { color: var(--border); }
-.ev-kind { color: var(--foreground); }
-.ev-run, .ev-req { font-size: 0.8rem; color: var(--muted-foreground); }
-
-.ev-detail {
-  border-top: 1px solid var(--border);
-  max-height: 180px;
-  display: flex;
-  flex-direction: column;
-}
-.ev-detail pre {
-  flex: 1;
-  overflow: auto;
-  margin: 0;
-  padding: 6px 10px;
-  font-size: 0.8rem;
-  color: var(--foreground);
-}
-
 /* event kind colours, ported from the terminal renderer */
 .ev-llm { color: var(--ev-llm); }
 .ev-run { color: var(--ev-run); }
@@ -359,6 +330,9 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   position: relative;
   display: flex;
   min-width: 0;
+  /* The closed drawer sits translated off the right edge; clip it so it never
+     widens the document or flashes a second scrollbar on any viewport. */
+  overflow: hidden;
 }
 
 /* The graph sits to the right of the chat panel and fills the remaining width. */
@@ -372,7 +346,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 /* --- chat panel (left column; command surface that feeds the graph) --------- */
 .chat-panel {
   flex: none;
-  width: 328px;
+  width: var(--w-run);
   max-width: 38vw;
   display: flex;
   flex-direction: column;
@@ -389,18 +363,18 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 56px;
-  padding: 9px 8px 9px 14px;
+  min-height: var(--h-run-head);
+  padding: 6px 8px 6px 12px;
   border-bottom: 1px solid var(--border);
 }
 .chat-title {
   display: block;
   color: var(--foreground);
   font-weight: 700;
-  font-size: 0.84rem;
+  font-size: 0.82rem;
   letter-spacing: -0.01em;
 }
-.chat-head-note { display: block; margin-top: 2px; color: var(--muted-foreground); font-size: 0.68rem; }
+.chat-head-note { display: block; margin-top: 1px; color: var(--muted-foreground); font-size: 0.66rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* collapsed: thin vertical tab pinned to the left edge */
 .chat-tab {
@@ -423,19 +397,26 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 }
 .chat-tab:hover { color: var(--primary); border-color: var(--ring); }
 
+.chat-head-actions { display: flex; align-items: center; gap: 2px; }
+.chat-head-activity { display: none; }
+@media (max-width: 760px) {
+  .chat-head-activity { display: inline-flex; }
+}
+
 .chat-target {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border);
 }
 .chat-target-label {
   color: var(--muted-foreground);
-  font-size: 0.66rem;
+  font-size: 0.64rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   white-space: nowrap;
+  flex: none;
 }
 .chat-select {
   flex: 1;
@@ -446,15 +427,16 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   border-radius: 6px;
   font-family: inherit;
   font-size: 0.74rem;
-  min-height: 32px;
-  padding: 5px 8px;
+  min-height: 30px;
+  padding: 4px 8px;
 }
 .chat-select:focus { outline: none; border-color: var(--ring); }
+.chat-select option { overflow: hidden; text-overflow: ellipsis; }
 
 .chat-presets {
   display: grid;
-  gap: 4px;
-  padding: 10px 12px;
+  gap: 2px;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--border);
 }
 .chat-preset {
@@ -467,32 +449,26 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   background: transparent;
   border: 0;
   border-radius: 6px;
-  padding: 6px 7px;
+  padding: 5px 7px;
   cursor: pointer;
   font-family: inherit;
   text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .chat-preset:hover { color: var(--primary); background: var(--muted); }
+.chat-preset svg { flex: none; }
 
 .chat-scroll {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 12px;
+  padding: 10px 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-.chat-empty {
-  color: var(--muted-foreground);
-  font-size: 0.72rem;
-  text-align: left;
-  padding: 14px 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.chat-empty-title { color: var(--foreground); font-size: 0.8rem; font-weight: 650; }
 
 .chat-msg {
   border: 1px solid var(--border);
@@ -557,7 +533,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 
 .chat-foot {
   border-top: 1px solid var(--border);
-  padding: 10px 12px 12px;
+  padding: 8px 10px 10px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -565,7 +541,8 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 .chat-textarea {
   width: 100%;
   box-sizing: border-box;
-  resize: vertical;
+  resize: none;
+  overflow-y: auto;
   background: var(--background);
   color: var(--foreground);
   border: 1px solid var(--border);
@@ -573,8 +550,8 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   font-family: inherit;
   font-size: 0.78rem;
   line-height: 1.4;
-  min-height: 86px;
-  padding: 9px 10px;
+  padding: 7px 10px;
+  max-height: 120px;
 }
 .chat-textarea:focus { outline: none; border-color: var(--ring); }
 .chat-textarea:disabled { opacity: 0.5; }
@@ -666,10 +643,11 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 .control-group { display: flex; align-items: center; gap: 1px; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: color-mix(in oklab, var(--card) 72%, transparent); }
 .control-group [data-slot="button"] { height: 28px; padding-inline: 8px; }
 
-@media (min-width: 981px) {
-  /* The inspector is useful context, not an overlay: reserve its footprint so
-     graph controls and terminal nodes remain reachable while it is open. */
-  .graph-main:has(.drawer.is-open) .graph-area { margin-right: 372px; }
+@media (min-width: 1360px) {
+  /* Wide desktop only: the inspector reserves its footprint so graph controls
+     and terminal nodes stay reachable while it is open. Below this width it
+     overlays instead, because the run panel and canvas need the space. */
+  .graph-main:has(.drawer.is-open) .graph-area { margin-right: var(--w-drawer); }
 }
 
 .graph-canvas {
@@ -749,7 +727,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   right: 0;
   bottom: 0;
   z-index: 20;
-  width: 372px;
+  width: var(--w-drawer);
   max-width: 100vw;
   background: color-mix(in oklab, var(--card) 94%, var(--secondary));
   border-left: 1px solid var(--border);
@@ -766,13 +744,13 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 56px;
-  padding: 10px 10px 10px 16px;
+  min-height: var(--h-run-head);
+  padding: 6px 8px 6px 14px;
   border-bottom: 1px solid var(--border);
 }
-.drawer-title { color: var(--foreground); font-weight: 700; font-size: 0.84rem; letter-spacing: -0.01em; text-transform: lowercase; }
+.drawer-title { color: var(--foreground); font-weight: 700; font-size: 0.8rem; letter-spacing: -0.01em; text-transform: lowercase; }
 .drawer-title::first-letter { text-transform: uppercase; }
-.drawer-body { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 16px 20px; }
+.drawer-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px 18px; }
 .drawer-tab {
   position: absolute;
   left: -34px;
@@ -827,10 +805,15 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 .status-spin { animation: status-spin 1.4s linear infinite; }
 @keyframes status-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
-  .drawer { transition: none; }
+  .drawer, .chat-panel, .log-reopen, .chat-tab { transition: none; }
   .status-spin { animation: none; }
   .g-profile .g-card { transition: none; }
 }
+
+/* Keyboard reach on shell chrome: a visible ring on every collapsible control. */
+.chat-tab:focus-visible,
+.log-reopen:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.chat-preset:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; background: var(--muted); }
 
 /* --- inspected node detail (inspector drawer header) ------------------------ */
 .inspected {
@@ -859,30 +842,32 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   max-height: 180px;
 }
 
-/* --- event log: collapsible bottom bar ------------------------------------- */
+/* --- event log: collapsible bottom dock ----------------------------------- */
 .graph-logbar {
-  flex: 0 0 clamp(154px, 22vh, 220px);
+  flex: 0 0 clamp(140px, 20vh, 190px);
   min-height: 0;
-  padding: 0 12px 8px;
+  padding: 0 var(--s-2);
 }
-.graph-logbar:has(.log-reopen) { flex: 0 0 auto; }
+.graph-logbar:has(.log-reopen) { flex: 0 0 var(--h-dock); }
+
 .eventlog {
   height: 100%;
   min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  margin: 0 0 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--card);
 }
 .eventlog-top {
   flex: none;
-  min-height: 35px;
+  min-height: var(--h-strip);
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 4px 8px 4px 10px;
+  padding: 3px 8px 3px 12px;
   border-bottom: 1px solid var(--border);
   cursor: pointer;
 }
@@ -894,29 +879,33 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   gap: 5px;
   flex: none;
   color: var(--primary);
-  font-size: 0.75rem;
+  font-size: 0.74rem;
   font-weight: 700;
   letter-spacing: 0.04em;
 }
+.eventlog-filters { flex: 1; min-width: 0; display: flex; gap: 6px; align-items: center; }
+.eventlog-aux { flex: none; display: flex; gap: 6px; align-items: center; font-size: 0.7rem; color: var(--muted-foreground); }
+.eventlog-count { white-space: nowrap; color: var(--muted-foreground); }
 .eventlog-list { flex: 1; min-height: 0; overflow: auto; }
-.ev-row { display: flex; align-items: center; gap: 8px; min-height: 27px; padding: 3px 10px; cursor: pointer; }
+.ev-row { display: flex; align-items: center; gap: 8px; min-height: 27px; min-width: max-content; padding: 3px 10px; cursor: pointer; white-space: nowrap; }
 .ev-row:hover, .ev-pinned { background: var(--muted); }
 .ev-time, .ev-run, .ev-req { font-size: 0.7rem; color: var(--muted-foreground); white-space: nowrap; }
 .ev-detail { flex: none; max-height: 110px; overflow: auto; border-top: 1px solid var(--border); }
 .ev-detail pre { margin: 0; padding: 8px 10px; font-size: 0.7rem; color: var(--muted-foreground); }
 .log-reopen {
   width: 100%;
-  height: 32px;
-  margin: 0;
+  height: var(--h-dock);
   box-sizing: border-box;
+  margin: 0;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--card);
+  border-bottom: 0;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: color-mix(in oklab, var(--card) 92%, var(--secondary));
   color: var(--muted-foreground);
   font-family: inherit;
-  font-size: 0.74rem;
+  font-size: 0.72rem;
   letter-spacing: 0.04em;
-  padding: 6px 12px;
+  padding: 5px 12px;
   cursor: pointer;
   text-align: left;
   display: flex;
@@ -928,15 +917,17 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 .log-reopen:hover { color: var(--primary); border-color: var(--ring); }
 
 @media (max-width: 760px) {
-  .app-header { grid-template-columns: 1fr auto; gap: 8px; }
+  .app-header { grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px 10px; padding: 7px 10px; }
   .header-health { justify-content: flex-end; }
-  .brand-host, .brand-sep { display: none; }
-  .connection-form { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+  .brand-host { display: none; }
+  .health-state .health-dot { display: none; }
+  .connection-form { grid-column: 1 / -1; order: 5; display: grid; grid-template-columns: minmax(0, 1fr) auto; }
   .connection-input { width: 100%; min-width: 0; }
-  .header-actions { grid-column: 1 / -1; justify-self: end; padding-left: 0; border-left: 0; }
-  .status-strip { min-height: 38px; padding-inline: 8px; }
+  .header-actions { padding-left: 0; border-left: 0; }
+  .status-strip { min-height: var(--h-strip); padding-inline: 8px; }
   .status-metric { min-width: auto; padding-inline: 10px; }
   .status-detail { display: none; }
+  .eventlog-count { display: none; }
   .chat-panel { position: absolute; inset: 8px; z-index: 30; width: auto; max-width: none; margin: 0; box-shadow: 0 18px 42px -26px oklch(30% 0.04 210 / 0.72); }
   .chat-tab { width: 32px; margin-left: 4px; }
   .graph-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
@@ -949,10 +940,10 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   .graph-tools { width: 100%; overflow-x: auto; max-width: 100%; justify-content: flex-end; }
   .control-group [data-slot="button"] { font-size: 0; gap: 0; }
   .control-group [data-slot="button"] svg { width: 15px; height: 15px; }
-  .drawer { width: min(372px, calc(100vw - 36px)); }
+  .drawer { width: min(var(--w-drawer), calc(100vw - 36px)); z-index: 30; }
   .react-flow__minimap { display: none; }
   .graph-legend-note { display: none; }
-  .graph-logbar { flex-basis: 176px; padding: 0 8px 8px; }
+  .graph-logbar { flex-basis: 176px; padding: 0 8px; }
   .graph-wrap { padding-left: 8px; padding-right: 8px; }
 }
 

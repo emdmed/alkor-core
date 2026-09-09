@@ -8,6 +8,8 @@ export interface ProfileTopologyRoute {
   available?: boolean
   /** Stages that exist only on this route. */
   stages?: ProfileTopologyStage[]
+  /** A later sibling route that consumes this route's output; the sibling remains a valid direct entry. */
+  feeds?: string
 }
 
 /** One possible internal stage in a profile's execution shape. */

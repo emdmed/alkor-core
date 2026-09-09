@@ -797,8 +797,10 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
   const nodes: GraphNode[] = []
   const edges: GraphEdge[] = []
   const routerSources: GraphNode[] = []
-  let laneY = 0
+  let laneX = MAIN_X
   let selectedPlaced = false
+
+  const laneFirstSteps: GraphNode[] = []
 
   const addLane = (raw: GraphBuild, prefix: string, label: string): void => {
     // Route alternatives are represented once, as real configured profile nodes below.
@@ -808,7 +810,32 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
       nodes: raw.nodes.filter((n) => !branchIds.has(n.id)),
       edges: raw.edges.filter((e) => !branchIds.has(e.source) && !branchIds.has(e.target)),
     }
-    const placed = placeGraph(clean, prefix, laneY)
+
+    // Strip the per-lane input node so a single shared entry point can serve all lanes.
+    const INPUT_W = 240
+    const inputNode = clean.nodes.find((n) => n.data.kind === 'input')
+    let stripped = clean
+    if (inputNode) {
+      const outEdge = clean.edges.find((e) => e.source === inputNode.id)
+      stripped = {
+        ...clean,
+        nodes: clean.nodes.filter((n) => n.id !== inputNode.id),
+        edges: clean.edges.filter((e) => e.id !== outEdge?.id),
+      }
+    }
+
+    const placed = placeGraph(stripped, prefix, 0)
+
+    // Shift every remaining node left so the chain starts at MAIN_X,
+    // then shift right to the current horizontal cursor.
+    if (inputNode) {
+      const shift = INPUT_W + GAP
+      for (const n of placed.nodes) {
+        n.position.x -= shift
+        n.position.x += laneX - MAIN_X
+      }
+    }
+
     const bounds = graphBounds(placed.nodes)
     nodes.push({
       ...node(`${prefix}/lane`, 'group', label, 'idle'),
@@ -819,7 +846,12 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
     edges.push(...placed.edges)
     const summaryRouters = placed.nodes.filter((n) => n.data.kind === 'step' && n.data.router)
     routerSources.push(...(summaryRouters.length > 0 ? summaryRouters : placed.nodes.filter((n) => n.data.kind === 'route')))
-    laneY = bounds.bottom + 92
+
+    // Track the first non-group node so the shared input can connect to it.
+    const firstStep = placed.nodes.find((n) => n.data.kind !== 'group')
+    if (firstStep) laneFirstSteps.push(firstStep)
+
+    laneX = bounds.right + GAP
   }
 
   for (const def of state.topology.pipelines) {
@@ -833,6 +865,16 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
   // configured topology instead of replacing it.
   if (selected && !selectedPlaced) {
     addLane(buildGraph(state, selected.runId, expanded), `run-${selected.runId}`, `${selected.profile} · selected run`)
+  }
+
+  // A single shared entry point serves every lane instead of one input per pipeline.
+  if (laneFirstSteps.length > 0) {
+    const sharedInput = node('input', 'input', 'input', 'idle')
+    sharedInput.position = { x: MAIN_X, y: MAIN_Y }
+    nodes.push(sharedInput)
+    for (const target of laneFirstSteps) {
+      edges.push(flowEdge(sharedInput, target, 'data', undefined, 's', 't'))
+    }
   }
 
   const topologyRoutes = (profileName: string): Array<{ name: string; targetProfile?: string; available?: boolean }> => {
@@ -865,14 +907,29 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
   const routedProfile = (source: GraphNode): string | undefined =>
     source.data.kind === 'route' ? source.data.profile : source.data.chosenProfile
   const chosenProfiles = new Set(routerSources.map(routedProfile).filter((p): p is string => Boolean(p)))
-  const selectedTask = selected
-    ? [...state.stages.values()].reverse().find((stage) => stage.runId === selected.runId && typeof obj(stage.detail)?.['task'] === 'string')
-        ?.detail as Record<string, unknown> | undefined
-    : undefined
-  const chosenTask = selectedTask ? asStr(selectedTask, 'task') : undefined
+  const chosenTasksByStage = new Map<string, string[]>()
+  if (selected) {
+    for (const stage of state.stages.values()) {
+      if (stage.runId !== selected.runId) continue
+      const detail = obj(stage.detail)
+      const chosen = chosenTasksByStage.get(stage.name) ?? []
+      const add = (task: string): void => {
+        if (!chosen.includes(task)) chosen.push(task)
+      }
+      const task = detail ? asStr(detail, 'task') : undefined
+      if (task) add(task)
+      const tasks = detail?.['tasks']
+      if (Array.isArray(tasks)) {
+        for (const candidate of tasks) if (typeof candidate === 'string') add(candidate)
+      }
+      if (chosen.length > 0) chosenTasksByStage.set(stage.name, chosen)
+    }
+  }
   const profileNodes: GraphNode[] = []
   const crossProfileRoutes: Array<{ source: GraphNode; target: string; chosen: boolean; muted: boolean }> = []
-  let profileY = laneY + 18
+  const lanesBottom = graphBounds(nodes).bottom
+  let profileX = MAIN_X
+  const profileY = lanesBottom + 18
 
   const muteEdge = (edge: GraphEdge): void => {
     edge.style = { ...edge.style, opacity: 0.22 }
@@ -893,13 +950,13 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
       muted: profileMuted,
       detail: profile,
     })
-    profileNode.position = { x: MAIN_X, y: profileY }
+    profileNode.position = { x: profileX, y: profileY }
     profileNodes.push(profileNode)
 
-    let rowRight = MAIN_X + 196
+    let rowRight = profileX + 196
     let rowBottom = profileY + layoutHeightOf(profileNode)
     let previous = profileNode
-    let stageX = MAIN_X + 268
+    let stageX = profileX + 268
     const renderStages = (
       stages: ProfileTopologyStage[],
       path: string,
@@ -907,7 +964,7 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
       y: number,
       source: GraphNode,
       inheritedMuted: boolean,
-    ): { right: number; bottom: number } => {
+    ): { right: number; bottom: number; last: GraphNode } => {
       let x = startX
       let bottom = y
       let from = source
@@ -928,38 +985,69 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
         rowRight = Math.max(rowRight, x + STAGE_W)
 
         if ((stage.routes?.length ?? 0) > 0) {
-          const externalChoice = stage.routes?.find((route) => route.targetProfile && chosenProfiles.has(route.targetProfile))?.name
-          const localChoice = stage.routes?.some((route) => route.name === chosenTask) ? chosenTask : undefined
-          const choice = externalChoice ?? localChoice
+          const localChoiceOrder = chosenTasksByStage.get(stage.name) ?? []
+          const externalChoiceOrder = (stage.routes ?? [])
+            .filter((route) => route.targetProfile && chosenProfiles.has(route.targetProfile))
+            .map((route) => route.name)
+          const directChoiceOrder = [...new Set([...localChoiceOrder, ...externalChoiceOrder])]
+            .filter((name) => stage.routes?.some((route) => route.name === name))
+          const directChoices = new Set(directChoiceOrder)
           let routeY = y
           let routeRight = x + STAGE_W
-          for (const [routeIndex, route] of (stage.routes ?? []).entries()) {
-            const isChosen = choice === route.name
-            const routeMuted = inheritedMuted || Boolean(choice && !isChosen)
+          const routes = stage.routes ?? []
+          const chosenPath = new Set<string>()
+          for (const choice of directChoices) {
+            chosenPath.add(choice)
+            let cursor = routes.find((route) => route.name === choice)
+            while (cursor?.feeds && !chosenPath.has(cursor.feeds)) {
+              chosenPath.add(cursor.feeds)
+              cursor = routes.find((route) => route.name === cursor?.feeds)
+            }
+          }
+          const renderedRoutes = new Map<string, { terminal: GraphNode; right: number; y: number; muted: boolean; chosen: boolean }>()
+          for (const [routeIndex, route] of routes.entries()) {
+            const isChosen = chosenPath.has(route.name)
+            const directChoice = directChoices.has(route.name)
+            const routeMuted = inheritedMuted || Boolean(directChoices.size > 0 && !isChosen)
             const unavailable = route.available === false
+            const feeder = routes.find((candidate) => candidate.feeds === route.name)
+            const directIndex = directChoiceOrder.indexOf(route.name)
+            const runtimeFeeder = directIndex > 0 ? renderedRoutes.get(directChoiceOrder[directIndex - 1]!) : undefined
+            const renderedFeeder = (feeder ? renderedRoutes.get(feeder.name) : undefined) ?? runtimeFeeder
+            const branchX = renderedFeeder ? renderedFeeder.right + 54 : x + STAGE_W + 62
+            const branchY = renderedFeeder?.y ?? routeY
             const branch = node(`blueprint-${profile.name}-${path}-${stageIndex}-route-${routeIndex}`, 'branch', route.name, unavailable ? 'failed' : isChosen ? 'done' : 'idle', {
               chosen: isChosen,
               muted: routeMuted,
               detailText: unavailable ? 'not runnable' : route.targetProfile ? 'profile route' : 'task route',
               profile: route.targetProfile,
             })
-            branch.position = { x: x + STAGE_W + 62, y: routeY }
+            branch.position = { x: branchX, y: branchY }
             nodes.push(branch)
-            const routeEdge = flowEdge(stageNode, branch, isChosen ? 'branch' : 'ghost', isChosen ? 'selected' : undefined, 's', 'left')
-            if (routeMuted) muteEdge(routeEdge)
+            const routeEntry = directChoice && !runtimeFeeder
+            const routeEdge = flowEdge(stageNode, branch, routeEntry ? 'branch' : 'ghost', routeEntry ? 'selected' : undefined, 's', 'left')
+            if (routeMuted || (directChoices.size > 0 && !routeEntry)) muteEdge(routeEdge)
             edges.push(routeEdge)
 
             let branchRight = branch.position.x + CHIP_W
-            let branchBottom = routeY + layoutHeightOf(branch)
+            let branchBottom = branchY + layoutHeightOf(branch)
+            let terminal = branch
             if (route.stages?.length) {
-              const nested = renderStages(route.stages, `${path}-${stageIndex}-route-${routeIndex}`, branchRight + 54, routeY, branch, routeMuted)
+              const nested = renderStages(route.stages, `${path}-${stageIndex}-route-${routeIndex}`, branchRight + 54, branchY, branch, routeMuted)
               branchRight = nested.right
               branchBottom = Math.max(branchBottom, nested.bottom)
+              terminal = nested.last
+            }
+            renderedRoutes.set(route.name, { terminal, right: branchRight, y: branchY, muted: routeMuted, chosen: isChosen })
+            if (renderedFeeder) {
+              const feedEdge = flowEdge(renderedFeeder.terminal, branch, renderedFeeder.chosen ? 'branch' : 'ghost', undefined, 's', 'left')
+              if (renderedFeeder.muted) muteEdge(feedEdge)
+              edges.push(feedEdge)
             }
             if (route.targetProfile) crossProfileRoutes.push({ source: branch, target: route.targetProfile, chosen: isChosen, muted: routeMuted })
             routeRight = Math.max(routeRight, branchRight)
             bottom = Math.max(bottom, branchBottom)
-            routeY = branchBottom + 24
+            if (!renderedFeeder) routeY = branchBottom + 24
           }
           rowRight = Math.max(rowRight, routeRight)
           x = routeRight + 62
@@ -968,7 +1056,7 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
         }
         from = stageNode
       }
-      return { right: Math.max(rowRight, x), bottom }
+      return { right: Math.max(rowRight, x), bottom, last: from }
     }
 
     if (profile.topology?.stages.length) {
@@ -979,10 +1067,10 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
 
     nodes.push({
       ...node(`profile-group-${profile.name}`, 'group', `${profile.name} · ${profile.mode}`, profile.configured === false ? 'failed' : 'idle'),
-      position: { x: MAIN_X - 20, y: profileY - 30 },
-      style: { width: rowRight - MAIN_X + 40, height: rowBottom - profileY + 50 },
+      position: { x: profileX - 20, y: profileY - 30 },
+      style: { width: rowRight - profileX + 40, height: rowBottom - profileY + 50 },
     })
-    profileY = rowBottom + 82
+    profileX = rowRight + 82
   }
 
   nodes.push(...profileNodes)
