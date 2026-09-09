@@ -60,6 +60,11 @@ test('health endpoint returns profiles and session count', async () => {
   assert.ok(clinical.topology.stages[0].routes.some((route: any) => route.name === 'shock-extraction'))
   assert.equal(clinical.topology.stages[0].routes.find((route: any) => route.name === 'shock-extraction').feeds, 'shock')
   assert.equal(clinical.topology.stages[0].routes.find((route: any) => route.name === 'summary').available, false)
+  const verified = (data as any).topology.pipelines.find((pipeline: any) => pipeline.name === 'clinical-verified')
+  assert.deepEqual(verified.steps[1].input, [
+    { name: 'document', ref: 'initial' },
+    { name: 'extraction', ref: 'step-0.raw' },
+  ])
   assert.equal(typeof (data as any).sessions, 'number')
   await close()
 })

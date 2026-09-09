@@ -1,9 +1,9 @@
 /**
  * Graph model for the pipeline execution view.
  *
- * Turns configured topology plus the flat activity reducer state into one graph:
- * every pipeline and profile stays visible, a selected run paints live state over its
- * lane, and each step can expand into the internal stages the mode emitted.
+ * Turns configured topology plus the flat activity reducer state into graph models.
+ * The operating view uses a single selected execution trail; the fuller project-map
+ * builders remain available for callers that explicitly need topology inspection.
  *
  * Pure and deterministic: the layout is computed, not negotiated with a physics engine,
  * so a given run always draws the same picture. Nothing here touches the DOM or knows
@@ -24,6 +24,7 @@ import type { ProfileTopologyStage } from '../../../src/core/topology.ts'
 import type { NodeState } from './format.ts'
 
 export type GraphNodeKind = 'input' | 'route' | 'step' | 'stage' | 'branch' | 'profile' | 'output' | 'group'
+export type GraphOperation = 'model' | 'code' | 'orchestrator' | 'decision'
 
 export interface GraphLlm {
   constrained: boolean
@@ -47,6 +48,7 @@ export interface GraphNodeData {
   router?: boolean
   shape?: string
   task?: string
+  tasks?: string[]
   confidence?: number
   ruleVsModel?: string
   reason?: string
@@ -64,12 +66,16 @@ export interface GraphNodeData {
   expandKey?: string
   llm?: GraphLlm
   runId?: string
+  /** What performs this operation; used to separate model boundaries from deterministic code. */
+  operation?: GraphOperation
   /** Injected by the view layer: toggles this node's sub-graph. */
   onToggle?: () => void
   /** Injected by the view layer: opens the inspector on this node. */
   onInspect?: () => void
   /** The most specific active node for this run; called out by the operating view. */
   current?: boolean
+  /** This node received data during the selected run; persists after completion. */
+  traversed?: boolean
   /** ReactFlow's `Node<T>` requires an index signature; keep it honest. */
   [key: string]: unknown
 }
@@ -102,6 +108,13 @@ const asStr = (d: Record<string, unknown>, k: string): string | undefined => {
 }
 
 const okFalse = (d: unknown): boolean => obj(d)?.['ok'] === false
+
+const operationFor = (name: string, decision = false): GraphOperation => {
+  if (decision || name === 'route' || name === 'tool-call') return 'decision'
+  if (name === 'llm-call' || name === 'medication-pass' || name === 'transcript-repair') return 'model'
+  if (name === 'prompt-assembly' || name === 'parse' || name === 'verify' || name === 'rule-match' || name === 'gateway') return 'code'
+  return 'orchestrator'
+}
 
 /** The `{ step }` the pipeline stamps on each per-step stage, to join stage ↔ step. */
 const stepIndexOf = (s: StageEntry): number | undefined => {
@@ -195,7 +208,9 @@ const STAGE_W = 248
 const CHIP_W = 168
 const GAP = 76
 const SUB_GAP = 22
-const CLUSTER_INDENT = 14
+const COLUMN_PITCH = STEP_W + GAP
+const ROW_GAP = 82
+const columnX = (rank: number): number => MAIN_X + rank * COLUMN_PITCH
 
 /* ------------------------------------------------------------------ build tree */
 
@@ -238,18 +253,20 @@ const buildInput = (run: RunEntry): GraphNode =>
   // Receiving run.started means input preparation has already finished. The
   // input remains useful context, but it is never the current operation after
   // the run exists in state.
-  node('input', 'input', 'input', 'done', {
+  node('input', 'input', 'Prompt input', 'done', {
     detailText: `${run.inputChars ?? '?'} chars · sha:${shortDigest(run.inputDigest) || '—'}`,
+    operation: 'orchestrator',
     runId: run.runId,
   })
 
 const buildOutput = (run: RunEntry): GraphNode =>
   // There is no output work in flight: this endpoint changes only when the run
   // settles. Treating run.started as an active output painted a false NOW badge.
-  node('output', 'output', 'output', run.status === 'started' ? 'idle' : run.status === 'failed' ? 'failed' : 'done', {
+  node('output', 'output', 'Pipeline output', run.status === 'started' ? 'idle' : run.status === 'failed' ? 'failed' : 'done', {
     wallMs: run.wallMs,
     detailText: run.error ? clip(run.error, 90) : undefined,
     runId: run.runId,
+    operation: 'orchestrator',
   })
 
 /** A stage is a chain item; an internal router stage also carries its chosen chip. */
@@ -258,6 +275,9 @@ function stageItem(s: StageEntry, ctx: BuildCtx): ChainItem {
   const d = obj(s.detail) ?? {}
   const chosen = isRouter ? (asStr(d, 'task') ?? asStr(d, 'profile')) : undefined
   const chosenConfidence = asNum(d, 'confidence')
+  const chosenTasks = Array.isArray(d['tasks'])
+    ? d['tasks'].filter((candidate): candidate is string => typeof candidate === 'string')
+    : undefined
 
   const children: ChainItem[] = s.children.map((c) => stageItem(c, ctx))
   if (isRouter && chosen) {
@@ -287,9 +307,11 @@ function stageItem(s: StageEntry, ctx: BuildCtx): ChainItem {
         confidence: isRouter ? chosenConfidence : undefined,
         shape: isRouter ? asStr(d, 'shape') : undefined,
         task: isRouter ? asStr(d, 'task') : undefined,
+        tasks: isRouter ? chosenTasks : undefined,
         profile: isRouter ? ifRouterProfile(d) : undefined,
         reason: isRouter ? asStr(d, 'reason') : undefined,
         llm,
+        operation: llm ? 'model' : operationFor(s.name, isRouter),
         expanded: isRouter,
         childCount: children.length,
         runId: ctx.run.runId,
@@ -333,8 +355,10 @@ interface StepRow {
 
 /** Activity keeps composed inputs as structured mappings. Never coerce that array: its
  * default string form leaks `[object Object]` into an operator-facing graph. */
-const inputReference = (input: PipelineStepEntry['input']): string | undefined => {
+const inputReference = (input: PipelineStepEntry['input'] | PipelineDefinition['steps'][number]['input']): string | undefined => {
   if (!input) return undefined
+  if (typeof input === 'string') return input
+  if (Array.isArray(input)) return input.map(({ name, ref }) => `${name} ← ${ref}`).join(' · ')
   if (typeof input.ref === 'string') return `${input.ref}${input.field ? `.${input.field}` : ''}`
   return input.ref.map(({ name, ref }) => `${name} ← ${ref}`).join(' · ')
 }
@@ -346,7 +370,7 @@ const mergeSteps = (executed: PipelineStepEntry[], def?: PipelineDefinition): St
   for (let i = 0; i < n; i++) {
     const ex = executed.find((e) => e.step === i)
     const d = defSteps[i]
-    const ref = inputReference(ex?.input)
+    const ref = inputReference(ex?.input) ?? inputReference(d?.input)
     rows.push({
       step: i,
       name: ex?.name ?? d?.name ?? `step ${i + 1}`,
@@ -363,13 +387,33 @@ const mergeSteps = (executed: PipelineStepEntry[], def?: PipelineDefinition): St
 const profileMode = (state: ProjectState, profile: string): string | undefined =>
   state.topology.profiles.find((p) => p.name === profile)?.mode
 
+const declaredRouteTargets = (state: ProjectState, profileName: string): string[] => {
+  const profile = state.topology.profiles.find((candidate) => candidate.name === profileName)
+  const targets: string[] = []
+  const visit = (stages: ProfileTopologyStage[]): void => {
+    for (const stage of stages) {
+      for (const route of stage.routes ?? []) {
+        if (route.targetProfile && !targets.includes(route.targetProfile)) targets.push(route.targetProfile)
+        if (route.stages) visit(route.stages)
+      }
+    }
+  }
+  if (profile?.topology) visit(profile.topology.stages)
+  return targets
+}
+
 /** The specialist profiles the router could have handed the note to. */
 const routerCandidates = (state: ProjectState, routerProfile: string, chosen?: string): string[] => {
-  const seen = new Set<string>()
-  for (const p of state.topology.profiles) {
-    if (p.mode !== 'pipeline' && p.mode !== 'router' && p.name !== routerProfile) seen.add(p.name)
+  const declared = declaredRouteTargets(state, routerProfile)
+  const seen = new Set<string>(declared)
+  // Older profiles did not publish route topology. Preserve their useful fallback,
+  // but never mix unrelated profiles into a router that declares exact targets.
+  if (declared.length === 0) {
+    for (const p of state.topology.profiles) {
+      if (p.mode !== 'pipeline' && p.mode !== 'router' && p.name !== routerProfile) seen.add(p.name)
+    }
+    for (const r of state.routes) if (r.profile !== routerProfile) seen.add(r.profile)
   }
-  for (const r of state.routes) if (r.profile !== routerProfile) seen.add(r.profile)
   if (chosen) seen.add(chosen)
   const list = [...seen]
   if (chosen) {
@@ -436,7 +480,14 @@ const buildPipeline = (state: ProjectState, run: RunEntry, tree: StageEntry[], u
       const chosenProfile = ctx.route.profile
       const fan = routerCandidates(state, row.profile, chosenProfile)
         .filter((p) => p !== chosenProfile)
-        .map((p) => node(`branch-${p}`, 'branch', p, 'idle', { chosen: false, runId: run.runId }))
+        .map((p) => {
+          const configured = state.topology.profiles.some((profile) => profile.name === p)
+          return node(`branch-${p}`, 'branch', p, configured ? 'idle' : 'failed', {
+            chosen: false,
+            runId: run.runId,
+            detailText: configured ? undefined : 'not configured',
+          })
+        })
       chain.push({
         node: node(`step-${i}`, 'step', row.name, row.status, {
           stepNo: row.step,
@@ -452,6 +503,7 @@ const buildPipeline = (state: ProjectState, run: RunEntry, tree: StageEntry[], u
           expanded: false,
           childCount: stage ? stage.children.length : 0,
           runId: run.runId,
+          operation: 'orchestrator',
         }),
         children: stage ? stage.children.map((c) => stageItem(c, ctx)) : [],
         fan,
@@ -467,6 +519,7 @@ const buildPipeline = (state: ProjectState, run: RunEntry, tree: StageEntry[], u
           expanded: false,
           childCount: stage ? stage.children.length : 0,
           runId: run.runId,
+          operation: 'orchestrator',
         }),
         children: stage ? stage.children.map((c) => stageItem(c, ctx)) : [],
       })
@@ -475,7 +528,7 @@ const buildPipeline = (state: ProjectState, run: RunEntry, tree: StageEntry[], u
 
   chain.push({ node: buildOutput(run), children: [] })
   markChainCurrentLineage(chain)
-  const { nodes, edges } = layout(chain, ctx)
+  const { nodes, edges } = layoutTrail(chain, ctx)
   return { nodes, edges, title: `run ${run.profile} · pipeline` }
 }
 
@@ -493,7 +546,7 @@ const buildStages = (state: ProjectState, run: RunEntry, tree: StageEntry[], use
   for (const root of tree) chain.push(stageItem(root, ctx))
   chain.push({ node: buildOutput(run), children: [] })
   markChainCurrentLineage(chain)
-  const { nodes, edges } = layout(chain, ctx)
+  const { nodes, edges } = layoutTrail(chain, ctx)
   return { nodes, edges, title: `run ${run.profile}` }
 }
 
@@ -509,7 +562,7 @@ const flowEdge = (
 ): GraphEdge => {
   const COLORS: Record<typeof kind, { stroke: string; width: number; dash?: string }> = {
     data: { stroke: 'var(--secondary-foreground)', width: 1.5 },
-    branch: { stroke: 'var(--primary)', width: 2 },
+    branch: { stroke: 'var(--success)', width: 2.4 },
     ghost: { stroke: 'var(--border)', width: 1.2, dash: '5 4' },
   }
   const c = COLORS[kind]
@@ -520,7 +573,7 @@ const flowEdge = (
     sourceHandle,
     targetHandle,
     type: kind === 'ghost' ? 'smoothstep' : 'smoothstep',
-    animated: kind === 'branch',
+    animated: false,
     label,
     labelStyle: { fill: 'var(--muted-foreground)', fontSize: 10, fontFamily: 'inherit' as const },
     labelBgStyle: { fill: 'var(--card)', fillOpacity: 0.94 },
@@ -542,24 +595,58 @@ const flowEdge = (
 }
 
 const expandable = (item: ChainItem, ctx: BuildCtx): boolean =>
-  item.children.length > 0 && ctx.expanded.has(item.node.id)
+  item.children.length > 0 && (item.node.data.kind === 'route' || ctx.expanded.has(item.node.id))
+
+const layoutWidthOf = (n: GraphNode): number => {
+  switch (n.data.kind) {
+    case 'input':
+    case 'output': return 240
+    case 'step': return STEP_W
+    case 'stage':
+    case 'route': return STAGE_W
+    case 'branch': return CHIP_W
+    case 'profile': return 196
+    case 'group': return 0
+  }
+}
+
+/**
+ * Place a selected execution as one chronological spine. Expanded stages are
+ * inserted between their owning step and the following step; they never grow a
+ * second lane or reconnect later with a return edge.
+ */
+function layoutTrail(chain: ChainItem[], ctx: BuildCtx): { nodes: GraphNode[]; edges: GraphEdge[] } {
+  const nodes: GraphNode[] = []
+  const edges: GraphEdge[] = []
+  const trail: ChainItem[] = []
+
+  const append = (item: ChainItem): void => {
+    trail.push(item)
+    if (!expandable(item, ctx)) return
+    for (const child of item.children) append(child)
+  }
+  for (const item of chain) append(item)
+
+  let x = MAIN_X
+  for (const item of trail) {
+    nodes.push({ ...item.node, position: { x, y: MAIN_Y } })
+    x += layoutWidthOf(item.node) + 56
+  }
+
+  for (let index = 0; index < trail.length - 1; index++) {
+    const source = trail[index]!.node
+    const target = trail[index + 1]!.node
+    const kind = source.data.kind === 'route' ? 'branch' : 'data'
+    const label = target.data.kind === 'step' ? target.data.inputRef : undefined
+    edges.push(flowEdge(source, target, kind, label))
+  }
+
+  return { nodes, edges }
+}
 
 function layout(chain: ChainItem[], ctx: BuildCtx): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const nodes: GraphNode[] = []
   const edges: GraphEdge[] = []
-
-  const layoutWidthOf = (n: GraphNode): number => {
-    switch (n.data.kind) {
-      case 'input':
-      case 'output': return 240
-      case 'step': return STEP_W
-      case 'stage':
-      case 'route': return STAGE_W
-      case 'branch': return CHIP_W
-      case 'profile': return 196
-      case 'group': return 0
-    }
-  }
 
   const groupFor = (owner: ChainItem, x: number, y: number, width: number, bottom: number): void => {
     const count = owner.children.length
@@ -579,71 +666,65 @@ function layout(chain: ChainItem[], ctx: BuildCtx): { nodes: GraphNode[]; edges:
     })
   }
 
-  const placeStage = (items: ChainItem[], x: number, y: number, gap: number): { right: number; spanW: number; bottom: number } => {
-    let cy = y
-    let right = x
+  const placeStage = (items: ChainItem[], startRank: number, y: number): { right: number; spanW: number; bottom: number; nextRank: number } => {
+    const startX = columnX(startRank)
+    let rank = startRank
+    let right = startX
     let bottom = y
     for (const it of items) {
-      nodes.push({ ...it.node, position: { x, y: cy } })
+      const x = columnX(rank)
+      nodes.push({ ...it.node, position: { x, y } })
       const itemW = layoutWidthOf(it.node)
-      const itemBottom = cy + layoutHeightOf(it.node)
+      const itemBottom = y + layoutHeightOf(it.node)
       right = Math.max(right, x + itemW)
       bottom = Math.max(bottom, itemBottom)
-      cy = itemBottom + gap
       if (expandable(it, ctx) && it.children.length > 0) {
-        const nestedX = x + 24
-        const nested = placeStage(it.children, nestedX, cy + 12, SUB_GAP)
-        groupFor(it, nestedX, cy + 12, nested.spanW, nested.bottom)
+        const nestedY = itemBottom + SUB_GAP
+        const nested = placeStage(it.children, rank + 1, nestedY)
+        groupFor(it, columnX(rank + 1), nestedY, nested.spanW, nested.bottom)
         right = Math.max(right, nested.right)
         bottom = Math.max(bottom, nested.bottom)
-        cy = nested.bottom + gap
+        rank = nested.nextRank
+      } else {
+        rank++
       }
     }
-    return { right, spanW: right - x, bottom }
+    return { right, spanW: right - startX, bottom, nextRank: rank }
   }
 
-  // Lay out the primary path first. Disclosures get their own lane below the
-  // spine; anchoring every cluster directly beneath its owner made adjacent
-  // expanded steps paint on top of one another.
-  const placed: Array<{ item: ChainItem; x: number; height: number }> = []
-  let x = MAIN_X
-  chain.forEach((it) => {
+  // Lay out the primary path first. Every rank owns one x coordinate; expanded
+  // paths use separate rows so their sequence can follow that same column grid.
+  const placed: Array<{ item: ChainItem; x: number; height: number; rank: number }> = []
+  chain.forEach((it, rank) => {
     const h = layoutHeightOf(it.node)
-    const w = layoutWidthOf(it.node)
-    const itemLeft = x
-    nodes.push({ ...it.node, position: { x, y: MAIN_Y } })
-    placed.push({ item: it, x: itemLeft, height: h })
-    x = itemLeft + w + GAP
+    const itemLeft = columnX(rank)
+    nodes.push({ ...it.node, position: { x: itemLeft, y: MAIN_Y } })
+    placed.push({ item: it, x: itemLeft, height: h, rank })
   })
 
   const mainBottom = MAIN_Y + Math.max(0, ...placed.map(({ height }) => height))
-  const detailY = mainBottom + 52
-  let detailCursor = MAIN_X
-  let detailBottom = detailY
+  let detailBottom = mainBottom + 52
 
-  for (const { item, x: itemLeft } of placed) {
+  for (const { item, rank } of placed) {
     if (!expandable(item, ctx)) continue
-    const ownerWidth = layoutWidthOf(item.node)
-    const clusterX = Math.max(itemLeft + Math.max(CLUSTER_INDENT, (ownerWidth - STAGE_W) / 2), detailCursor)
-    const cluster = placeStage(item.children, clusterX, detailY, SUB_GAP)
-    groupFor(item, clusterX, detailY, cluster.spanW, cluster.bottom)
-    detailCursor = cluster.right + 54
-    detailBottom = Math.max(detailBottom, cluster.bottom + 14)
+    const clusterY = detailBottom
+    const clusterX = columnX(rank + 1)
+    const cluster = placeStage(item.children, rank + 1, clusterY)
+    groupFor(item, clusterX, clusterY, cluster.spanW, cluster.bottom)
+    detailBottom = cluster.bottom + 52
   }
 
-  // Route alternatives form a separate, quiet lane beneath implementation
-  // detail. Keeping these two kinds of disclosure apart makes their ownership
-  // obvious and prevents the legend/branch tangle visible in dense runs.
-  const fanY = detailBottom + 46
-  let fanCursor = MAIN_X
-  for (const { item, x: itemLeft } of placed) {
+  // Route alternatives share the next-step column and stack vertically beneath
+  // implementation detail. Parallel choices therefore never look sequential.
+  let fanY = detailBottom + 32
+  for (const { item, rank } of placed) {
     if (!item.fan) continue
-    let fx = Math.max(itemLeft, fanCursor)
+    const fx = columnX(rank + 1)
     for (const chip of item.fan) {
       nodes.push({ ...chip, position: { x: fx, y: fanY } })
-      fx += layoutWidthOf(chip) + 14
+      fanY += layoutHeightOf(chip) + 14
     }
-    fanCursor = fx + 40
+    fanY += 32
   }
 
   // The primary path remains a single uninterrupted spine. Expanded stages are
@@ -653,9 +734,10 @@ function layout(chain: ChainItem[], ctx: BuildCtx): { nodes: GraphNode[]; edges:
     const a = chain[i]!
     const b = chain[i + 1]!
     const kind = a.node.data.kind === 'route' ? 'branch' : 'data'
+    const transfer = b.node.data.kind === 'step' ? b.node.data.inputRef : undefined
     const label = kind === 'branch' && a.node.data.chosenProfile
       ? `selected: ${a.node.data.chosenProfile}`
-      : undefined
+      : transfer
 
     edges.push(flowEdge(a.node, b.node, kind, label))
   }
@@ -664,9 +746,9 @@ function layout(chain: ChainItem[], ctx: BuildCtx): { nodes: GraphNode[]; edges:
     if (!expandable(item, ctx)) return
     const children = item.children
     if (children.length === 0) return
-    edges.push(flowEdge(item.node, children[0]!.node, 'data', undefined, 'detail', 'top'))
+    edges.push(flowEdge(item.node, children[0]!.node, 'data', undefined, 'detail', 't'))
     for (let i = 0; i < children.length - 1; i++) {
-      edges.push(flowEdge(children[i]!.node, children[i + 1]!.node, 'data', undefined, 'detail', 'top'))
+      edges.push(flowEdge(children[i]!.node, children[i + 1]!.node, 'data', undefined, 's', 't'))
       expandedEdges(children[i]!)
     }
     expandedEdges(children[children.length - 1]!)
@@ -687,7 +769,7 @@ function layout(chain: ChainItem[], ctx: BuildCtx): { nodes: GraphNode[]; edges:
       ? it.children.find((child) => child.node.data.kind === 'route')?.node ?? it.node
       : it.node
     for (const chip of it.fan) {
-      edges.push(flowEdge(fanSource, chip, 'ghost', undefined, 'detail', 'tl'))
+      edges.push(flowEdge(fanSource, chip, 'ghost', undefined, 's', 'left'))
     }
   }
 
@@ -722,7 +804,7 @@ const buildConfiguredPipeline = (state: ProjectState, def: PipelineDefinition): 
     route: {},
   }
   const chain: ChainItem[] = [
-    { node: node('input', 'input', 'input', 'idle', { profile: def.name }), children: [] },
+    { node: node('input', 'input', 'Prompt input', 'idle', { profile: def.name, operation: 'orchestrator', detailText: 'raw user input' }), children: [] },
   ]
   for (const [index, step] of def.steps.entries()) {
     const isRouter = profileMode(state, step.profile) === 'router'
@@ -731,15 +813,38 @@ const buildConfiguredPipeline = (state: ProjectState, def: PipelineDefinition): 
         stepNo: index,
         profile: step.profile,
         router: isRouter,
-        inputRef: step.input ?? (index === 0 ? 'initial' : `step-${index - 1}`),
+        inputRef: inputReference(step.input) ?? (index === 0 ? 'initial' : `step-${index - 1}.output`),
+        operation: 'orchestrator',
       }),
       children: [],
       facet: isRouter ? 'router' : undefined,
     })
   }
-  chain.push({ node: node('output', 'output', 'output', 'idle', { profile: def.name }), children: [] })
+  chain.push({ node: node('output', 'output', 'Pipeline output', 'idle', { profile: def.name, operation: 'orchestrator', detailText: 'last produced step output' }), children: [] })
   const { nodes, edges } = layout(chain, ctx)
   return { nodes, edges, title: def.name }
+}
+
+/**
+ * Build the one process the operator is following. Before activity starts this is the
+ * selected configured pipeline; once a run exists, observed state paints that same
+ * stable input → steps → output path and exposes only its own runtime detail.
+ */
+export const buildProgressGraph = (
+  state: ProjectState,
+  runId: string | undefined,
+  expanded: Set<string>,
+  previewProfile?: string,
+): GraphBuild => {
+  if (runId) return buildGraph(state, runId, expanded)
+  const pipeline = state.topology.pipelines.find((candidate) => candidate.name === previewProfile)
+    ?? state.topology.pipelines[0]
+  if (!pipeline) return { nodes: [], edges: [], title: '' }
+  const graph = buildConfiguredPipeline(state, pipeline)
+  return {
+    ...graph,
+    title: `${pipeline.name} · ${pipeline.steps.length} step${pipeline.steps.length === 1 ? '' : 's'} · ready`,
+  }
 }
 
 const graphBounds = (nodes: GraphNode[]): { left: number; top: number; right: number; bottom: number } => {
@@ -771,7 +876,7 @@ const placeGraph = (graph: GraphBuild, prefix: string, yOffset: number): GraphBu
       ...n,
       id: id(n.id),
       position: { x: n.position.x, y: n.position.y + yOffset },
-      data: { ...n.data, expandKey: n.id },
+      data: { ...n.data, expandKey: n.data.expandKey ?? n.id },
     })),
     edges: graph.edges.map((e) => ({
       ...e,
@@ -785,8 +890,8 @@ const placeGraph = (graph: GraphBuild, prefix: string, yOffset: number): GraphBu
 /**
  * Render the complete configured project continuously. A selected run paints one lane
  * with observed state and stages, while every other pipeline remains visible as idle
- * topology. Router destinations share a canonical profile shelf so no possible route is
- * removed after the decision; alternatives are only de-emphasised.
+ * topology. Router destinations remain in vertically stacked profile rows so no possible
+ * route is removed after the decision; alternatives are only de-emphasised.
  */
 export const buildProjectGraph = (state: ProjectState, runId: string | undefined, expanded: Set<string>): GraphBuild => {
   const selected = runId ? state.runs.get(runId) : undefined
@@ -797,12 +902,13 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
   const nodes: GraphNode[] = []
   const edges: GraphEdge[] = []
   const routerSources: GraphNode[] = []
-  let laneX = MAIN_X
+  let laneY = MAIN_Y
   let selectedPlaced = false
+  const pipelineOutputRank = Math.max(0, ...state.topology.pipelines.map((pipeline) => pipeline.steps.length)) + 1
 
   const laneFirstSteps: GraphNode[] = []
 
-  const addLane = (raw: GraphBuild, prefix: string, label: string): void => {
+  const addLane = (raw: GraphBuild, prefix: string, label: string, alignOutput: boolean): void => {
     // Route alternatives are represented once, as real configured profile nodes below.
     const branchIds = new Set(raw.nodes.filter((n) => n.data.kind === 'branch').map((n) => n.id))
     const clean: GraphBuild = {
@@ -812,7 +918,6 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
     }
 
     // Strip the per-lane input node so a single shared entry point can serve all lanes.
-    const INPUT_W = 240
     const inputNode = clean.nodes.find((n) => n.data.kind === 'input')
     let stripped = clean
     if (inputNode) {
@@ -824,16 +929,10 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
       }
     }
 
-    const placed = placeGraph(stripped, prefix, 0)
-
-    // Shift every remaining node left so the chain starts at MAIN_X,
-    // then shift right to the current horizontal cursor.
-    if (inputNode) {
-      const shift = INPUT_W + GAP
-      for (const n of placed.nodes) {
-        n.position.x -= shift
-        n.position.x += laneX - MAIN_X
-      }
+    const placed = placeGraph(stripped, prefix, laneY - MAIN_Y)
+    if (alignOutput) {
+      const output = placed.nodes.find((candidate) => candidate.data.kind === 'output')
+      if (output) output.position.x = columnX(pipelineOutputRank)
     }
 
     const bounds = graphBounds(placed.nodes)
@@ -851,26 +950,34 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
     const firstStep = placed.nodes.find((n) => n.data.kind !== 'group')
     if (firstStep) laneFirstSteps.push(firstStep)
 
-    laneX = bounds.right + GAP
+    laneY = bounds.bottom + ROW_GAP
   }
 
   for (const def of state.topology.pipelines) {
     const isSelected = selected?.profile === def.name
     const raw = isSelected ? buildGraph(state, selected.runId, expanded) : buildConfiguredPipeline(state, def)
     selectedPlaced ||= isSelected
-    addLane(raw, `pipeline-${def.name}`, `${def.name} · pipeline`)
+    addLane(raw, `pipeline-${def.name}`, `${def.name} · pipeline`, true)
   }
 
   // A direct profile run is still useful operational detail, but it sits alongside the
   // configured topology instead of replacing it.
   if (selected && !selectedPlaced) {
-    addLane(buildGraph(state, selected.runId, expanded), `run-${selected.runId}`, `${selected.profile} · selected run`)
+    addLane(buildGraph(state, selected.runId, expanded), `run-${selected.runId}`, `${selected.profile} · selected run`, false)
   }
 
   // A single shared entry point serves every lane instead of one input per pipeline.
   if (laneFirstSteps.length > 0) {
-    const sharedInput = node('input', 'input', 'input', 'idle')
-    sharedInput.position = { x: MAIN_X, y: MAIN_Y }
+    const sharedInput = node('input', 'input', 'Prompt input', selected ? 'done' : 'idle', {
+      runId: selected?.runId,
+      traversed: Boolean(selected),
+      operation: 'orchestrator',
+    })
+    const firstCenters = laneFirstSteps.map((target) => target.position.y + layoutHeightOf(target) / 2)
+    sharedInput.position = {
+      x: columnX(0),
+      y: (Math.min(...firstCenters) + Math.max(...firstCenters)) / 2 - layoutHeightOf(sharedInput) / 2,
+    }
     nodes.push(sharedInput)
     for (const target of laneFirstSteps) {
       edges.push(flowEdge(sharedInput, target, 'data', undefined, 's', 't'))
@@ -908,6 +1015,7 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
     source.data.kind === 'route' ? source.data.profile : source.data.chosenProfile
   const chosenProfiles = new Set(routerSources.map(routedProfile).filter((p): p is string => Boolean(p)))
   const chosenTasksByStage = new Map<string, string[]>()
+  const observedStagesByProfile = new Map<string, Map<string, StageEntry>>()
   if (selected) {
     for (const stage of state.stages.values()) {
       if (stage.runId !== selected.runId) continue
@@ -924,16 +1032,38 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
       }
       if (chosen.length > 0) chosenTasksByStage.set(stage.name, chosen)
     }
+
+    const pipelineEntry = state.pipelines.get(selected.runId)
+    const pipelineDefinition = matchTopology(state, pipelineEntry)
+    const directProfile = pipelineEntry ? undefined : selected.profile
+    const profileForStep = (step: number): string | undefined =>
+      pipelineEntry?.steps.find((candidate) => candidate.step === step)?.profile
+      ?? pipelineDefinition?.steps[step]?.profile
+    const remember = (profile: string, stage: StageEntry): void => {
+      const byName = observedStagesByProfile.get(profile) ?? new Map<string, StageEntry>()
+      const previous = byName.get(stage.name)
+      if (!previous || (previous.status === 'completed' && stage.status === 'started')) byName.set(stage.name, stage)
+      observedStagesByProfile.set(profile, byName)
+    }
+    const visitObserved = (stages: StageEntry[], inheritedProfile?: string): void => {
+      for (const stage of stages) {
+        const step = stepIndexOf(stage)
+        const profile = step == null ? inheritedProfile : profileForStep(step) ?? inheritedProfile
+        if (profile && stage.name !== 'pipeline') remember(profile, stage)
+        visitObserved(stage.children, profile)
+      }
+    }
+    visitObserved(stageTreeForRun(state.stages, selected.runId), directProfile)
   }
   const profileNodes: GraphNode[] = []
   const crossProfileRoutes: Array<{ source: GraphNode; target: string; chosen: boolean; muted: boolean }> = []
   const lanesBottom = graphBounds(nodes).bottom
-  let profileX = MAIN_X
-  const profileY = lanesBottom + 18
+  const profileX = columnX(0)
+  let profileY = lanesBottom + 58
 
   const muteEdge = (edge: GraphEdge): void => {
-    edge.style = { ...edge.style, opacity: 0.22 }
-    edge.labelStyle = { ...edge.labelStyle, opacity: 0.22 }
+    edge.style = { ...edge.style, opacity: 0.52 }
+    edge.labelStyle = { ...edge.labelStyle, opacity: 0.72 }
     edge.animated = false
     edge.data = { ...edge.data, muted: true }
   }
@@ -955,26 +1085,37 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
 
     let rowRight = profileX + 196
     let rowBottom = profileY + layoutHeightOf(profileNode)
-    let previous = profileNode
-    let stageX = profileX + 268
     const renderStages = (
       stages: ProfileTopologyStage[],
       path: string,
-      startX: number,
+      startRank: number,
       y: number,
       source: GraphNode,
       inheritedMuted: boolean,
-    ): { right: number; bottom: number; last: GraphNode } => {
-      let x = startX
+    ): { right: number; bottom: number; last: GraphNode; lastRank: number; nextRank: number } => {
+      let rank = startRank
       let bottom = y
       let from = source
+      let lastRank = startRank - 1
+      let localRight = columnX(startRank)
       for (const [stageIndex, stage] of stages.entries()) {
+        const stageRank = rank
+        const x = columnX(stageRank)
         const kind = stage.kind === 'decision' ? 'route' : 'stage'
-        const flags = [stage.optional ? 'optional' : '', stage.repeatable ? 'repeats' : ''].filter(Boolean).join(' · ')
-        const stageNode = node(`blueprint-${profile.name}-${path}-${stageIndex}`, kind, stage.name, 'idle', {
+        const flags = [stage.optional ? 'optional pass' : '', stage.repeatable ? 'repeatable' : ''].filter(Boolean).join(' · ')
+        const observed = inheritedMuted ? undefined : observedStagesByProfile.get(profile.name)?.get(stage.name)
+        const observedStatus = observed ? stageState(observed, state.llmRequests) : 'idle'
+        const stageNode = node(`blueprint-${profile.name}-${path}-${stageIndex}`, kind, stage.name, observedStatus, {
           profile: profile.name,
-          detailText: flags || undefined,
+          detail: observed?.detail,
+          detailText: observed ? detailTextOf(observed.detail) || flags || undefined : flags || undefined,
+          wallMs: observed?.wallMs,
+          llm: observed ? llmOf(observed, state.llmRequests) : undefined,
+          runId: observed ? selected?.runId : undefined,
+          traversed: Boolean(observed),
+          current: observedStatus === 'active',
           muted: inheritedMuted,
+          operation: operationFor(stage.name, stage.kind === 'decision'),
         })
         stageNode.position = { x, y }
         nodes.push(stageNode)
@@ -982,7 +1123,7 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
         if (inheritedMuted) muteEdge(connector)
         edges.push(connector)
         bottom = Math.max(bottom, y + layoutHeightOf(stageNode))
-        rowRight = Math.max(rowRight, x + STAGE_W)
+        localRight = Math.max(localRight, x + STAGE_W)
 
         if ((stage.routes?.length ?? 0) > 0) {
           const localChoiceOrder = chosenTasksByStage.get(stage.name) ?? []
@@ -994,6 +1135,7 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
           const directChoices = new Set(directChoiceOrder)
           let routeY = y
           let routeRight = x + STAGE_W
+          let maxRouteRank = stageRank
           const routes = stage.routes ?? []
           const chosenPath = new Set<string>()
           for (const choice of directChoices) {
@@ -1004,7 +1146,7 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
               cursor = routes.find((route) => route.name === cursor?.feeds)
             }
           }
-          const renderedRoutes = new Map<string, { terminal: GraphNode; right: number; y: number; muted: boolean; chosen: boolean }>()
+          const renderedRoutes = new Map<string, { terminal: GraphNode; terminalRank: number; right: number; y: number; muted: boolean; chosen: boolean }>()
           for (const [routeIndex, route] of routes.entries()) {
             const isChosen = chosenPath.has(route.name)
             const directChoice = directChoices.has(route.name)
@@ -1014,13 +1156,28 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
             const directIndex = directChoiceOrder.indexOf(route.name)
             const runtimeFeeder = directIndex > 0 ? renderedRoutes.get(directChoiceOrder[directIndex - 1]!) : undefined
             const renderedFeeder = (feeder ? renderedRoutes.get(feeder.name) : undefined) ?? runtimeFeeder
-            const branchX = renderedFeeder ? renderedFeeder.right + 54 : x + STAGE_W + 62
+            const branchRank = renderedFeeder ? renderedFeeder.terminalRank + 1 : stageRank + 1
+            const branchX = columnX(branchRank)
             const branchY = renderedFeeder?.y ?? routeY
-            const branch = node(`blueprint-${profile.name}-${path}-${stageIndex}-route-${routeIndex}`, 'branch', route.name, unavailable ? 'failed' : isChosen ? 'done' : 'idle', {
+            const branchId = `blueprint-${profile.name}-${path}-${stageIndex}-route-${routeIndex}`
+            // The catalogue starts as a compact workflow index. During an observed run the
+            // full chosen/unchosen comparison remains visible, preserving the diagnostic
+            // value of the project graph for older callers.
+            const branchExpanded = Boolean(selected) || expanded.has(branchId)
+            const branch = node(branchId, 'branch', route.name, unavailable ? 'failed' : isChosen ? 'done' : 'idle', {
               chosen: isChosen,
               muted: routeMuted,
-              detailText: unavailable ? 'not runnable' : route.targetProfile ? 'profile route' : 'task route',
+              detailText: unavailable
+                ? 'not runnable in review'
+                : route.feeds
+                  ? `workflow · continues to ${route.feeds}`
+                  : route.targetProfile
+                    ? 'profile destination'
+                    : 'clinical workflow',
               profile: route.targetProfile,
+              operation: 'decision',
+              expanded: branchExpanded,
+              childCount: route.stages?.length ?? 0,
             })
             branch.position = { x: branchX, y: branchY }
             nodes.push(branch)
@@ -1032,13 +1189,15 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
             let branchRight = branch.position.x + CHIP_W
             let branchBottom = branchY + layoutHeightOf(branch)
             let terminal = branch
-            if (route.stages?.length) {
-              const nested = renderStages(route.stages, `${path}-${stageIndex}-route-${routeIndex}`, branchRight + 54, branchY, branch, routeMuted)
+            let terminalRank = branchRank
+            if (route.stages?.length && branchExpanded) {
+              const nested = renderStages(route.stages, `${path}-${stageIndex}-route-${routeIndex}`, branchRank + 1, branchY, branch, routeMuted)
               branchRight = nested.right
               branchBottom = Math.max(branchBottom, nested.bottom)
               terminal = nested.last
+              terminalRank = nested.lastRank
             }
-            renderedRoutes.set(route.name, { terminal, right: branchRight, y: branchY, muted: routeMuted, chosen: isChosen })
+            renderedRoutes.set(route.name, { terminal, terminalRank, right: branchRight, y: branchY, muted: routeMuted, chosen: isChosen })
             if (renderedFeeder) {
               const feedEdge = flowEdge(renderedFeeder.terminal, branch, renderedFeeder.chosen ? 'branch' : 'ghost', undefined, 's', 'left')
               if (renderedFeeder.muted) muteEdge(feedEdge)
@@ -1046,31 +1205,35 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
             }
             if (route.targetProfile) crossProfileRoutes.push({ source: branch, target: route.targetProfile, chosen: isChosen, muted: routeMuted })
             routeRight = Math.max(routeRight, branchRight)
+            maxRouteRank = Math.max(maxRouteRank, terminalRank)
             bottom = Math.max(bottom, branchBottom)
             if (!renderedFeeder) routeY = branchBottom + 24
           }
-          rowRight = Math.max(rowRight, routeRight)
-          x = routeRight + 62
+          localRight = Math.max(localRight, routeRight)
+          rank = maxRouteRank + 1
         } else {
-          x += STAGE_W + 54
+          rank = stageRank + 1
         }
         from = stageNode
+        lastRank = stageRank
       }
-      return { right: Math.max(rowRight, x), bottom, last: from }
+      rowRight = Math.max(rowRight, localRight)
+      return { right: localRight, bottom, last: from, lastRank, nextRank: rank }
     }
 
     if (profile.topology?.stages.length) {
-      const rendered = renderStages(profile.topology.stages, 'root', stageX, profileY, previous, profileMuted)
+      const rendered = renderStages(profile.topology.stages, 'root', 1, profileY, profileNode, profileMuted)
       rowRight = Math.max(rowRight, rendered.right)
       rowBottom = Math.max(rowBottom, rendered.bottom)
     }
 
-    nodes.push({
+    const profileGroup = {
       ...node(`profile-group-${profile.name}`, 'group', `${profile.name} · ${profile.mode}`, profile.configured === false ? 'failed' : 'idle'),
       position: { x: profileX - 20, y: profileY - 30 },
       style: { width: rowRight - profileX + 40, height: rowBottom - profileY + 50 },
-    })
-    profileX = rowRight + 82
+    }
+    nodes.push(profileGroup)
+    profileY = rowBottom + ROW_GAP
   }
 
   nodes.push(...profileNodes)
@@ -1120,6 +1283,27 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
     if (entryPoint) entryPoint.data.entryPoint = true
   }
 
+  // Runtime activity is a semantic overlay on the stable system map. A traversed
+  // node stays green after it completes; an edge turns green only when data reached
+  // both ends, so untouched alternatives remain visibly available but unselected.
+  if (selected) {
+    const traversed = new Set<string>()
+    for (const candidate of nodes) {
+      const observed = candidate.data.runId === selected.runId && candidate.data.status !== 'idle'
+      const chosenTopology = candidate.data.chosen === true
+      if (!observed && !chosenTopology) continue
+      candidate.data.traversed = true
+      traversed.add(candidate.id)
+    }
+    for (const edge of edges) {
+      if (!traversed.has(edge.source) || !traversed.has(edge.target)) continue
+      edge.style = { ...edge.style, stroke: 'var(--success)', strokeWidth: 2.6, strokeDasharray: undefined, opacity: 1 }
+      edge.markerEnd = { type: 'arrowclosed', width: 14, height: 14, color: 'var(--success)' }
+      edge.animated = nodes.find((candidate) => candidate.id === edge.target)?.data.status === 'active'
+      edge.data = { ...edge.data, traversed: true }
+    }
+  }
+
   const count = state.topology.pipelines.length
   const runTitle = selected ? ` · selected run ${selected.profile} ${shortDigest(selected.runId)}` : ''
   const missingTitle = missingTargets.length > 0 ? ` · ${missingTargets.length} unresolved route target${missingTargets.length === 1 ? '' : 's'}` : ''
@@ -1127,5 +1311,150 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
     nodes,
     edges,
     title: `${count} pipeline${count === 1 ? '' : 's'} · ${state.topology.profiles.length} configured profiles${missingTitle}${runTitle}`,
+  }
+}
+
+/**
+ * Keep the selected pipeline's complete static internals, but place each referenced
+ * profile at the pipeline step that owns it. This turns the topology catalogue into
+ * one readable process: summaries on the top row, implementation detail below them,
+ * and every deeper stage advancing to the next column.
+ */
+function buildConfiguredProgressTopology(
+  state: ProjectState,
+  pipeline: PipelineDefinition,
+  expanded: Set<string>,
+  runId?: string,
+): GraphBuild {
+  const profileRanks = new Map<string, number>()
+  pipeline.steps.forEach((step, index) => {
+    if (!profileRanks.has(step.profile)) profileRanks.set(step.profile, index + 1)
+  })
+
+  const queue = [...profileRanks.keys()]
+  while (queue.length > 0) {
+    const source = queue.shift()!
+    const sourceRank = profileRanks.get(source) ?? 1
+    for (const target of declaredRouteTargets(state, source)) {
+      if (profileRanks.has(target)) continue
+      profileRanks.set(target, sourceRank + 2)
+      queue.push(target)
+    }
+  }
+
+  const focusedState: ProjectState = {
+    ...state,
+    topology: {
+      profiles: state.topology.profiles.filter((profile) => profileRanks.has(profile.name)),
+      pipelines: [pipeline],
+    },
+  }
+  const graph = buildProjectGraph(focusedState, runId, expanded)
+
+  for (const [profile, rank] of profileRanks) {
+    const root = graph.nodes.find((candidate) => candidate.id === `profile-${profile}`)
+    if (!root) continue
+    const dx = columnX(rank) - root.position.x
+    for (const candidate of graph.nodes) {
+      if (
+        candidate.id === `profile-${profile}`
+        || candidate.id === `profile-group-${profile}`
+        || candidate.id.startsWith(`blueprint-${profile}-`)
+      ) candidate.position = { ...candidate.position, x: candidate.position.x + dx }
+    }
+  }
+
+  pipeline.steps.forEach((step, index) => {
+    const source = graph.nodes.find((candidate) => candidate.id === `pipeline-${pipeline.name}/step-${index}`)
+    const target = graph.nodes.find((candidate) => candidate.id === `profile-${step.profile}`)
+    if (!source || !target || graph.edges.some((edge) => edge.source === source.id && edge.target === target.id)) return
+    graph.edges.push(flowEdge(source, target, 'ghost', 'detail', 'detail', 'top'))
+  })
+
+  return {
+    ...graph,
+    title: `${pipeline.name} · ${pipeline.steps.length} step${pipeline.steps.length === 1 ? '' : 's'} · ready`,
+  }
+}
+
+/** Every configured pipeline as a complete, separately readable process lane. */
+export const buildPipelinesGraph = (
+  state: ProjectState,
+  runId: string | undefined,
+  expanded: Set<string>,
+): GraphBuild => {
+  const selected = runId ? state.runs.get(runId) : undefined
+  if (state.topology.pipelines.length === 0) {
+    return selected ? buildGraph(state, selected.runId, expanded) : { nodes: [], edges: [], title: '' }
+  }
+
+  const selectedEntry = selected ? state.pipelines.get(selected.runId) : undefined
+  const selectedDefinition = selectedEntry ? matchTopology(state, selectedEntry) : undefined
+  const nodes: GraphNode[] = []
+  const edges: GraphEdge[] = []
+  let nextY = MAIN_Y
+
+  for (const pipeline of state.topology.pipelines) {
+    const isSelected = Boolean(selected && selectedDefinition?.name === pipeline.name)
+    const raw = buildConfiguredProgressTopology(state, pipeline, expanded, isSelected ? selected!.runId : undefined)
+    const rawBounds = graphBounds(raw.nodes)
+    const placed = placeGraph(raw, `pipeline-lane-${pipeline.name}`, nextY - rawBounds.top)
+    const bounds = graphBounds(placed.nodes)
+    nodes.push(...placed.nodes)
+    edges.push(...placed.edges)
+
+    nodes.push({
+      ...node(`pipeline-lane-group-${pipeline.name}`, 'group', `${pipeline.name} · pipeline`, isSelected ? 'active' : 'idle', {
+        current: isSelected,
+      }),
+      position: { x: bounds.left - 24, y: bounds.top - 34 },
+      style: { width: bounds.right - bounds.left + 48, height: bounds.bottom - bounds.top + 58 },
+    })
+    nextY = bounds.bottom + ROW_GAP + 34
+  }
+
+  if (selected && !selectedDefinition) {
+    const raw = buildGraph(state, selected.runId, expanded)
+    const rawBounds = graphBounds(raw.nodes)
+    const placed = placeGraph(raw, `direct-run-${selected.runId}`, nextY - rawBounds.top)
+    const bounds = graphBounds(placed.nodes)
+    nodes.push(...placed.nodes)
+    edges.push(...placed.edges)
+    nodes.push({
+      ...node(`direct-run-group-${selected.runId}`, 'group', `${selected.profile} · selected run`, 'active', { current: true }),
+      position: { x: bounds.left - 24, y: bounds.top - 34 },
+      style: { width: bounds.right - bounds.left + 48, height: bounds.bottom - bounds.top + 58 },
+    })
+  }
+
+  const count = state.topology.pipelines.length
+  return { nodes, edges, title: `${count} pipeline${count === 1 ? '' : 's'} · full process detail` }
+}
+
+export interface ExpandedGraphBuild extends GraphBuild {
+  expanded: Set<string>
+}
+
+/** Resolve default-open graph disclosure to a fixed point while respecting closes. */
+export const buildExpandedPipelinesGraph = (
+  state: ProjectState,
+  runId: string | undefined,
+  requested: Set<string>,
+  collapsed: Set<string>,
+): ExpandedGraphBuild => {
+  const expanded = new Set([...requested].filter((key) => !collapsed.has(key)))
+  let graph = buildPipelinesGraph(state, runId, expanded)
+
+  while (true) {
+    let changed = false
+    for (const candidate of graph.nodes) {
+      if (candidate.data.kind === 'group' || (candidate.data.childCount ?? 0) === 0) continue
+      const key = candidate.data.expandKey ?? candidate.id
+      if (collapsed.has(key) || expanded.has(key)) continue
+      expanded.add(key)
+      changed = true
+    }
+    if (!changed) return { ...graph, expanded }
+    graph = buildPipelinesGraph(state, runId, expanded)
   }
 }

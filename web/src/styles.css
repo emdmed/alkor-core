@@ -78,6 +78,8 @@
   --border: oklch(86% 0.018 210);
   --input: oklch(91% 0.018 205);
   --ring: oklch(66% 0.095 205);
+  --caution: #dfbd78;
+  --success: #46957e;
 
   /* event kind colours — same hues as `eventColor` in the terminal renderer */
   --ev-llm: #3b78a8;
@@ -145,8 +147,8 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   gap: 7px;
   line-height: 1;
 }
-.brand-name { color: var(--foreground); font-weight: 750; font-size: 1rem; letter-spacing: -0.02em; white-space: nowrap; }
-.brand-host { color: var(--muted-foreground); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.72rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.brand-name { color: var(--foreground); font-weight: 750; font-size: 14px; letter-spacing: -0.02em; white-space: nowrap; }
+.brand-host { color: var(--muted-foreground); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.75rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* Connection cluster: server state, model availability, and any refusal reason read as one group. */
 .header-health {
@@ -161,22 +163,22 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   align-items: center;
   gap: 6px;
   flex: none;
-  font-size: 0.66rem;
+  font-size: 0.7rem;
   font-weight: 800;
   letter-spacing: 0.09em;
   white-space: nowrap;
 }
 .health-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-.health-state.tone-ok { color: #397d69; }
+.health-state.tone-ok { color: var(--success); }
 .health-state.tone-ok .health-dot { background: #46957e; }
-.health-state.tone-warn { color: oklch(50% 0.09 75); }
+.health-state.tone-warn { color: var(--ev-pipeline); }
 .health-state.tone-warn .health-dot { background: #dfbd78; }
 .health-state.tone-err { color: var(--destructive); }
 .health-state.tone-err .health-dot { background: var(--destructive); }
-.header-health .health-chip { flex: none; font-size: 0.62rem; line-height: 1.2; }
+.header-health .health-chip { flex: none; font-size: 0.7rem; line-height: 1.2; }
 .header-model, .header-error { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.header-model { color: var(--primary); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.74rem; max-width: 260px; }
-.header-error { color: var(--destructive); font-size: 0.72rem; max-width: min(320px, 30vw); }
+.header-model { color: var(--primary); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.75rem; max-width: 260px; }
+.header-error { color: var(--destructive); font-size: 0.75rem; max-width: min(320px, 30vw); }
 .connection-form { display: flex; align-items: center; gap: 6px; }
 .connection-input { width: 190px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .header-actions { display: flex; align-items: center; gap: 4px; padding-left: 10px; border-left: 1px solid var(--border); }
@@ -217,8 +219,8 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 /* --- Semantic colour helpers (name says what it means, not what it is) */
 .ok { color: var(--primary); }
 .err { color: var(--destructive); }
-.warn { color: oklch(72% 0.15 75); }            /* #d29922 */
-.info { color: oklch(72% 0.13 230); }           /* #58a6ff */
+.warn { color: var(--caution); }
+.info { color: var(--primary); }
 .muted { color: var(--muted-foreground); }
 .faint { color: var(--muted-foreground); opacity: 0.6; }
 
@@ -258,8 +260,8 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   white-space: nowrap;
 }
 .dtree-name { color: var(--foreground); }
-.dtree-meta { color: var(--secondary-foreground); font-size: 0.78rem; white-space: nowrap; }
-.dtree-detail { color: var(--muted-foreground); font-size: 0.78rem; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; white-space: nowrap; }
+.dtree-meta { color: var(--secondary-foreground); font-size: 0.75rem; white-space: nowrap; }
+.dtree-detail { color: var(--muted-foreground); font-size: 0.75rem; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; white-space: nowrap; }
 
 /* Column-rule marks a vertical data-flow edge from a parent onto its children. */
 .dtree-children {
@@ -355,7 +357,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--card);
-  box-shadow: 0 10px 24px -20px oklch(32% 0.045 205 / 0.42);
+  box-shadow: 0 10px 24px -20px oklch(30% 0.04 210 / 0.55);
   overflow: hidden;
 }
 
@@ -371,10 +373,10 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   display: block;
   color: var(--foreground);
   font-weight: 700;
-  font-size: 0.82rem;
+  font-size: 0.85rem;
   letter-spacing: -0.01em;
 }
-.chat-head-note { display: block; margin-top: 1px; color: var(--muted-foreground); font-size: 0.66rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-head-note { display: block; margin-top: 1px; color: var(--muted-foreground); font-size: 0.7rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* collapsed: thin vertical tab pinned to the left edge */
 .chat-tab {
@@ -412,7 +414,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 }
 .chat-target-label {
   color: var(--muted-foreground);
-  font-size: 0.64rem;
+  font-size: 0.7rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   white-space: nowrap;
@@ -424,9 +426,9 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   background: var(--background);
   color: var(--foreground);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   font-family: inherit;
-  font-size: 0.74rem;
+  font-size: 0.75rem;
   min-height: 30px;
   padding: 4px 8px;
 }
@@ -444,11 +446,11 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   align-items: center;
   gap: 7px;
   width: 100%;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   color: var(--muted-foreground);
   background: transparent;
   border: 0;
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 5px 7px;
   cursor: pointer;
   font-family: inherit;
@@ -475,7 +477,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   border-radius: 8px;
   padding: 7px 9px;
   background: var(--background);
-  font-size: 0.74rem;
+  font-size: 0.75rem;
 }
 .chat-msg-err {
   border-color: color-mix(in oklab, var(--destructive) 40%, var(--border));
@@ -494,7 +496,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 .chat-msg-profile {
   color: var(--primary);
   font-weight: 600;
-  font-size: 0.66rem;
+  font-size: 0.7rem;
   letter-spacing: 0.04em;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -502,7 +504,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 }
 .chat-msg-status {
   color: var(--muted-foreground);
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   white-space: nowrap;
@@ -520,7 +522,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   padding: 6px 8px;
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   color: var(--foreground);
   font-size: 0.7rem;
   line-height: 1.45;
@@ -546,9 +548,9 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   background: var(--background);
   color: var(--foreground);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   font-family: inherit;
-  font-size: 0.78rem;
+  font-size: 0.75rem;
   line-height: 1.4;
   padding: 7px 10px;
   max-height: 120px;
@@ -570,6 +572,37 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   flex-direction: column;
   padding: 10px 12px 12px;
 }
+.graph-wrap.is-graph-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  padding: var(--s-2);
+  background: var(--background);
+}
+.graph-wrap.is-graph-fullscreen .graph-toolbar {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--s-2);
+}
+.graph-wrap.is-graph-fullscreen .graph-heading { flex: 1; }
+.graph-wrap.is-graph-fullscreen .graph-commandbar { flex: none; }
+.graph-wrap.is-graph-fullscreen .graph-map-hint,
+.graph-wrap.is-graph-fullscreen .graph-runs,
+.graph-wrap.is-graph-fullscreen .graph-legend { display: none; }
+.graph-wrap.is-graph-fullscreen .control-group [data-slot="button"] {
+  font-size: 0;
+  gap: 0;
+}
+.graph-wrap.is-graph-fullscreen .control-group [data-slot="button"] svg {
+  width: 15px;
+  height: 15px;
+}
+.graph-wrap.is-graph-fullscreen .graph-canvas {
+  border-radius: 12px;
+}
 
 .graph-toolbar {
   display: flex;
@@ -582,13 +615,13 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 .graph-title {
   font-weight: 700;
   color: var(--foreground);
-  font-size: 0.92rem;
+  font-size: 0.85rem;
   letter-spacing: -0.015em;
   white-space: nowrap;
 }
 .graph-subtitle {
   color: var(--muted-foreground);
-  font-size: 0.76rem;
+  font-size: 0.75rem;
   white-space: nowrap;
 }
 .graph-position {
@@ -606,10 +639,15 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 .graph-position-live { border-color: var(--primary); background: var(--secondary); color: var(--secondary-foreground); }
 .graph-position-done { border-color: var(--border); background: var(--muted); color: var(--secondary-foreground); }
 .graph-position-failed { border-color: var(--destructive); background: color-mix(in oklab, var(--destructive) 6%, var(--card)); color: var(--destructive); }
-.graph-position-kicker { font-size: 0.61rem; font-weight: 800; letter-spacing: 0.07em; }
+.graph-position-kicker { font-size: 0.7rem; font-weight: 800; letter-spacing: 0.07em; }
 .graph-position-name { color: var(--foreground); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 18ch; }
 .graph-position-context { color: currentColor; opacity: 0.82; white-space: nowrap; }
 .graph-commandbar { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.graph-map-hint {
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
 .graph-runs {
   display: flex;
   gap: 4px;
@@ -618,12 +656,12 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   flex: 1;
   min-width: 0;
 }
-.graph-waiting { color: var(--muted-foreground); font-size: 0.74rem; }
+.graph-waiting { color: var(--muted-foreground); font-size: 0.75rem; }
 .run-chip {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 0.74rem;
+  font-size: 0.75rem;
   color: var(--foreground);
   background: var(--card);
   border: 1px solid var(--border);
@@ -657,7 +695,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: color-mix(in oklab, var(--background) 84%, var(--card));
-  box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.9);
+  box-shadow: inset 0 1px 0 color-mix(in oklab, var(--card) 92%, white);
   overflow: hidden;
   position: relative;
 }
@@ -671,7 +709,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   justify-content: center;
   gap: 6px;
   color: var(--foreground);
-  font-size: 0.95rem;
+  font-size: 14px;
   pointer-events: none;
   z-index: 5;
 }
@@ -684,7 +722,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   padding: 5px 8px;
   background: transparent;
   border-top: 0;
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   color: var(--muted-foreground);
   display: flex;
   align-items: center;
@@ -699,13 +737,13 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   flex: none;
 }
 .graph-legend-title {
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   letter-spacing: 0.02em;
   color: var(--secondary-foreground);
   font-weight: 700;
 }
 .graph-legend-row { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
-.legend-now { display: inline-block; width: 18px; height: 8px; border: 1px solid var(--primary); border-radius: 3px; background: var(--secondary); }
+.legend-now { display: inline-block; width: 18px; height: 8px; border: 1px solid var(--success); border-radius: 8px; background: color-mix(in oklab, var(--success) 17%, var(--card)); }
 .graph-legend-note { margin-left: auto; color: var(--muted-foreground); opacity: 0.72; white-space: nowrap; }
 .legend-edge {
   display: inline-block;
@@ -713,12 +751,21 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   height: 0;
   border-top-width: 2px;
   border-top-style: solid;
-  border-radius: 2px;
+  border-radius: 0;
 }
-.legend-edge-data { border-top-color: #8ea3ad; }
-.legend-edge-branch { border-top-color: #46957e; }
-.legend-edge-ghost { border-top-color: #b3c3c9; border-top-style: dashed; }
-.legend-edge-muted { border-top-color: #b3c3c9; border-top-style: dashed; opacity: 0.3; }
+.legend-edge-data { border-top-color: var(--muted-foreground); }
+.legend-edge-branch { border-top-color: var(--success); }
+.legend-edge-ghost { border-top-color: var(--border); border-top-style: dashed; }
+.legend-edge-muted { border-top-color: var(--border); border-top-style: dashed; opacity: 0.3; }
+.legend-work {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 8px;
+}
+.legend-work-model { background: color-mix(in oklab, var(--primary) 74%, white); }
+.legend-work-code { background: var(--muted-foreground); }
+.legend-work-route { background: var(--caution); }
 
 /* --- drawer (right slide-over) --------------------------------------------- */
 .drawer {
@@ -731,7 +778,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   max-width: 100vw;
   background: color-mix(in oklab, var(--card) 94%, var(--secondary));
   border-left: 1px solid var(--border);
-  box-shadow: -12px 0 28px -22px oklch(30% 0.04 210 / 0.5);
+  box-shadow: -12px 0 28px -22px oklch(30% 0.04 210 / 0.55);
   display: flex;
   flex-direction: column;
   transform: translateX(0);
@@ -748,7 +795,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   padding: 6px 8px 6px 14px;
   border-bottom: 1px solid var(--border);
 }
-.drawer-title { color: var(--foreground); font-weight: 700; font-size: 0.8rem; letter-spacing: -0.01em; text-transform: lowercase; }
+.drawer-title { color: var(--foreground); font-weight: 700; font-size: 0.85rem; letter-spacing: -0.01em; text-transform: lowercase; }
 .drawer-title::first-letter { text-transform: uppercase; }
 .drawer-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px 18px; }
 .drawer-tab {
@@ -773,7 +820,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 }
 .drawer-tab:hover { color: var(--primary); border-color: var(--ring); }
 
-.drawer-summary { max-width: 34ch; margin: 0 0 18px; color: var(--muted-foreground); font-size: 0.74rem; }
+.drawer-summary { max-width: 34ch; margin: 0 0 18px; color: var(--muted-foreground); font-size: 0.75rem; }
 .drawer-section-title {
   display: flex;
   align-items: baseline;
@@ -781,19 +828,19 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   gap: 8px;
   margin: 20px 0 8px;
   color: var(--foreground);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 750;
   letter-spacing: 0.01em;
 }
 .drawer-section-title:first-of-type { margin-top: 0; }
 .drawer-section-title span { color: var(--muted-foreground); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 400; }
-.drawer-empty { padding: 7px 9px; border-radius: 7px; background: var(--muted); color: var(--muted-foreground); font-size: 0.72rem; }
+.drawer-empty { padding: 7px 9px; border-radius: 8px; background: var(--muted); color: var(--muted-foreground); font-size: 0.75rem; }
 .drawer-item { padding: 7px 0; border-bottom: 1px solid color-mix(in oklab, var(--border) 65%, transparent); }
 .drawer-item-row { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.drawer-item-row [data-slot="badge"] { width: 20px; height: 20px; padding: 0; border-radius: 6px; }
+.drawer-item-row [data-slot="badge"] { width: 20px; height: 20px; padding: 0; border-radius: 8px; }
 .drawer-item-row [data-slot="badge"] svg { width: 11px; height: 11px; }
-.drawer-item-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--foreground); font-size: 0.78rem; font-weight: 600; }
-.drawer-item-id, .drawer-item-meta, .drawer-item-detail, .drawer-data-row { color: var(--muted-foreground); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.68rem; }
+.drawer-item-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--foreground); font-size: 0.75rem; font-weight: 600; }
+.drawer-item-id, .drawer-item-meta, .drawer-item-detail, .drawer-data-row { color: var(--muted-foreground); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.7rem; }
 .drawer-item-id, .drawer-item-meta { margin-left: auto; white-space: nowrap; }
 .drawer-item-detail { margin: 3px 0 0 27px; overflow-wrap: anywhere; }
 .drawer-badges { display: flex; flex-wrap: wrap; gap: 5px; }
@@ -801,7 +848,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 .drawer-data-row > span:nth-child(2) { color: var(--foreground); }
 .stage-tree-item { margin: 3px 0; }
 .stage-tree-children { margin: 4px 0 0 10px; padding-left: 12px; border-left: 1px solid var(--border); }
-.activity-summary { display: flex; align-items: center; gap: 8px; padding: 10px; border-radius: 8px; background: var(--muted); font-size: 0.76rem; }
+.activity-summary { display: flex; align-items: center; gap: 8px; padding: 10px; border-radius: 8px; background: var(--muted); font-size: 0.75rem; }
 .status-spin { animation: status-spin 1.4s linear infinite; }
 @keyframes status-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
@@ -824,19 +871,19 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   background: color-mix(in oklab, var(--primary) 6%, transparent);
 }
 .inspected-kind {
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--muted-foreground);
 }
 .inspected-label { color: var(--foreground); font-weight: 600; margin: 2px 0; }
-.inspected-meta { color: var(--muted-foreground); font-size: 0.74rem; }
+.inspected-meta { color: var(--muted-foreground); font-size: 0.75rem; }
 .inspected-json {
   margin: 6px 0 0;
   padding: 6px 8px;
   background: var(--background);
-  border-radius: 6px;
-  font-size: 0.72rem;
+  border-radius: 8px;
+  font-size: 0.75rem;
   overflow: auto;
   color: var(--muted-foreground);
   max-height: 180px;
@@ -879,7 +926,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   gap: 5px;
   flex: none;
   color: var(--primary);
-  font-size: 0.74rem;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.04em;
 }
@@ -903,7 +950,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   background: color-mix(in oklab, var(--card) 92%, var(--secondary));
   color: var(--muted-foreground);
   font-family: inherit;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   letter-spacing: 0.04em;
   padding: 5px 12px;
   cursor: pointer;
@@ -928,7 +975,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   .status-metric { min-width: auto; padding-inline: 10px; }
   .status-detail { display: none; }
   .eventlog-count { display: none; }
-  .chat-panel { position: absolute; inset: 8px; z-index: 30; width: auto; max-width: none; margin: 0; box-shadow: 0 18px 42px -26px oklch(30% 0.04 210 / 0.72); }
+  .chat-panel { position: absolute; inset: 8px; z-index: 30; width: auto; max-width: none; margin: 0; box-shadow: 0 18px 42px -26px oklch(30% 0.04 210 / 0.55); }
   .chat-tab { width: 32px; margin-left: 4px; }
   .graph-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
   .graph-heading-copy { min-width: 0; flex-direction: column; gap: 2px; }
@@ -936,12 +983,13 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   .graph-position { max-width: 112px; align-self: start; overflow: hidden; }
   .graph-position-context { display: none; }
   .graph-commandbar { width: 100%; min-width: 0; flex-direction: column; align-items: stretch; gap: 6px; }
+  .graph-map-hint { white-space: normal; }
   .graph-runs { width: 100%; overflow-x: auto; padding-bottom: 2px; }
   .graph-tools { width: 100%; overflow-x: auto; max-width: 100%; justify-content: flex-end; }
   .control-group [data-slot="button"] { font-size: 0; gap: 0; }
   .control-group [data-slot="button"] svg { width: 15px; height: 15px; }
   .drawer { width: min(var(--w-drawer), calc(100vw - 36px)); z-index: 30; }
-  .react-flow__minimap { display: none; }
+  .graph-minimap { display: none; }
   .graph-legend-note { display: none; }
   .graph-logbar { flex-basis: 176px; padding: 0 8px; }
   .graph-wrap { padding-left: 8px; padding-right: 8px; }
@@ -957,37 +1005,45 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 9px 11px;
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   color: var(--foreground);
   box-shadow: 0 7px 16px -17px oklch(30% 0.04 210 / 0.55);
   position: relative;
   overflow: hidden;
 }
 .g-card:hover { border-color: var(--ring); }
+.g-card.g-work-model { box-shadow: 0 7px 16px -17px oklch(30% 0.04 210 / 0.55), inset 0 3px 0 color-mix(in oklab, var(--primary) 68%, white); }
+.g-card.g-work-code { box-shadow: 0 7px 16px -17px oklch(30% 0.04 210 / 0.55), inset 0 3px 0 color-mix(in oklab, var(--muted-foreground) 62%, white); }
+.g-card.g-work-decision { box-shadow: 0 7px 16px -17px oklch(30% 0.04 210 / 0.55), inset 0 3px 0 var(--caution); }
 
-.g-active { border-color: #71bda7; background: #f2fbf7; }
+.g-active,
+.g-traversed,
+.g-done {
+  border-color: color-mix(in oklab, var(--success) 72%, var(--border));
+  background: color-mix(in oklab, var(--success) 10%, var(--card));
+  opacity: 1;
+}
 .g-current {
-  border-color: var(--primary);
+  border-color: var(--success);
   border-width: 2px;
   padding: 8px 10px;
-  background: var(--secondary);
+  background: color-mix(in oklab, var(--success) 17%, var(--card));
 }
-.g-done { border-color: #9dbfd8; background: #f4f9fc; }
-.g-failed { border-color: #e2a8ab; background: #fff7f7; }
-.g-idle { border-color: #ccd9dc; }
+.g-failed { border-color: color-mix(in oklab, var(--destructive) 48%, var(--border)); background: color-mix(in oklab, var(--destructive) 5%, var(--card)); }
+.g-idle { border-color: var(--border); }
 .g-card.g-idle { opacity: 0.72; }
 .g-card.g-muted-path {
-  opacity: 0.24;
-  filter: saturate(0.35);
+  opacity: 0.68;
+  filter: saturate(0.55);
 }
 
 .g-input .g-card { background: color-mix(in oklab, var(--primary) 8%, var(--card)); }
-.g-output .g-card { background: color-mix(in oklab, #72b99e 9%, var(--card)); }
+.g-output .g-card { background: color-mix(in oklab, var(--success) 9%, var(--card)); }
 .g-router .g-card {
   border-color: #dfbd78;
-  background: #fffaf0;
+  background: color-mix(in oklab, var(--caution) 10%, var(--card));
 }
-.g-route .g-card { border-color: #dfbd78; background: #fffaf0; }
+.g-route .g-card { border-color: #dfbd78; background: color-mix(in oklab, var(--caution) 10%, var(--card)); }
 
 .g-chip {
   flex-direction: row;
@@ -995,7 +1051,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   padding: 5px 10px;
   border-radius: 999px;
   border-left-width: 1px;
-  font-size: 0.76rem;
+  font-size: 0.75rem;
 }
 .g-chip-copy { display: flex; flex-direction: column; min-width: 0; }
 .g-chip-meta {
@@ -1007,21 +1063,36 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #46957e;
+  background: var(--success);
   flex: none;
 }
+.g-chip-toggle {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-left: auto;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.g-chip-toggle:hover { background: var(--muted); color: var(--foreground); }
+.g-chip-toggle svg { width: 12px; height: 12px; }
 .g-profile .g-card {
   min-height: 62px;
   justify-content: center;
   transition: opacity 180ms ease-out, filter 180ms ease-out, border-color 180ms ease-out, background-color 180ms ease-out;
 }
 .g-profile .g-card:has(.g-profile-route) {
-  border-color: #71bda7;
+  border-color: var(--success);
   background: #f2fbf7;
 }
 .g-profile-route {
-  color: #397d69;
-  font-size: 0.66rem;
+  color: var(--success);
+  font-size: 0.7rem;
   font-weight: 700;
 }
 .g-now {
@@ -1029,10 +1100,10 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   top: 0;
   right: 0;
   padding: 2px 6px 3px;
-  border-radius: 0 10px 0 7px;
+  border-radius: 0 8px 0 8px;
   background: var(--primary);
   color: var(--primary-foreground);
-  font-size: 0.58rem;
+  font-size: 0.7rem;
   font-weight: 800;
   letter-spacing: 0.08em;
   line-height: 1;
@@ -1051,8 +1122,8 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 .run-chip svg { width: 12px; height: 12px; }
 .graph-legend .g-glyph { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .g-glyph.ok { color: #46957e; }
-.g-glyph.info { color: #4d87b4; }
-.g-glyph.err { color: #bd656b; }
+.g-glyph.info { color: var(--primary); }
+.g-glyph.err { color: var(--destructive); }
 .g-glyph.faint { color: var(--muted-foreground); opacity: 0.6; }
 .g-label {
   font-weight: 600;
@@ -1060,6 +1131,33 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.g-work-badge {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+.g-work-badge svg { width: 9px; height: 9px; }
+.g-work-badge-model { background: color-mix(in oklab, var(--primary) 9%, var(--card)); color: var(--primary); }
+.g-work-badge-code { background: color-mix(in oklab, var(--muted-foreground) 13%, var(--card)); color: var(--secondary-foreground); }
+.g-work-badge-decision { background: color-mix(in oklab, var(--caution) 22%, var(--card)); color: var(--ev-pipeline); }
+.g-terminal-icon {
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  width: 18px;
+  height: 18px;
+  color: var(--primary);
+  opacity: 0.22;
 }
 .g-entry-tag {
   flex: none;
@@ -1084,6 +1182,21 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 .g-prof { color: var(--secondary-foreground); }
 .g-time { color: var(--muted-foreground); opacity: 0.8; margin-left: 6px; }
 .g-refs { color: var(--primary); font-weight: 500; }
+.g-transfer {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 6px;
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+}
+.g-transfer > span { font-weight: 700; }
+.g-transfer code {
+  overflow: hidden;
+  color: var(--primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .g-detail {
   font-size: 0.7rem;
   color: var(--muted-foreground);
@@ -1098,19 +1211,29 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 0 6px;
-  font-size: 0.66rem;
+  font-size: 0.7rem;
 }
-.g-conf { color: #a8751f; font-weight: 700; }
+.g-conf { color: var(--ev-pipeline); font-weight: 700; }
 .g-decide {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   color: var(--muted-foreground);
 }
-.g-route-line { color: #397d69; font-weight: 700; }
+.g-route-line { color: var(--success); font-weight: 700; }
+.g-route-plan {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--secondary-foreground);
+  font-size: 0.7rem;
+}
+.g-route-plan > span:first-child { color: var(--muted-foreground); font-weight: 700; }
+.g-route-plan b { margin-right: 5px; color: var(--primary); }
 .g-rule-vs {
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 0 5px;
@@ -1122,11 +1245,11 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   align-items: center;
   gap: 3px;
   font-family: inherit;
-  font-size: 0.66rem;
+  font-size: 0.7rem;
   color: var(--muted-foreground);
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 1px 6px;
   cursor: pointer;
   margin-top: 2px;
@@ -1191,8 +1314,8 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   text-align: right;
 }
 .g-group-current {
-  border-color: color-mix(in oklab, var(--primary) 72%, var(--border));
-  background: color-mix(in oklab, var(--secondary) 58%, transparent);
+  border-color: color-mix(in oklab, var(--success) 72%, var(--border));
+  background: color-mix(in oklab, var(--success) 8%, transparent);
 }
 .react-flow__node:focus { outline: none; }
 .react-flow__node:focus-visible .g-card {
@@ -1218,13 +1341,52 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 .react-flow__controls-button:hover { background: var(--muted); }
 .react-flow__controls-button svg { fill: var(--foreground); }
 
-.react-flow__minimap {
+.graph-minimap {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 5;
+  width: 200px;
+  height: 150px;
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
-  background: var(--card);
+  background: color-mix(in oklab, var(--card) 94%, var(--secondary));
+  box-shadow: 0 9px 24px -20px oklch(30% 0.04 210 / 0.55);
+  cursor: crosshair;
 }
-.react-flow__minimap-mask { fill: var(--background); opacity: 0.85; }
+.graph-minimap:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+.graph-minimap-node {
+  stroke: var(--foreground);
+  stroke-width: 6px;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.58;
+}
+.graph-minimap-node.is-traversed { stroke: var(--success); opacity: 1; }
+.graph-minimap-node.is-muted { opacity: 0.48; }
+.graph-minimap-viewport {
+  fill: color-mix(in oklab, var(--primary) 7%, transparent);
+  stroke: var(--primary);
+  stroke-width: 8px;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+.graph-wrap.is-graph-fullscreen .graph-minimap {
+  display: block;
+  width: 200px;
+  height: 150px;
+}
+
+@media (max-width: 700px) {
+  .graph-wrap.is-graph-fullscreen { padding: var(--s-1); }
+  .graph-wrap.is-graph-fullscreen .graph-minimap {
+    width: 152px;
+    height: 112px;
+  }
+}
 
 .react-flow__edge { cursor: default; }
 .react-flow__edge-path { stroke-linecap: round; }

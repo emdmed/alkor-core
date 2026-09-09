@@ -8,7 +8,7 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import type { GraphNode, GraphNodeData } from '../../lib/graph.ts'
 import { fmtSec } from '../../lib/format.ts'
-import { Check, ChevronDown, ChevronRight, Circle, LoaderCircle, X } from 'lucide-react'
+import { Braces, Check, ChevronDown, ChevronRight, Circle, Cpu, FileInput, FileOutput, GitBranch, LoaderCircle, Orbit, X } from 'lucide-react'
 
 const statusClass = (status: GraphNodeData['status']): string =>
   status === 'active' ? 'g-active' : status === 'failed' ? 'g-failed' : status === 'done' ? 'g-done' : 'g-idle'
@@ -18,7 +18,7 @@ const StatusGlyph = ({ status }: { status: GraphNodeData['status'] }) =>
 
 /** Small coloured graph node card — every real (non-group) node is one of these. */
 const Card = ({ data, children }: { data: GraphNodeData; children?: React.ReactNode }) => (
-  <div className={`g-card ${data.kind === 'branch' ? 'g-chip' : ''} ${statusClass(data.status)}${data.current ? ' g-current' : ''}${data.muted ? ' g-muted-path' : ''}`}>
+  <div className={`g-card ${data.kind === 'branch' ? 'g-chip' : ''} ${data.operation ? `g-work-${data.operation}` : ''} ${statusClass(data.status)}${data.traversed ? ' g-traversed' : ''}${data.current ? ' g-current' : ''}${data.muted ? ' g-muted-path' : ''}`}>
     {data.current && <span className="g-now" aria-label="Current operation">NOW</span>}
     {children}
   </div>
@@ -36,9 +36,21 @@ const Title = ({ data, chevron }: { data: GraphNodeData; chevron?: boolean }) =>
     ) : null}
     <span className="g-glyph" aria-label={data.status}><StatusGlyph status={data.status} /></span>
     <span className="g-label">{data.label}</span>
+    {data.operation && <OperationBadge operation={data.operation} />}
     {data.entryPoint && <span className="g-entry-tag" aria-label="Main routing entry point">ENTRY</span>}
   </div>
 )
+
+const OperationBadge = ({ operation }: { operation: NonNullable<GraphNodeData['operation']> }) => {
+  const content = operation === 'model'
+    ? { label: 'model', icon: <Cpu /> }
+    : operation === 'code'
+      ? { label: 'code', icon: <Braces /> }
+      : operation === 'decision'
+        ? { label: 'route', icon: <GitBranch /> }
+        : { label: 'flow', icon: <Orbit /> }
+  return <span className={`g-work-badge g-work-badge-${operation}`}>{content.icon}{content.label}</span>
+}
 
 const Meta = ({ className, children }: { className?: string; children: React.ReactNode }) => (
   <div className={`g-meta${className ? ` ${className}` : ''}`}>{children}</div>
@@ -51,6 +63,7 @@ export const InputNode = (props: NodeProps<GraphNode>) => {
   return (
     <div className="g-input">
       <Card data={data}>
+        <FileInput className="g-terminal-icon" aria-hidden="true" />
         <Title data={data} />
         {data.detailText && <Meta>{data.detailText}</Meta>}
       </Card>
@@ -64,6 +77,7 @@ export const OutputNode = (props: NodeProps<GraphNode>) => {
   return (
     <div className="g-output">
       <Card data={data}>
+        <FileOutput className="g-terminal-icon" aria-hidden="true" />
         <Title data={data} />
         {data.wallMs != null && <Meta>{fmtSec(data.wallMs)}</Meta>}
         {data.detailText && <Meta className="g-err-text">{data.detailText}</Meta>}
@@ -97,7 +111,12 @@ export const StepNode = (props: NodeProps<GraphNode>) => {
             {data.ruleVsModel && <span className="g-rule-vs">{data.ruleVsModel}</span>}
           </div>
         )}
-        {data.inputRef && <Meta className="g-refs">uses {data.inputRef === 'initial' ? 'original input' : data.inputRef}</Meta>}
+        {data.inputRef && (
+          <div className="g-transfer">
+            <span>reads</span>
+            <code>{data.inputRef === 'initial' ? 'initial · raw prompt' : data.inputRef}</code>
+          </div>
+        )}
         {expandable && (
           <button
             className="g-toggle"
@@ -165,7 +184,9 @@ export const RouteNode = (props: NodeProps<GraphNode>) => {
           {data.shape && <span className="g-shape">{data.shape}</span>}
           {data.confidence != null && <span className="g-conf">{(data.confidence * 100).toFixed(0)}%</span>}
         </Meta>
-        {data.task && <div className="g-detail">→ task <b>{data.task}</b></div>}
+        {data.tasks && data.tasks.length > 1
+          ? <div className="g-route-plan"><span>plan</span>{data.tasks.map((task, index) => <span key={task}>{index > 0 && <b>→</b>}{task}</span>)}</div>
+          : data.task && <div className="g-detail">→ workflow <b>{data.task}</b></div>}
         {data.profile && <div className="g-detail">→ profile <b>{data.profile}</b></div>}
         {data.reason && <div className="g-detail">{data.reason}</div>}
         {data.detailText && <div className="g-detail">{data.detailText}</div>}
@@ -178,6 +199,7 @@ export const RouteNode = (props: NodeProps<GraphNode>) => {
 
 export const BranchNode = (props: NodeProps<GraphNode>) => {
   const { data } = props
+  const expandable = (data.childCount ?? 0) > 0
   return (
     <div className="g-chip-wrap">
       <Handle id="left" type="target" position={Position.Left} />
@@ -190,6 +212,18 @@ export const BranchNode = (props: NodeProps<GraphNode>) => {
           <span className="g-label">{data.label}</span>
           {data.detailText && <span className="g-chip-meta">{data.detailText}</span>}
         </span>
+        {expandable && (
+          <button
+            className="g-chip-toggle"
+            aria-label={`${data.expanded ? 'Hide' : 'Show'} ${data.label} stages`}
+            onClick={(event) => {
+              event.stopPropagation()
+              data.onToggle?.()
+            }}
+          >
+            {data.expanded ? <ChevronDown /> : <ChevronRight />}
+          </button>
+        )}
       </Card>
     </div>
   )
@@ -206,6 +240,9 @@ export const ProfileNode = (props: NodeProps<GraphNode>) => {
       <Card data={data}>
         <Title data={data} />
         {data.configured === false ? <Meta className="g-err-text">route target not configured</Meta> : data.mode && <Meta>{data.mode} profile</Meta>}
+        {typeof (data.detail as Record<string, unknown> | undefined)?.['pack'] === 'string' && (
+          <Meta>{String((data.detail as Record<string, unknown>)['pack'])}</Meta>
+        )}
         {data.chosen && <span className="g-profile-route">selected route</span>}
       </Card>
     </div>

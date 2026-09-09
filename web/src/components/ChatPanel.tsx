@@ -34,6 +34,8 @@ interface ChatPanelProps {
   onToggle: () => void
   state: ProjectState
   run: (profile: string, input: string) => Promise<unknown>
+  selectedProfile: string
+  onSelectedProfileChange: (profile: string) => void
   /** Narrow-shell coordination: jump straight from the run console to the drawer. */
   onOpenActivity?: () => void
 }
@@ -44,23 +46,16 @@ const PRESETS = [
   'Extract allergies and prior surgeries',
 ]
 
-export const ChatPanel = ({ open, onToggle, state, run, onOpenActivity }: ChatPanelProps) => {
+export const ChatPanel = ({ open, onToggle, state, run, selectedProfile, onSelectedProfileChange, onOpenActivity }: ChatPanelProps) => {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [pending, setPending] = useState(false)
-  const [selectedProfile, setSelectedProfile] = useState<string>('')
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // The list of available pipelines from the topology snapshot. Fall back to
   // profiles with mode === 'pipeline' if the topology is not populated yet.
   const pipelines: PipelineDefinition[] = state.topology.pipelines
-
-  // Auto-select the first pipeline if nothing is selected.
-  useEffect(() => {
-    if (selectedProfile || pipelines.length === 0) return
-    setSelectedProfile(pipelines[0]!.name)
-  }, [pipelines, selectedProfile])
 
   // Auto-scroll the message list whenever the message count or status changes.
   useEffect(() => {
@@ -161,7 +156,7 @@ export const ChatPanel = ({ open, onToggle, state, run, onOpenActivity }: ChatPa
           id="chat-profile"
           className="chat-select"
           value={selectedProfile}
-          onChange={(e) => setSelectedProfile(e.target.value)}
+          onChange={(e) => onSelectedProfileChange(e.target.value)}
         >
           {pipelines.map((p) => (
             <option key={p.name} value={p.name}>

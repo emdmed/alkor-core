@@ -136,7 +136,13 @@ export interface ToolEntry {
 /** Static wiring read from the server once; activity events only paint its state. */
 export interface PipelineDefinition {
   name: string
-  steps: Array<{ name: string; profile: string; input?: string; field?: string }>
+  steps: Array<{
+    name: string
+    profile: string
+    /** Plain state ref or the metadata-safe form of a composed input template. */
+    input?: string | TemplateRefEntry[]
+    field?: string
+  }>
 }
 
 export interface TopologySnapshot {

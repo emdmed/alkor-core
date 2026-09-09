@@ -47,7 +47,14 @@ export const App = () => {
   const [rightTab, setRightTab] = useState<'activity' | 'inspector'>('activity')
   const [logOpen, setLogOpen] = useState(false)
   const [inspected, setInspected] = useState<GraphNodeData | null>(null)
+  const [selectedPipeline, setSelectedPipeline] = useState('')
   const lastFocus = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    const pipelines = state.topology.pipelines
+    if (pipelines.some((pipeline) => pipeline.name === selectedPipeline)) return
+    setSelectedPipeline(pipelines[0]?.name ?? '')
+  }, [selectedPipeline, state.topology.pipelines])
 
   // The run panel can no longer lean on the graph once the viewport stops being wide.
   useEffect(() => {
@@ -133,10 +140,20 @@ export const App = () => {
       />
       <StatusStrip state={state} />
       <main className="graph-main">
-        <ChatPanel open={chatOpen} onToggle={toggleChat} state={state} run={run} onOpenActivity={isNarrow ? toggleActivity : undefined} />
+        <ChatPanel
+          open={chatOpen}
+          onToggle={toggleChat}
+          state={state}
+          run={run}
+          selectedProfile={selectedPipeline}
+          onSelectedProfileChange={setSelectedPipeline}
+          onOpenActivity={isNarrow ? toggleActivity : undefined}
+        />
         <div className="graph-area">
           <PipelineGraph
             state={state}
+            selectedPipeline={selectedPipeline}
+            onSelectedPipelineChange={setSelectedPipeline}
             onInspect={openInspector}
             onToggleActivity={toggleActivity}
             onToggleLog={() => setLogOpen((v) => !v)}

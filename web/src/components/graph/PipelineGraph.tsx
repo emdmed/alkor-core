@@ -1,17 +1,16 @@
 /**
  * PipelineGraph — the execution view as a node graph.
  *
- * The graph replaces the old tree-and-steps panel: every configured pipeline and
- * profile remains on a pannable/zoomable canvas while the selected run paints live
- * state over its lane. Router steps connect to every possible destination; choosing
- * one de-emphasises, but never removes, the alternatives.
+ * The graph replaces the old tree-and-steps panel with one persistent lane per
+ * configured pipeline. Selection paints runtime state over the full map without
+ * hiding any pipeline or route.
  */
-import { useEffect, useMemo, useState } from 'react'
-import { Check, Circle, ChevronsDownUp, ChevronsUpDown, ListTree, LoaderCircle, Rows3, ScrollText, X } from 'lucide-react'
-import { Background, BackgroundVariant, Controls, MiniMap, ReactFlow, ReactFlowProvider, useReactFlow } from '@xyflow/react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Check, Circle, ChevronsDownUp, ChevronsUpDown, ListTree, LoaderCircle, Maximize2, Minimize2, Rows3, ScrollText, X } from 'lucide-react'
+import { Background, BackgroundVariant, Controls, ReactFlow, ReactFlowProvider, useReactFlow, useStore } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import type { GraphNode, GraphNodeData } from '../../lib/graph.ts'
-import { buildProjectGraph } from '../../lib/graph.ts'
+import { buildExpandedPipelinesGraph } from '../../lib/graph.ts'
 import { fmtSec } from '../../lib/format.ts'
 import { NODE_TYPES } from './nodes.tsx'
 import { Badge } from '../ui/badge'
@@ -20,6 +19,8 @@ import type { ProjectState } from '../../../../src/tui/state.ts'
 
 export interface PipelineGraphProps {
   state: ProjectState
+  selectedPipeline: string
+  onSelectedPipelineChange: (profile: string) => void
   /** Inspector-side: what node the user last clicked (rendered into the drawer). */
   onInspect: (data: GraphNodeData) => void
   onToggleActivity: () => void
@@ -31,43 +32,172 @@ export interface PipelineGraphProps {
 const shortId = (id: string): string => `#${id.slice(0, 6)}`
 
 const statusColor = (status: GraphNodeData['status']): string =>
-  status === 'active' ? '#46957e' : status === 'failed' ? '#bd656b' : status === 'done' ? '#4d87b4' : '#c3d2d5'
+  status === 'active' || status === 'done' ? 'var(--success)' : status === 'failed' ? 'var(--destructive)' : 'var(--muted-foreground)'
 
 const RunStatusIcon = ({ status }: { status: GraphNodeData['status'] }) =>
   status === 'active' ? <LoaderCircle className="status-spin" /> : status === 'done' ? <Check /> : status === 'failed' ? <X /> : <Circle />
 
-const GraphView = ({ state, onInspect, onToggleActivity, onToggleLog, activityOpen, logOpen }: PipelineGraphProps) => {
+const miniNodeSize = (node: GraphNode): { width: number; height: number } => {
+  if (typeof node.style?.width === 'number' && typeof node.style?.height === 'number') {
+    return { width: node.style.width, height: node.style.height }
+  }
+  switch (node.data.kind) {
+    case 'step': return { width: 264, height: 90 }
+    case 'stage':
+    case 'route': return { width: 248, height: 74 }
+    case 'branch': return { width: 168, height: 44 }
+    case 'profile': return { width: 196, height: 62 }
+    default: return { width: 240, height: 60 }
+  }
+}
+
+const GraphMiniMap = ({ nodes }: { nodes: GraphNode[] }) => {
+  const { setCenter, fitView } = useReactFlow()
+  const transform = useStore((store) => store.transform)
+  const flowWidth = useStore((store) => store.width)
+  const flowHeight = useStore((store) => store.height)
+  const visible = nodes.filter((node) => node.data.kind !== 'group')
+  const bounds = useMemo(() => {
+    if (visible.length === 0) return undefined
+    const padding = 80
+    const left = Math.min(...visible.map((node) => node.position.x)) - padding
+    const top = Math.min(...visible.map((node) => node.position.y)) - padding
+    const right = Math.max(...visible.map((node) => node.position.x + miniNodeSize(node).width)) + padding
+    const bottom = Math.max(...visible.map((node) => node.position.y + miniNodeSize(node).height)) + padding
+    return { left, top, width: right - left, height: bottom - top }
+  }, [visible])
+  if (!bounds) return null
+
+  const [translateX, translateY, zoom] = transform
+  const viewport = {
+    x: -translateX / zoom,
+    y: -translateY / zoom,
+    width: flowWidth / zoom,
+    height: flowHeight / zoom,
+  }
+  const moveToPoint = (event: React.MouseEvent<SVGSVGElement>) => {
+    const matrix = event.currentTarget.getScreenCTM()
+    if (!matrix) return
+    const point = event.currentTarget.createSVGPoint()
+    point.x = event.clientX
+    point.y = event.clientY
+    const world = point.matrixTransform(matrix.inverse())
+    void setCenter(world.x, world.y, { zoom, duration: 180 })
+  }
+
+  return (
+    <svg
+      className="graph-minimap"
+      viewBox={`${bounds.left} ${bounds.top} ${bounds.width} ${bounds.height}`}
+      preserveAspectRatio="xMidYMid meet"
+      role="button"
+      tabIndex={0}
+      aria-label="Workflow overview. Click to move the viewport, or press Enter to fit the graph."
+      onClick={moveToPoint}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') void fitView({ nodes, padding: 0.08 })
+      }}
+    >
+      <title>Workflow overview and current viewport</title>
+      {visible.map((node) => {
+        const size = miniNodeSize(node)
+        return (
+          <rect
+            key={node.id}
+            className={`graph-minimap-node${node.data.traversed ? ' is-traversed' : ''}${node.data.muted ? ' is-muted' : ''}`}
+            x={node.position.x}
+            y={node.position.y}
+            width={size.width}
+            height={size.height}
+            rx={12}
+            fill={statusColor(node.data.status)}
+          />
+        )
+      })}
+      <rect className="graph-minimap-viewport" {...viewport} />
+    </svg>
+  )
+}
+
+const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspect, onToggleActivity, onToggleLog, activityOpen, logOpen }: PipelineGraphProps) => {
   const { fitView } = useReactFlow()
+  const canvasWidth = useStore((store) => store.width)
+  const graphShellRef = useRef<HTMLDivElement>(null)
   const runs = useMemo(() => [...state.runs.values()], [state.runs])
   const [selectedId, setSelectedId] = useState<string>()
   const [userExpanded, setUserExpanded] = useState<Set<string>>(new Set())
+  const [userCollapsed, setUserCollapsed] = useState<Set<string>>(new Set())
   const [showLegend, setShowLegend] = useState(true)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [fullscreenFallback, setFullscreenFallback] = useState(false)
 
-  const selected = runs.find((r) => r.runId === selectedId) ?? runs[runs.length - 1]
+  const selected = runs.find((r) => r.runId === selectedId)
+    ?? [...runs].reverse().find((r) => r.profile === selectedPipeline)
+    ?? runs[runs.length - 1]
 
-  // Live paint: steps that are actively running expand automatically; user picks stick.
-  const autoExpanded = useMemo(() => {
-    const set = new Set<string>(userExpanded)
-    const tree = selected ? selected.runId : undefined
-    if (tree) {
-      for (const n of state.stages.values()) {
-        if (n.runId === tree && n.status === 'started') set.add(`stage-${n.stageId}`)
-      }
+  // A new run is the operator's strongest intent. Follow it immediately without
+  // replacing the system map: activity is an overlay on stable topology.
+  const latestRunId = runs[runs.length - 1]?.runId
+  useEffect(() => {
+    if (!latestRunId) return
+    const latest = runs[runs.length - 1]!
+    setSelectedId(latestRunId)
+    onSelectedPipelineChange(latest.profile)
+  }, [latestRunId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      const ownsFullscreen = document.fullscreenElement === graphShellRef.current
+      setIsFullscreen(ownsFullscreen || fullscreenFallback)
     }
-    return set
-  }, [state.stages, selected, userExpanded])
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || !fullscreenFallback) return
+      setFullscreenFallback(false)
+      setIsFullscreen(false)
+    }
+    document.addEventListener('fullscreenchange', onFullscreenChange)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('fullscreenchange', onFullscreenChange)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [fullscreenFallback])
 
-  const toggleNode = (id: string) => {
-    setUserExpanded((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
+  const toggleFullscreen = async () => {
+    const shell = graphShellRef.current
+    if (!shell) return
+    if (document.fullscreenElement === shell) {
+      await document.exitFullscreen()
+      return
+    }
+    if (fullscreenFallback) {
+      setFullscreenFallback(false)
+      setIsFullscreen(false)
+      return
+    }
+    try {
+      await shell.requestFullscreen()
+    } catch {
+      // iOS and embedded browsers can refuse the Fullscreen API. The fixed-position
+      // fallback preserves the same obstruction-free graph and explicit exit control.
+      setFullscreenFallback(true)
+      setIsFullscreen(true)
+    }
   }
 
-  const { nodes, edges, title } = useMemo(() => {
-    const graph = buildProjectGraph(state, selected?.runId, autoExpanded)
+  const toggleNode = (id: string, isExpanded: boolean) => {
+    if (isExpanded) {
+      setUserExpanded((prev) => new Set([...prev].filter((candidate) => candidate !== id)))
+      setUserCollapsed((prev) => new Set(prev).add(id))
+    } else {
+      setUserCollapsed((prev) => new Set([...prev].filter((candidate) => candidate !== id)))
+      setUserExpanded((prev) => new Set(prev).add(id))
+    }
+  }
+
+  const graphView = useMemo(() => {
+    const graph = buildExpandedPipelinesGraph(state, selected?.runId, userExpanded, userCollapsed)
+    const expandedKeys = graph.expanded
     // The model marks the complete active lineage, so both a pipeline step and its
     // active internal stage stay legible at their respective zoom levels.
     const nodes: GraphNode[] = graph.nodes.map((n) =>
@@ -77,55 +207,71 @@ const GraphView = ({ state, onInspect, onToggleActivity, onToggleLog, activityOp
             ...n,
             data: {
               ...n.data,
-              expanded: autoExpanded.has(n.data.expandKey ?? n.id) ? true : n.data.expanded,
-              onToggle: (n.data.childCount ?? 0) > 0 ? () => toggleNode(n.data.expandKey ?? n.id) : undefined,
+              expanded: expandedKeys.has(n.data.expandKey ?? n.id),
+              onToggle: (n.data.childCount ?? 0) > 0
+                ? () => toggleNode(n.data.expandKey ?? n.id, expandedKeys.has(n.data.expandKey ?? n.id))
+                : undefined,
               onInspect: () => onInspect(n.data),
             },
           },
     )
-    return { nodes, edges: graph.edges, title: graph.title }
-  }, [state, selected, autoExpanded, onInspect])
+    return { nodes, edges: graph.edges, title: graph.title, expanded: expandedKeys }
+  }, [state, selected, userCollapsed, userExpanded, onInspect])
+  const { nodes, edges, title, expanded } = graphView
   // onInspect is stable? It's recreated on each App render. Keep memo deps honest.
 
-  // React Flow's fitView runs only when the canvas mounts. Expanded stage rails change
-  // the graph's bounds later, so refit only when geometry changes (not for every live
-  // status event) and keep the complete execution path reachable.
+  // Keep the current neighborhood readable. Fitting an arbitrarily long run into the
+  // viewport recreates a minimap where the operator needs legible execution detail.
   const geometryKey = nodes
     .map((n) => `${n.id}:${n.position.x}:${n.position.y}:${String(n.style?.width ?? '')}:${String(n.style?.height ?? '')}`)
     .join('|')
   useEffect(() => {
     if (nodes.length === 0) return
     const frame = requestAnimationFrame(() => {
-      void fitView({ padding: 0.14, minZoom: 0.08, maxZoom: 1 })
+      const trail = nodes.filter((node) => node.data.kind !== 'group')
+      const currentIndex = trail.findIndex((node) => node.data.current)
+      const windowSize = canvasWidth < 620 ? 1 : 5
+      const center = currentIndex >= 0 ? currentIndex : 0
+      const start = Math.max(0, Math.min(center - Math.floor(windowSize / 2), trail.length - windowSize))
+      const focus = trail.slice(start, start + windowSize)
+      void fitView({ nodes: focus.length > 0 ? focus : trail, padding: canvasWidth < 620 ? 0.22 : 0.1, minZoom: 0.45, maxZoom: 1 })
     })
     return () => cancelAnimationFrame(frame)
-  }, [fitView, geometryKey, nodes.length])
+  }, [fitView, geometryKey, nodes.length, isFullscreen, canvasWidth])
 
   const expandAll = () => {
     const all = new Set<string>()
     for (const n of nodes) if ((n.data.childCount ?? 0) > 0) all.add(n.data.expandKey ?? n.id)
     setUserExpanded(all)
+    setUserCollapsed(new Set())
   }
-  const collapseAll = () => setUserExpanded(new Set())
+  const collapseAll = () => {
+    setUserExpanded(new Set())
+    setUserCollapsed(new Set(nodes.filter((n) => (n.data.childCount ?? 0) > 0).map((n) => n.data.expandKey ?? n.id)))
+  }
 
   return (
-    <div className="graph-wrap">
+    <div ref={graphShellRef} className={`graph-wrap${isFullscreen ? ' is-graph-fullscreen' : ''}`}>
       <div className="graph-toolbar">
         <div className="graph-heading">
           <div className="graph-heading-copy">
-            <span className="graph-title">Project topology</span>
+            <span className="graph-title">Data flow</span>
             {title && <span className="graph-subtitle">{title}</span>}
           </div>
           <RunPosition run={selected} nodes={nodes} />
         </div>
 
         <div className="graph-commandbar">
+          <span className="graph-map-hint">All pipelines · live activity highlights the path taken</span>
           <div className="graph-runs" aria-label="Recent runs">
             {runs.length === 0 && <span className="graph-waiting">Waiting for the first run…</span>}
             {runs.slice(-8).map((run) => {
               const on = run.runId === selected?.runId
               return (
-                <button key={run.runId} className={`run-chip${on ? ' run-chip-on' : ''}`} onClick={() => setSelectedId(run.runId)} title={run.runId}>
+                <button key={run.runId} className={`run-chip${on ? ' run-chip-on' : ''}`} onClick={() => {
+                  setSelectedId(run.runId)
+                  onSelectedPipelineChange(run.profile)
+                }} title={run.runId}>
                   <span className={on ? 'text-primary' : 'text-muted-foreground'}><RunStatusIcon status={run.status === 'started' ? 'active' : run.status === 'failed' ? 'failed' : 'done'} /></span>
                   <span>{run.profile}</span>
                   <span className="run-chip-id">{shortId(run.runId)}</span>
@@ -151,6 +297,17 @@ const GraphView = ({ state, onInspect, onToggleActivity, onToggleLog, activityOp
               <Button variant={logOpen ? 'secondary' : 'ghost'} size="sm" onClick={onToggleLog}>
                 <ScrollText />Events
               </Button>
+              <Button
+                variant={isFullscreen ? 'secondary' : 'ghost'}
+                size="sm"
+                onClick={() => void toggleFullscreen()}
+                aria-label={isFullscreen ? 'Exit graph fullscreen' : 'View graph fullscreen'}
+                aria-pressed={isFullscreen}
+                title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen graph'}
+              >
+                {isFullscreen ? <Minimize2 /> : <Maximize2 />}
+                {isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+              </Button>
             </div>
           </div>
         </div>
@@ -161,10 +318,8 @@ const GraphView = ({ state, onInspect, onToggleActivity, onToggleLog, activityOp
           nodes={nodes}
           edges={edges}
           nodeTypes={NODE_TYPES}
-          fitView
-          minZoom={0.08}
+          minZoom={0.12}
           maxZoom={1.35}
-          fitViewOptions={{ padding: 0.16, minZoom: 0.08, maxZoom: 1 }}
           nodesConnectable={false}
           elementsSelectable={false}
           onNodeClick={(_e, node) => {
@@ -173,17 +328,12 @@ const GraphView = ({ state, onInspect, onToggleActivity, onToggleLog, activityOp
           }}
           onNodeDoubleClick={(_e, node) => {
             const d = node.data as GraphNodeData
-            if ((d.childCount ?? 0) > 0) toggleNode(d.expandKey ?? node.id)
+            if ((d.childCount ?? 0) > 0) toggleNode(d.expandKey ?? node.id, expanded.has(d.expandKey ?? node.id))
           }}
         >
           <Background variant={BackgroundVariant.Dots} gap={24} size={1.2} color="#d4e4e2" />
           <Controls showInteractive={false} />
-          <MiniMap
-            pannable
-            zoomable
-            nodeColor={(n) => statusColor((n as GraphNode).data.status)}
-            maskColor="#f5fbfacc"
-          />
+          {nodes.filter((node) => node.data.kind !== 'group').length > 6 && <GraphMiniMap nodes={nodes} />}
         </ReactFlow>
       </div>
 
@@ -191,9 +341,8 @@ const GraphView = ({ state, onInspect, onToggleActivity, onToggleLog, activityOp
 
       {nodes.length === 0 && (
         <div className="graph-empty">
-          <div>No topology yet</div>
-          <div className="text-muted-foreground text-xs">Connect to load configured pipelines, profiles, and routes.</div>
-          <div className="text-muted-foreground/60 text-xs">Listening for the /health snapshot…</div>
+          <div>No execution path</div>
+          <div className="text-muted-foreground text-xs">Waiting for configured pipelines and workflows.</div>
         </div>
       )}
     </div>
@@ -236,20 +385,24 @@ const Legend = () => (
   <div className="graph-legend" aria-label="Graph legend">
     <div className="graph-legend-group">
       <span className="graph-legend-title">Status</span>
-      <span className="graph-legend-row"><span className="g-glyph ok" />active</span>
-      <span className="graph-legend-row"><span className="legend-now" />current</span>
-      <span className="graph-legend-row"><span className="g-glyph info" />done</span>
+      <span className="graph-legend-row"><span className="g-glyph ok" />path taken</span>
+      <span className="graph-legend-row"><span className="legend-now" />running now</span>
       <span className="graph-legend-row"><span className="g-glyph err" />failed</span>
-      <span className="graph-legend-row"><span className="g-glyph faint" />idle</span>
+      <span className="graph-legend-row"><span className="g-glyph faint" />not visited</span>
     </div>
     <div className="graph-legend-group">
       <span className="graph-legend-title">Edges</span>
-      <span className="graph-legend-row"><span className="legend-edge legend-edge-data" />flow</span>
-      <span className="graph-legend-row"><span className="legend-edge legend-edge-branch" />selected</span>
-      <span className="graph-legend-row"><span className="legend-edge legend-edge-ghost" />available</span>
-      <span className="graph-legend-row"><span className="legend-edge legend-edge-muted" />not selected</span>
+      <span className="graph-legend-row"><span className="legend-edge legend-edge-data" />data reference</span>
+      <span className="graph-legend-row"><span className="legend-edge legend-edge-branch" />path taken</span>
+      <span className="graph-legend-row"><span className="legend-edge legend-edge-ghost" />possible route</span>
     </div>
-    <div className="graph-legend-note">All configured paths remain visible · click for details</div>
+    <div className="graph-legend-group">
+      <span className="graph-legend-title">Work</span>
+      <span className="graph-legend-row"><span className="legend-work legend-work-model" />model</span>
+      <span className="graph-legend-row"><span className="legend-work legend-work-code" />deterministic</span>
+      <span className="graph-legend-row"><span className="legend-work legend-work-route" />decision</span>
+    </div>
+    <div className="graph-legend-note">Every route stays visible · green marks execution · click any node to inspect</div>
   </div>
 )
 

@@ -455,7 +455,13 @@ export const createServer = async (configPath?: string, options: ServerOptions =
                     return {
                       name: String(step.name ?? 'unnamed'),
                       profile: String(step.profile ?? ''),
-                      input: typeof step.input === 'string' ? step.input : undefined,
+                      input: typeof step.input === 'string'
+                        ? step.input
+                        : step.input && typeof step.input === 'object' && !Array.isArray(step.input)
+                          ? Object.entries(step.input as Record<string, unknown>)
+                              .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+                              .map(([name, ref]) => ({ name, ref }))
+                          : undefined,
                       field: typeof step.field === 'string' ? step.field : undefined,
                     }
                   })
