@@ -14,20 +14,28 @@ export const WORKFLOW_RULES: RouteRule[] = [
 
 export const DEFAULT_WORKFLOW = 'clinical-verified'
 
+/**
+ * The workflows this router can name: the default, plus whatever a rule can send elsewhere.
+ *
+ * Derived from the rules rather than listed beside them, exactly as the `router` profile
+ * derives its own fan. The listed form was a second statement of the same thing, and the
+ * failure mode of the two disagreeing is silent — a workflow drawn on the dashboard that no
+ * rule can reach, or a reachable one the picture never mentions.
+ */
+const WORKFLOW_TARGETS = [...new Set([DEFAULT_WORKFLOW, ...WORKFLOW_RULES.map((rule) => rule.profile)])]
+
 export const PROFILE: ProfileModule = {
   name: 'workflow-router',
   mode: 'router',
   needsPack: false,
   topology: {
     stages: [
-      { name: 'goal-match' },
+      { name: 'goal-match', operation: 'code' },
       {
         name: 'workflow',
         kind: 'decision',
-        routes: [
-          { name: 'clinical-verified', targetProfile: 'clinical-verified' },
-          { name: 'sepsis-verified', targetProfile: 'sepsis-verified' },
-        ],
+        operation: 'decision',
+        routes: WORKFLOW_TARGETS.map((profile) => ({ name: profile, targetProfile: profile })),
       },
     ],
   },
@@ -39,6 +47,7 @@ export const PROFILE: ProfileModule = {
       kind: 'stage',
       stageId: nextStageId(),
       name: 'workflow',
+      operation: 'decision',
       status: 'completed',
       detail: { profile: result.profile, confidence: Number((result.confidence * 100).toFixed(0)), reason: result.reason },
     })

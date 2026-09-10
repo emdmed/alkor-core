@@ -20,6 +20,19 @@ export interface ActivityScope {
   parentId?: string
 }
 
+/**
+ * What PERFORMS a stage.
+ *
+ * The one fact a reader needs to tell a model boundary from deterministic code, and the one
+ * a dashboard cannot infer: `verify` and `gateway` are arithmetic, `medication-pass` is a
+ * second model call, and nothing about either name says so. Emitted on the event and
+ * published on the topology by whatever owns the stage, so a view never has to keep a list
+ * of names it recognises — a list that goes stale silently every time a profile adds a pass.
+ *
+ * `orchestrator` is the honest answer for a stage that only brackets other work.
+ */
+export type StageOperation = 'model' | 'code' | 'orchestrator' | 'decision'
+
 /** Allowed scalar types in `StageDetail`. Prose is not representable. */
 export type StageDetail =
   | string
@@ -237,6 +250,11 @@ export interface StageEvent extends BaseActivityEvent {
   status: 'started' | 'completed'
   detail?: StageDetail
   wallMs?: number
+  /**
+   * What performs this stage. Optional, and additive rather than a spec bump: a stream that
+   * omits it is a valid stream, and a view falls back to whatever it inferred before.
+   */
+  operation?: StageOperation
   stageId?: string
   parentId?: string
 }

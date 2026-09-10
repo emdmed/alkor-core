@@ -294,7 +294,7 @@ const renderBlueprintStages = (
       traversed: Boolean(observed),
       current: observedStatus === 'active',
       muted: inheritedMuted,
-      operation: operationFor(stage.name, stage.kind === 'decision'),
+      operation: operationFor(stage.name, stage.kind === 'decision', stage.operation),
     })
     stageNode.position = { x, y }
     surface.nodes.push(stageNode)

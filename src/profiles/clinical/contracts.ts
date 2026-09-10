@@ -327,6 +327,78 @@ export const DEFAULT_TASK_FOR_SHAPE: Record<ClinicalShape, Task> = {
 }
 
 /**
+ * The tasks a pack's `defaultTask` may re-point the `note` shape to.
+ *
+ * Data rather than a condition inside `taskForShape` because two things read it: the router
+ * applies the override, and the topology has to draw a route for a task no shape names by
+ * default. A pack that turns on note formatting makes it reachable, so a graph that omitted
+ * it would be describing a different profile than the one running.
+ */
+export const NOTE_DEFAULT_TASKS: Task[] = ['note-format']
+
+/**
+ * Which task consumes which other task's output, when prose takes the long path.
+ *
+ * The two prose arms are two-contract workflows: extract the closed payload first, then hand
+ * that payload to the contract that reasons over it. A structured payload — an exam or a
+ * qSOFA screen — enters the downstream contract directly, which is why the downstream task
+ * remains a valid entry of its own rather than being folded into its extraction.
+ *
+ * One statement, because the router walks it to expand a plan and the topology draws it as
+ * an edge, and a graph that disagreed with the plan would be drawing a pipeline nobody runs.
+ */
+export const TASK_FEEDS: Partial<Record<Task, Task>> = {
+  'shock-extraction': 'shock',
+  'sepsis-extraction': 'sepsis',
+}
+
+/**
+ * Dependency order over the tasks: what a multi-question plan runs first.
+ *
+ * Read by the router to sort a plan and by the topology to order the route fan, so the
+ * picture a reader sees is the order the work happens in.
+ */
+export const TASK_ORDER: Task[] = [
+  'shock-extraction',
+  'shock',
+  'sepsis-extraction',
+  'sepsis',
+  'vital-signs',
+  'note-format',
+  'transcript',
+  'summary',
+]
+
+/**
+ * Tasks the profile can GRADE but cannot RUN over one document.
+ *
+ * Summary reads a whole record assembled from many notes, so `extract` refuses it by name.
+ * Stated here because the refusal and the topology's `available: false` are the same fact,
+ * and a route drawn as runnable that throws on arrival is worse than no route at all.
+ */
+export const UNREVIEWABLE_TASKS: Task[] = ['summary']
+
+/**
+ * Every task the internal router can select, in dependency order.
+ *
+ * Derived rather than listed: a shape's task, the `note` shape's overrides, and whatever
+ * those tasks feed. This is the profile's route fan — adding a shape adds a route without
+ * anyone remembering to.
+ */
+export const ROUTED_TASKS: Task[] = (() => {
+  const entry = [...new Set([...Object.values(DEFAULT_TASK_FOR_SHAPE), ...NOTE_DEFAULT_TASKS])]
+  const reached = new Set<Task>()
+  for (const task of entry) {
+    let current: Task | undefined = task
+    while (current && !reached.has(current)) {
+      reached.add(current)
+      current = TASK_FEEDS[current]
+    }
+  }
+  return [...reached].sort((a, b) => TASK_ORDER.indexOf(a) - TASK_ORDER.indexOf(b))
+})()
+
+/**
  * The `[sampling.*]` key each task reads. Separate from the task name because one is a
  * command-line word and the other is a manifest key, and a rename of either is not a rename
  * of the other — but read off the contract rather than restated, so the two cannot drift.

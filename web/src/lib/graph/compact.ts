@@ -21,7 +21,7 @@ const compactStages = (stages: StageEntry[], requests: Map<string, unknown>, dep
       status: stageState(s, requests as Parameters<typeof stageState>[1]),
       depth,
       wallMs: s.wallMs,
-      operation: operationFor(s.name, s.name === 'route'),
+      operation: operationFor(s.name, s.name === 'route', s.operation),
       llm: llmData,
       detailText: s.name !== 'llm-call' ? String(detailTextOf(s.detail)).slice(0, 80) || undefined : undefined,
     }

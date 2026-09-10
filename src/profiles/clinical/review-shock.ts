@@ -10,11 +10,11 @@ import type { Pack } from '../../core/pack.ts'
 import type { ReviewResult } from '../../core/profile.ts'
 import type { Trace } from '../../core/trace.ts'
 import type { Activity } from '../../core/activity.ts'
-import { nextStageId } from '../../core/activity.ts'
 import { serverModel } from '../../core/client.ts'
 import { HARNESS_VERSION } from '../../core/version.ts'
 import { extract } from '../../modes/extract.ts'
 import { CONTRACTS, buildRequest } from './contracts.ts'
+import { clinicalStages } from './stages.ts'
 import {
   classify,
   loadShockCases,
@@ -78,10 +78,8 @@ export const reviewShock = async (o: ShockReviewOptions): Promise<ReviewResult> 
     document: label,
   })
 
-  const classificationStage = o.activity ? nextStageId() : undefined
-  o.activity?.emit({ kind: 'stage', stageId: classificationStage, name: 'shock-classification', status: 'started' })
-  const classificationStart = performance.now()
-  const outcome = await extract({
+  const stages = clinicalStages('shock', o.activity)
+  const outcome = await stages.around('shock-classification', () => extract({
     systemPrompt: req.prompt,
     document: payload,
     parse: parseShockReply,
@@ -94,8 +92,7 @@ export const reviewShock = async (o: ShockReviewOptions): Promise<ReviewResult> 
     label: 'shock',
     provider: o.provider,
     activity: o.activity,
-  })
-  o.activity?.emit({ kind: 'stage', stageId: classificationStage, name: 'shock-classification', status: 'completed', wallMs: performance.now() - classificationStart })
+  }))
 
   const header =
     `\n=== shock assessment · ${label} ===\n` +
@@ -107,13 +104,7 @@ export const reviewShock = async (o: ShockReviewOptions): Promise<ReviewResult> 
   if (outcome.parsed) {
     const reply = outcome.parsed
     const agrees = reply.shock_category === truth.category
-    o.activity?.emit({
-      kind: 'stage',
-      stageId: nextStageId(),
-      name: 'verify',
-      status: 'completed',
-      detail: { ok: true, category: reply.shock_category, expects: truth.category, agrees },
-    })
+    stages.done('verify', { ok: true, category: reply.shock_category, expects: truth.category, agrees })
     text =
       `${header}\n` +
       `category:   ${reply.shock_category}\n` +
@@ -123,7 +114,7 @@ export const reviewShock = async (o: ShockReviewOptions): Promise<ReviewResult> 
       `confidence: ${reply.assessment_confidence}\n` +
       (reply.notes ? `notes:      ${reply.notes}\n` : '')
   } else {
-    o.activity?.emit({ kind: 'stage', stageId: nextStageId(), name: 'verify', status: 'completed', detail: { ok: false } })
+    stages.done('verify', { ok: false })
     text = `${header}\nno assessment: ${outcome.error}`
   }
 

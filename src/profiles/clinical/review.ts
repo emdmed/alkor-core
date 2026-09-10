@@ -21,13 +21,13 @@ import type { ReviewResult } from '../../core/profile.ts'
 import type { Trace } from '../../core/trace.ts'
 import type { Provider } from '../../core/client.ts'
 import type { Activity } from '../../core/activity.ts'
-import { nextStageId } from '../../core/activity.ts'
 import { serverModel } from '../../core/client.ts'
 import { HARNESS_VERSION } from '../../core/version.ts'
 import { extract } from '../../modes/extract.ts'
 import { loadSettings } from './settings.ts'
 import { loadVitalCases } from './cases.ts'
 import { gradedFields, vitalRequest, type GradedField } from './contracts.ts'
+import { clinicalStages } from './stages.ts'
 import { isBloodPressure, parseVitalSigns, type Reading, type VitalSigns } from './extraction.ts'
 import { verifyQuote, type QuoteRule } from '../../core/verify.ts'
 import { calculateDerived, renderDerived } from './calculations.ts'
@@ -98,22 +98,16 @@ export const reviewVitalSigns = async (o: VitalReviewOptions): Promise<ReviewRes
   // Provenance is the only on-document check a review can make without an answer key, so it
   // is the stage that deserves its own node: quoted versus unverified is exactly the signal
   // a clinician wants to see survive the pipeline intact.
-  const verifyStage = o.activity ? nextStageId() : undefined
-  o.activity?.emit({ kind: 'stage', stageId: verifyStage, name: 'verify', status: 'started' })
+  const stages = clinicalStages('vital-signs', o.activity)
+  const verify = stages.begin('verify')
   const readingText = outcome.parsed
     ? renderReading(req.fields, outcome.parsed, document, loadSettings(o.pack).quoteVerification)
     : `no reading: ${outcome.error}`
   if (outcome.parsed) {
     const counts = countProvenance(req.fields, outcome.parsed, document, loadSettings(o.pack).quoteVerification)
-    o.activity?.emit({
-      kind: 'stage',
-      stageId: verifyStage,
-      name: 'verify',
-      status: 'completed',
-      detail: { ok: true, read: counts.read, quoted: counts.quoted, unverified: counts.unverified },
-    })
+    verify.complete({ ok: true, read: counts.read, quoted: counts.quoted, unverified: counts.unverified })
   } else {
-    o.activity?.emit({ kind: 'stage', stageId: verifyStage, name: 'verify', status: 'completed', detail: { ok: false } })
+    verify.complete({ ok: false })
   }
 
   const derivedText =

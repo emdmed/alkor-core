@@ -30,7 +30,8 @@ import { runAgent } from './modes/agentic.ts'
 import { createSession, type Session, type TurnResult } from './modes/session.ts'
 import { runPipeline, buildPipeline } from './modes/pipeline.ts'
 import { defaultProvider } from './core/client.ts'
-import { createActivity, withActivity, withActivityScope, type Activity, type ActivityEvent } from './core/activity.ts'
+import { createActivity, withActivity, withActivityScope, LLM_CALL_STAGE, type Activity, type ActivityEvent } from './core/activity.ts'
+import { EXTRACT_STAGES } from './modes/extract.ts'
 import type { Pack } from './core/pack.ts'
 import type { ProfileModule } from './core/profile.ts'
 import type { ProfileTopology } from './core/topology.ts'
@@ -263,14 +264,24 @@ export const createServer = async (configPath?: string, options: ServerOptions =
   }
 
   const topologyCache = new Map<string, ProfileTopology>()
+  /**
+   * What a profile of this mode does, when the profile itself does not say.
+   *
+   * The extract shape is read from the mode that emits it rather than restated — a profile
+   * with no topology of its own still runs `extract()`, so this describes the same triple by
+   * pointing at it.
+   */
   const modeTopology = (mode: string): ProfileTopology => {
-    if (mode === 'extract') {
-      return { stages: [{ name: 'prompt-assembly' }, { name: 'llm-call' }, { name: 'parse' }] }
-    }
+    if (mode === 'extract') return { stages: EXTRACT_STAGES.map((stage) => ({ ...stage })) }
     if (mode === 'agentic') {
-      return { stages: [{ name: 'llm-call', repeatable: true }, { name: 'tool-call', kind: 'decision', repeatable: true }] }
+      return {
+        stages: [
+          { name: LLM_CALL_STAGE, operation: 'model', repeatable: true },
+          { name: 'tool-call', kind: 'decision', operation: 'decision', repeatable: true },
+        ],
+      }
     }
-    if (mode === 'router') return { stages: [{ name: 'route', kind: 'decision' }] }
+    if (mode === 'router') return { stages: [{ name: 'route', kind: 'decision', operation: 'decision' }] }
     return { stages: [] }
   }
   const topologyForProfile = async (name: string, mode: string): Promise<ProfileTopology> => {
@@ -287,10 +298,11 @@ export const createServer = async (configPath?: string, options: ServerOptions =
       if (!profile.topology && profile.mode === 'agentic' && profile.tools?.length) {
         topology = {
           stages: [
-            { name: 'llm-call', repeatable: true },
+            { name: LLM_CALL_STAGE, operation: 'model', repeatable: true },
             {
               name: 'tool-call',
               kind: 'decision',
+              operation: 'decision',
               repeatable: true,
               routes: profile.tools.map((tool) => ({ name: tool.name })),
             },

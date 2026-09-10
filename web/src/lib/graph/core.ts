@@ -29,7 +29,17 @@ export const asStr = (d: Record<string, unknown>, k: string): string | undefined
 
 const okFalse = (d: unknown): boolean => obj(d)?.['ok'] === false
 
-export const operationFor = (name: string, decision = false): GraphOperation => {
+/**
+ * What performs a stage.
+ *
+ * `declared` is what the emitter or the published topology SAID, and it always wins. The
+ * name table below is the fallback for a stream or a profile that says nothing — an older
+ * backend, or a profile that has not been taught to declare yet. It is deliberately not the
+ * primary path: a list of names maintained over here goes stale every time a profile adds a
+ * pass, and it did, which is why `medication-pass` was the only clinical bracket it knew.
+ */
+export const operationFor = (name: string, decision = false, declared?: GraphOperation): GraphOperation => {
+  if (declared) return declared
   if (decision || name === 'route' || name === 'tool-call') return 'decision'
   if (name === 'llm-call' || name === 'medication-pass' || name === 'transcript-repair') return 'model'
   if (name === 'prompt-assembly' || name === 'parse' || name === 'verify' || name === 'rule-match' || name === 'gateway') return 'code'

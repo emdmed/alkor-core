@@ -10,11 +10,11 @@ import type { Pack } from '../../core/pack.ts'
 import type { ReviewResult } from '../../core/profile.ts'
 import type { Trace } from '../../core/trace.ts'
 import type { Activity } from '../../core/activity.ts'
-import { nextStageId } from '../../core/activity.ts'
 import { serverModel } from '../../core/client.ts'
 import { HARNESS_VERSION } from '../../core/version.ts'
 import { extract } from '../../modes/extract.ts'
 import { CONTRACTS, buildRequest } from './contracts.ts'
+import { clinicalStages } from './stages.ts'
 import {
   assess,
   loadSepsisCases,
@@ -78,10 +78,8 @@ export const reviewSepsis = async (o: SepsisReviewOptions): Promise<ReviewResult
     document: label,
   })
 
-  const screeningStage = o.activity ? nextStageId() : undefined
-  o.activity?.emit({ kind: 'stage', stageId: screeningStage, name: 'sepsis-screening', status: 'started' })
-  const screeningStart = performance.now()
-  const outcome = await extract({
+  const stages = clinicalStages('sepsis', o.activity)
+  const outcome = await stages.around('sepsis-screening', () => extract({
     systemPrompt: req.prompt,
     document: payload,
     parse: parseSepsisReply,
@@ -94,8 +92,7 @@ export const reviewSepsis = async (o: SepsisReviewOptions): Promise<ReviewResult
     label: 'sepsis',
     provider: o.provider,
     activity: o.activity,
-  })
-  o.activity?.emit({ kind: 'stage', stageId: screeningStage, name: 'sepsis-screening', status: 'completed', wallMs: performance.now() - screeningStart })
+  }))
 
   const header =
     `\n=== sepsis screen · ${label} ===\n` +
@@ -107,13 +104,7 @@ export const reviewSepsis = async (o: SepsisReviewOptions): Promise<ReviewResult
   if (outcome.parsed) {
     const reply = outcome.parsed
     const agrees = reply.positive === truth.positive
-    o.activity?.emit({
-      kind: 'stage',
-      stageId: nextStageId(),
-      name: 'verify',
-      status: 'completed',
-      detail: { ok: true, positive: reply.positive, expects: truth.positive, agrees },
-    })
+    stages.done('verify', { ok: true, positive: reply.positive, expects: truth.positive, agrees })
     text =
       `${header}\n` +
       `screen:      ${reply.positive ? 'POSITIVE' : 'negative'}\n` +
@@ -126,7 +117,7 @@ export const reviewSepsis = async (o: SepsisReviewOptions): Promise<ReviewResult
       (reply.screen_reason ? `reason:      ${reply.screen_reason}\n` : '') +
       (reply.notes ? `notes:       ${reply.notes}\n` : '')
   } else {
-    o.activity?.emit({ kind: 'stage', stageId: nextStageId(), name: 'verify', status: 'completed', detail: { ok: false } })
+    stages.done('verify', { ok: false })
     text = `${header}\nno screen: ${outcome.error}`
   }
 

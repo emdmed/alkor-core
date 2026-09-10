@@ -13,9 +13,17 @@ import {
   taskForShape,
   DEFAULT_CLINICAL_RULES,
 } from '../src/profiles/clinical/clinical-router.ts'
-import { type ClinicalShape, DEFAULT_TASK_FOR_SHAPE, type Task } from '../src/profiles/clinical/contracts.ts'
+import {
+  type ClinicalShape,
+  DEFAULT_TASK_FOR_SHAPE,
+  NOTE_DEFAULT_TASKS,
+  UNREVIEWABLE_TASKS,
+  type Task,
+} from '../src/profiles/clinical/contracts.ts'
+import type { ProfileTopologyRoute } from '../src/core/topology.ts'
+import { clinicalStages } from '../src/profiles/clinical/stages.ts'
 import { loadPack } from '../src/core/pack.ts'
-import { createActivity } from '../src/core/activity.ts'
+import { createActivity, withActivity } from '../src/core/activity.ts'
 
 process.env.MEDPROTOCOL_BIN = join(import.meta.dirname, 'fixtures', 'medprotocol.js')
 
@@ -718,4 +726,252 @@ test('clinical profile explicit --task bypasses router in checkpoint mode', asyn
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+// --- Topology derivation -------------------------------------------------------------------
+
+/**
+ * The published route fan and the routes the runtime can actually take are one statement.
+ *
+ * These are the tests that make the derivation worth doing. Before, the topology was a
+ * hand-written list beside the router, and nothing failed when a new shape was added and the
+ * list was not — the dashboard simply drew a profile that no longer existed. Each test below
+ * fails on exactly that.
+ */
+/** One note that raises every prose question the router knows, so one plan exercises both arms. */
+const SEPTIC_SHOCK_NOTE =
+  'Patient with suspected pneumonia. Hypotensive at 88/54 for 45 minutes, tachypneic with ' +
+  'respiratory rate 24, GCS 12 and confused. Peripheries warm, capillary refill brisk.'
+
+/** The decision fan the clinical profile publishes, loaded the way the other tests load it. */
+const clinicalRouteFan = async (): Promise<ProfileTopologyRoute[]> => {
+  const { PROFILE } = await import('../src/profiles/clinical/profile.ts')
+  const decision = PROFILE.topology?.stages.find((stage) => stage.kind === 'decision')
+  assert.ok(decision, 'the clinical profile publishes no decision stage')
+  return decision.routes ?? []
+}
+
+test('every task a shape can route to is published as a route', async () => {
+  const routes = new Set((await clinicalRouteFan()).map((route) => route.name))
+  for (const shape of Object.keys(DEFAULT_TASK_FOR_SHAPE) as ClinicalShape[]) {
+    assert.ok(routes.has(taskForShape(shape)), `shape '${shape}' routes to an unpublished task`)
+  }
+})
+
+test('a pack default that re-points the note shape is published as a route', async () => {
+  const routes = new Set((await clinicalRouteFan()).map((route) => route.name))
+  for (const task of NOTE_DEFAULT_TASKS) {
+    assert.equal(taskForShape('note', task), task)
+    assert.ok(routes.has(task), `note-shape override '${task}' is not published as a route`)
+  }
+})
+
+test('every published feeds edge is the plan the router actually returns', async () => {
+  for (const route of await clinicalRouteFan()) {
+    if (!route.feeds) continue
+    const entry = DEFAULT_CLINICAL_RULES.find((rule) => taskForShape(rule.shape) === route.name)
+    assert.ok(entry, `route '${route.name}' declares a feed but no shape reaches it`)
+    const plan = routeClinicalShape(SEPTIC_SHOCK_NOTE).tasks
+    const at = plan.indexOf(route.name as Task)
+    assert.ok(at >= 0, `router plan for '${route.name}' does not include it: ${plan.join(', ')}`)
+    assert.equal(plan[at + 1], route.feeds, `'${route.name}' feeds '${route.feeds}' but the plan says otherwise`)
+  }
+})
+
+test('a route the profile cannot run over one document is published as unavailable', async () => {
+  for (const route of await clinicalRouteFan()) {
+    assert.equal(
+      route.available === false,
+      UNREVIEWABLE_TASKS.includes(route.name as Task),
+      `route '${route.name}' disagrees with UNREVIEWABLE_TASKS about being runnable`,
+    )
+  }
+})
+
+test('the published route order is the order a multi-question plan runs in', async () => {
+  const fan = (await clinicalRouteFan()).map((route) => route.name)
+  // A septic-shock note raises both questions; its plan is a subsequence of the fan.
+  const plan = routeClinicalShape(SEPTIC_SHOCK_NOTE).tasks
+  assert.ok(plan.length > 1, `expected a multi-question plan, got: ${plan.join(', ')}`)
+  const positions = plan.map((task) => fan.indexOf(task))
+  assert.deepEqual(positions, [...positions].sort((a, b) => a - b), `plan ${plan.join(', ')} is out of fan order`)
+})
+
+/**
+ * The published shape and the run are the same statement, checked against a real run.
+ *
+ * This is the test the old hand-written topology could not have passed. It drew a
+ * `medication-pass` node that nothing emitted and omitted the `gateway` stage both extraction
+ * arms really run, and nothing failed, because the list and the emitters were unrelated text
+ * in different files. Now the emitter refuses an undeclared name and this asserts the
+ * converse — that everything declared for a task actually happens when that task runs.
+ */
+test('a real run emits exactly the stages its routes publish', async () => {
+  const { PROFILE } = await import('../src/profiles/clinical/profile.ts')
+
+  const shockExam = {
+    hypotension: { systolic: 88, diastolic: 54, duration_minutes: 45 },
+    heart_rate: 118,
+    skin_temperature: 'warm',
+    jugular_venous_pressure: 'normal_or_low',
+    capillary_refill: 'brisk',
+    pulse_volume: 'bounding',
+    lung_exam: 'clear',
+  }
+  const provider = {
+    async chat(o: { label: string }): Promise<string> {
+      if (o.label === 'shock-extraction') return JSON.stringify(shockExam)
+      if (o.label === 'sepsis-extraction') return JSON.stringify({ respiratory_rate: 24, systolic_bp: 88, gcs: 12 })
+      if (o.label === 'shock') return JSON.stringify({
+        skin_temperature: 'warm',
+        jugular_venous_pressure: 'normal_or_low',
+        shock_category: 'septic',
+        supporting_findings: [],
+        discordant_findings: [],
+        indeterminate_reason: null,
+        assessment_confidence: 0.9,
+        notes: null,
+      })
+      if (o.label === 'sepsis') return JSON.stringify({
+        respiratory_rate: 24,
+        systolic_bp: 88,
+        gcs: 12,
+        qsofa_score: 3,
+        positive: true,
+        criteria_met: ['respiratory_rate', 'systolic_bp', 'altered_mental_status'],
+        screen_reason: 'all three met',
+        assessment_confidence: 0.9,
+        notes: null,
+      })
+      throw new Error(`unexpected model call ${o.label}`)
+    },
+  } as any
+
+  const activity = createActivity()
+  const result = await PROFILE.review!({
+    pack,
+    trace: { write: () => {}, close: () => {} } as any,
+    input: { kind: 'text', text: SEPTIC_SHOCK_NOTE, label: 'septic-shock' },
+    options: {},
+    // Wrapped exactly as the server wraps it: `llm-call` is emitted by the wrapper, so an
+    // unwrapped provider would be a run with no model boundary to compare against.
+    provider: withActivity(provider, activity),
+    activity,
+  } as any)
+  assert.equal(result.ok, true)
+
+  const ran = (result.report as { routes: Task[] }).routes
+  assert.deepEqual(ran, ['shock-extraction', 'shock', 'sepsis-extraction', 'sepsis'])
+
+  const emitted = new Set(
+    activity
+      .recent()
+      .filter((event: any) => event.kind === 'stage')
+      .map((event: any) => event.name as string),
+  )
+  const fan = await clinicalRouteFan()
+
+  // Everything the routes that ran declare, actually ran. `optional` stages are exempt —
+  // that is what the flag means — and `route` is the decision itself, not a route's stage.
+  for (const task of ran) {
+    const route = fan.find((candidate) => candidate.name === task)
+    assert.ok(route, `task '${task}' ran but publishes no route`)
+    for (const stage of route.stages ?? []) {
+      if (stage.optional) continue
+      assert.ok(emitted.has(stage.name), `route '${task}' publishes '${stage.name}' but the run never emitted it`)
+    }
+  }
+
+  // And nothing ran that no route declares.
+  const publishable = new Set(['route', ...fan.flatMap((route) => (route.stages ?? []).map((stage) => stage.name))])
+  for (const name of emitted) {
+    assert.ok(publishable.has(name), `the run emitted '${name}', which no route publishes`)
+  }
+})
+
+test('a stage no task declares is refused at the emit site', () => {
+  const stages = clinicalStages('shock', createActivity())
+  assert.throws(() => stages.done('invented-stage'), /undeclared stage 'invented-stage'/)
+  // The declared ones are accepted, so the refusal is about the table and not about emitting.
+  assert.doesNotThrow(() => stages.done('verify', { ok: true }))
+})
+
+/**
+ * What performs a stage travels with the stage, rather than being guessed from its name.
+ *
+ * The web graph used to keep its own list of which stage names were model calls, and that
+ * list knew `medication-pass` but not `shock-classification`, `sepsis-screening` or
+ * `gateway` — so three quarters of this profile's model boundaries were drawn as generic
+ * orchestration. Both halves are asserted: the published shape says, and a real run says the
+ * same thing for every stage it emits.
+ */
+test('every published stage says what performs it', async () => {
+  for (const route of await clinicalRouteFan()) {
+    for (const stage of route.stages ?? []) {
+      assert.ok(stage.operation, `route '${route.name}' publishes '${stage.name}' without an operation`)
+    }
+  }
+})
+
+test('a real run stamps each stage with the operation its route published', async () => {
+  const { PROFILE } = await import('../src/profiles/clinical/profile.ts')
+  const provider = {
+    async chat(o: { label: string }): Promise<string> {
+      if (o.label === 'shock-extraction') return JSON.stringify({
+        hypotension: { systolic: 88, diastolic: 54, duration_minutes: 45 },
+        heart_rate: 118,
+        skin_temperature: 'warm',
+        jugular_venous_pressure: 'normal_or_low',
+        capillary_refill: 'brisk',
+        pulse_volume: 'bounding',
+        lung_exam: 'clear',
+      })
+      return JSON.stringify({
+        skin_temperature: 'warm',
+        jugular_venous_pressure: 'normal_or_low',
+        shock_category: 'septic',
+        supporting_findings: [],
+        discordant_findings: [],
+        indeterminate_reason: null,
+        assessment_confidence: 0.9,
+        notes: null,
+      })
+    },
+  } as any
+
+  const activity = createActivity()
+  await PROFILE.review!({
+    pack,
+    trace: { write: () => {}, close: () => {} } as any,
+    input: {
+      kind: 'text',
+      text: 'Patient hypotensive with cool mottled extremities and delayed capillary refill after major haemorrhage.',
+      label: 'shock',
+    },
+    options: {},
+    provider: withActivity(provider, activity),
+    activity,
+  } as any)
+
+  const published = new Map<string, string>()
+  for (const route of await clinicalRouteFan()) {
+    for (const stage of route.stages ?? []) if (stage.operation) published.set(stage.name, stage.operation)
+  }
+
+  const stages = activity.recent().filter((event: any) => event.kind === 'stage') as any[]
+  assert.ok(stages.length > 0, 'the run emitted no stages at all')
+  for (const stage of stages) {
+    assert.ok(stage.operation, `the run emitted '${stage.name}' without saying what performs it`)
+    const declared = published.get(stage.name)
+    if (declared) {
+      assert.equal(stage.operation, declared, `'${stage.name}' ran as ${stage.operation} but publishes ${declared}`)
+    }
+  }
+
+  // The boundaries this profile's own passes own, which the web's name table never knew.
+  const byName = new Map(stages.map((stage) => [stage.name as string, stage.operation as string]))
+  assert.equal(byName.get('shock-extraction'), 'model')
+  assert.equal(byName.get('shock-classification'), 'model')
+  assert.equal(byName.get('gateway'), 'code')
+  assert.equal(byName.get('verify'), 'code')
 })

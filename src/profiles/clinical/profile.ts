@@ -23,7 +23,9 @@ import { runShockEval } from './shock-eval.ts'
 import { runSepsisEval, sepsisDocumentNames } from './sepsis-eval.ts'
 import { gatePasses, runNoteFormatEval, runSummaryEval, runTranscriptEval, type TaskResult } from './set-eval.ts'
 import { loadSettings } from './settings.ts'
-import { GRADED_TASKS, TASKS, type Task } from './contracts.ts'
+import { GRADED_TASKS, ROUTED_TASKS, TASK_FEEDS, TASKS, UNREVIEWABLE_TASKS, type Task } from './contracts.ts'
+import type { ProfileTopology } from '../../core/topology.ts'
+import { ROUTE_STAGE, topologyStagesFor } from './stages.ts'
 import { clinicalRedactor } from './redact.ts'
 import { rescoreSummaryLine, rescoreTrace } from './rescore.ts'
 import { routeClinicalShape, type ClinicalRouteResult } from './clinical-router.ts'
@@ -39,48 +41,38 @@ import { reviewShockExtraction, type ShockExtractionReviewOptions } from './revi
 import { runShockExtractionEval, shockExtractionDocumentNames } from './shock-extraction-eval.ts'
 import { runShockPipelineEval, shockPipelineDocumentNames } from './shock-pipeline-eval.ts'
 
+/**
+ * The profile's execution shape, computed from the same tables the runtime routes by.
+ *
+ * A route per task the internal router can select, a `feeds` edge wherever one contract
+ * consumes another's payload, and `available: false` wherever `extract` will refuse the
+ * task by name. None of it is a second statement of anything: the fan comes from the
+ * shapes, the edges from `TASK_FEEDS`, the refusals from `UNREVIEWABLE_TASKS`, and each
+ * route's stages from the passes the review modules are required to emit through.
+ */
+const clinicalTopology = (): ProfileTopology => ({
+  stages: [{
+    name: ROUTE_STAGE,
+    kind: 'decision',
+    operation: 'decision',
+    routes: ROUTED_TASKS.map((task) => {
+      const stages = topologyStagesFor(task)
+      const feeds = TASK_FEEDS[task]
+      return {
+        name: task,
+        ...(stages ? { stages } : {}),
+        ...(feeds ? { feeds } : {}),
+        ...(UNREVIEWABLE_TASKS.includes(task) ? { available: false } : {}),
+      }
+    }),
+  }],
+})
+
 export const PROFILE: ProfileModule = {
   name: 'clinical',
   mode: 'extract',
   needsPack: true,
-  topology: {
-    stages: [{
-      name: 'route',
-      kind: 'decision',
-      routes: [
-        { name: 'vital-signs', stages: [{ name: 'prompt-assembly' }, { name: 'llm-call' }, { name: 'parse' }, { name: 'verify' }] },
-        { name: 'note-format', stages: [{ name: 'prompt-assembly' }, { name: 'llm-call' }, { name: 'parse' }, { name: 'verify' }] },
-        {
-          name: 'transcript',
-          stages: [
-            { name: 'prompt-assembly' },
-            { name: 'llm-call' },
-            { name: 'parse' },
-            { name: 'medication-pass', optional: true },
-            { name: 'verify' },
-            { name: 'transcript-repair', optional: true },
-          ],
-        },
-        {
-          name: 'shock-extraction',
-          stages: [{ name: 'shock-extraction' }, { name: 'llm-call' }, { name: 'parse' }],
-          // Prose takes the long path; an already-structured exam may enter `shock` directly.
-          feeds: 'shock',
-        },
-        { name: 'shock', stages: [{ name: 'shock-classification' }, { name: 'llm-call' }, { name: 'verify' }] },
-        {
-          name: 'sepsis-extraction',
-          stages: [{ name: 'sepsis-extraction' }, { name: 'llm-call' }, { name: 'parse' }],
-          // The shock arm's opposite number: prose takes the long path, while an already
-          // structured qSOFA payload may enter `sepsis` directly. A septic-shock note takes
-          // BOTH long paths, which is why these two feeds are drawn separately.
-          feeds: 'sepsis',
-        },
-        { name: 'sepsis', stages: [{ name: 'sepsis-screening' }, { name: 'llm-call' }, { name: 'verify' }] },
-        { name: 'summary', available: false },
-      ],
-    }],
-  },
+  topology: clinicalTopology(),
   /**
    * Which corpus `--case` selects from, decided by `--task` for the same reason `review`
    * below is: this pack holds two corpora that are not interchangeable, and a transcript is
@@ -333,6 +325,9 @@ const executeClinicalTask = async (ctx: ReviewContext, shared: { pack: Pack; bas
   }
   if (task === 'note-format') return reviewNoteFormat({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider, activity: ctx.activity })
 
+  // Reached only by a task this profile grades but cannot run over one document — the same
+  // fact the topology publishes as `available: false`, so a route is never drawn as runnable
+  // and then refused on arrival.
   throw new ProfileError(
     `--task '${task}' is a graded task but not a reviewable one: ` +
       'its input is a whole record assembled from many notes, not one document — ' +
@@ -425,7 +420,8 @@ const reviewSingleStep = async (ctx: ReviewContext): Promise<ReviewResult> => {
     const route = routeClinicalShape(text, loadSettings(ctx.pack!).defaultTask)
     ctx.activity?.emit({
       kind: 'stage',
-      name: 'route',
+      name: ROUTE_STAGE,
+      operation: 'decision',
       status: 'completed',
       detail: { shape: route.shape, confidence: route.confidence, task: route.task, tasks: route.tasks },
     })
@@ -485,7 +481,8 @@ const reviewWithCheckpoint = async (ctx: ReviewContext, contextDir: string): Pro
       route = routeClinicalShape(text, loadSettings(ctx.pack!).defaultTask)
       ctx.activity?.emit({
         kind: 'stage',
-        name: 'route',
+        name: ROUTE_STAGE,
+        operation: 'decision',
         status: 'completed',
         detail: { shape: route.shape, confidence: route.confidence, task: route.task, tasks: route.tasks },
       })

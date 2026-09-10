@@ -11,12 +11,12 @@ import type { Pack } from '../../core/pack.ts'
 import type { ReviewResult } from '../../core/profile.ts'
 import type { Trace } from '../../core/trace.ts'
 import type { Activity } from '../../core/activity.ts'
-import { nextStageId } from '../../core/activity.ts'
 import { serverModel } from '../../core/client.ts'
 import type { Provider } from '../../core/client.ts'
 import { HARNESS_VERSION } from '../../core/version.ts'
 import { extract } from '../../modes/extract.ts'
 import { CONTRACTS, buildRequest } from './contracts.ts'
+import { clinicalStages } from './stages.ts'
 import { parseJson } from './extraction.ts'
 import { confirmShock, loadShockRule, type ShockExam } from './shock.ts'
 import { checkMedprotocolVersion, loadMedprotocolRule } from './medprotocol.ts'
@@ -50,10 +50,8 @@ export const reviewShockExtraction = async (o: ShockExtractionReviewOptions): Pr
     document: label,
   })
 
-  const extractionStage = o.activity ? nextStageId() : undefined
-  o.activity?.emit({ kind: 'stage', stageId: extractionStage, name: 'shock-extraction', status: 'started' })
-  const extractionStart = performance.now()
-  const outcome = await extract({
+  const stages = clinicalStages('shock-extraction', o.activity)
+  const outcome = await stages.around('shock-extraction', () => extract({
     systemPrompt: req.prompt,
     document,
     parse: (raw) => parseShockExam(raw),
@@ -66,8 +64,7 @@ export const reviewShockExtraction = async (o: ShockExtractionReviewOptions): Pr
     label: 'shock-extraction',
     provider: o.provider,
     activity: o.activity,
-  })
-  o.activity?.emit({ kind: 'stage', stageId: extractionStage, name: 'shock-extraction', status: 'completed', wallMs: performance.now() - extractionStart })
+  }))
 
   const header =
     `\n=== shock extraction · ${label} ===\n` +
@@ -83,16 +80,11 @@ export const reviewShockExtraction = async (o: ShockExtractionReviewOptions): Pr
     checkMedprotocolVersion(mp, o.pack.name)
     const rule = loadShockRule(o.pack)
     const confirmation = confirmShock(exam, mp, rule)
-    o.activity?.emit({
-      kind: 'stage',
-      name: 'gateway',
-      status: 'completed',
-      detail: {
-        via: 'confirmShock',
-        confirmed: confirmation.confirmed,
-        systolic: confirmation.systolic,
-        shockIndex: confirmation.shockIndex,
-      },
+    stages.done('gateway', {
+      via: 'confirmShock',
+      confirmed: confirmation.confirmed,
+      systolic: confirmation.systolic,
+      shockIndex: confirmation.shockIndex,
     })
     text =
       `${header}\n` +

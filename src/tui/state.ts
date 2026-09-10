@@ -4,7 +4,7 @@
  * All intelligence is here. The OpenTUI layer only renders what this produces.
  * No clinical concept is named — the view is generic over event kinds.
  */
-import { ACTIVITY_SPEC, type ActivityEvent, type TemplateRefEntry } from '../core/activity-types.ts'
+import { ACTIVITY_SPEC, type ActivityEvent, type StageOperation, type TemplateRefEntry } from '../core/activity-types.ts'
 import type { ProfileTopology } from '../core/topology.ts'
 
 export interface ProfileEntry {
@@ -106,6 +106,8 @@ export interface StageEntry {
   status: 'started' | 'completed'
   detail?: unknown
   wallMs?: number
+  /** What performed it, as the emitter said. Absent on a stream that does not say. */
+  operation?: StageOperation
   children: StageEntry[]
 }
 
@@ -527,12 +529,15 @@ export const applyEvent = (state: ProjectState, event: ActivityEvent): ProjectSt
         status: event.status,
         detail: event.detail,
         wallMs: event.wallMs,
+        operation: event.operation,
         children: [],
       }
       // If a stage with this id already exists, merge (update status / wallMs / detail).
       const existing = stages.get(stageId)
       if (existing) {
-        stages.set(stageId, { ...existing, status: event.status, wallMs: event.wallMs ?? existing.wallMs, detail: event.detail ?? existing.detail })
+        // `operation` is a property of the stage, not of the event: a `completed` that omits
+        // it must not erase what the `started` said.
+        stages.set(stageId, { ...existing, status: event.status, wallMs: event.wallMs ?? existing.wallMs, detail: event.detail ?? existing.detail, operation: event.operation ?? existing.operation })
       } else {
         stages.set(stageId, entry)
       }

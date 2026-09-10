@@ -21,7 +21,27 @@ import { chat, ChatError, defaultProvider } from '../core/client.ts'
 import type { Provider } from '../core/client.ts'
 import type { Timings } from '../core/bench.ts'
 import type { Activity } from '../core/activity.ts'
-import { nextStageId } from '../core/activity.ts'
+import { LLM_CALL_STAGE, nextStageId } from '../core/activity.ts'
+import type { StageOperation } from '../core/activity-types.ts'
+
+/** The stage bracketing prompt handoff: what the caller assembled, about to cross the wire. */
+export const PROMPT_ASSEMBLY_STAGE = 'prompt-assembly'
+/** The stage bracketing the reply parse: whether the bytes that came back were readable. */
+export const PARSE_STAGE = 'parse'
+
+/**
+ * The stages ONE `extract()` call emits, in order.
+ *
+ * Published so a profile can describe its execution shape without restating what this mode
+ * already does. Every extract-shaped contract runs this triple; what differs between tasks
+ * is only what a profile wraps around it, so a profile that listed these itself would be
+ * copying this module's behaviour into a place that cannot notice when it changes.
+ */
+export const EXTRACT_STAGES: readonly { name: string; operation: StageOperation }[] = [
+  { name: PROMPT_ASSEMBLY_STAGE, operation: 'code' },
+  { name: LLM_CALL_STAGE, operation: 'model' },
+  { name: PARSE_STAGE, operation: 'code' },
+]
 
 export interface ExtractOutcome<T> {
   parsed?: T
@@ -112,8 +132,8 @@ export const extract = async <T,>(o: ExtractOptions<T>): Promise<ExtractOutcome<
     documentChars: o.document.length,
   }
   if (o.maxTokens != null) promptDetail.maxTokens = o.maxTokens
-  o.activity?.emit({ kind: 'stage', stageId: promptStage, name: 'prompt-assembly', status: 'started' })
-  o.activity?.emit({ kind: 'stage', stageId: promptStage, name: 'prompt-assembly', status: 'completed', detail: promptDetail })
+  o.activity?.emit({ kind: 'stage', stageId: promptStage, name: PROMPT_ASSEMBLY_STAGE, operation: 'code', status: 'started' })
+  o.activity?.emit({ kind: 'stage', stageId: promptStage, name: PROMPT_ASSEMBLY_STAGE, operation: 'code', status: 'completed', detail: promptDetail })
 
   /** `retryable` is true only when no completion came back at all. See the header. */
   const attempt = async (): Promise<{ outcome: ExtractOutcome<T>; retryable: boolean }> => {
@@ -152,12 +172,13 @@ export const extract = async <T,>(o: ExtractOptions<T>): Promise<ExtractOutcome<
     }
     const parseStageId = o.activity ? nextStageId() : undefined
     try {
-      o.activity?.emit({ kind: 'stage', stageId: parseStageId, name: 'parse', status: 'started' })
+      o.activity?.emit({ kind: 'stage', stageId: parseStageId, name: PARSE_STAGE, operation: 'code', status: 'started' })
       const parsed = o.parse(raw)
       o.activity?.emit({
         kind: 'stage',
         stageId: parseStageId,
-        name: 'parse',
+        name: PARSE_STAGE,
+        operation: 'code',
         status: 'completed',
         wallMs: performance.now() - startedAt,
         detail: { ok: true },
@@ -174,7 +195,8 @@ export const extract = async <T,>(o: ExtractOptions<T>): Promise<ExtractOutcome<
       o.activity?.emit({
         kind: 'stage',
         stageId: parseStageId,
-        name: 'parse',
+        name: PARSE_STAGE,
+        operation: 'code',
         status: 'completed',
         detail: { ok: false, reason: `${(e as Error).message}${truncated}`.slice(0, 120) },
       })

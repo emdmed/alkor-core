@@ -116,6 +116,16 @@ export const currentActivityScope = (): ActivityScope | undefined => activitySto
  */
 export const nextStageId = (): string => randomUUID()
 
+/**
+ * The stage name every model call is emitted under.
+ *
+ * Named once because it is read from two sides: the wrapper below emits it, and profiles
+ * publish it in their topology so a dashboard can draw the model boundary before a run
+ * starts. Two string literals that must agree is how a model boundary quietly stops being
+ * drawn — the boundary itself now travels as `operation`, not as a name a view recognises.
+ */
+export const LLM_CALL_STAGE = 'llm-call'
+
 // --- Event shapes ---------------------------------------------------------------------------
 // Defined in activity-types.ts (dependency-free); re-exported above. The bus below only
 // stamps `activitySpec`, `seq`, `ts` and merges correlation ids from the scope.
@@ -202,7 +212,8 @@ export const withActivity = (provider: Provider, activity: Activity): Provider =
       activity.emit({
         kind: 'stage',
         stageId: requestId,
-        name: 'llm-call',
+        name: LLM_CALL_STAGE,
+        operation: 'model',
         status: 'started',
         detail: { label: o.label, constrained: Boolean(o.schema) },
       })
@@ -212,7 +223,8 @@ export const withActivity = (provider: Provider, activity: Activity): Provider =
         activity.emit({
           kind: 'stage',
           stageId: requestId,
-          name: 'llm-call',
+          name: LLM_CALL_STAGE,
+        operation: 'model',
           status: 'completed',
           wallMs: performance.now() - startedAt,
           detail: { ok: true },
@@ -228,7 +240,8 @@ export const withActivity = (provider: Provider, activity: Activity): Provider =
         activity.emit({
           kind: 'stage',
           stageId: requestId,
-          name: 'llm-call',
+          name: LLM_CALL_STAGE,
+        operation: 'model',
           status: 'completed',
           wallMs: performance.now() - startedAt,
           detail: { ok: false },
@@ -256,7 +269,8 @@ export const withActivity = (provider: Provider, activity: Activity): Provider =
       activity.emit({
         kind: 'stage',
         stageId: requestId,
-        name: 'llm-call',
+        name: LLM_CALL_STAGE,
+        operation: 'model',
         status: 'started',
         detail: { label: o.label, constrained: false },
       })
@@ -266,7 +280,8 @@ export const withActivity = (provider: Provider, activity: Activity): Provider =
         activity.emit({
           kind: 'stage',
           stageId: requestId,
-          name: 'llm-call',
+          name: LLM_CALL_STAGE,
+        operation: 'model',
           status: 'completed',
           wallMs: performance.now() - startedAt,
           detail: { ok: true },
@@ -285,7 +300,8 @@ export const withActivity = (provider: Provider, activity: Activity): Provider =
         activity.emit({
           kind: 'stage',
           stageId: requestId,
-          name: 'llm-call',
+          name: LLM_CALL_STAGE,
+        operation: 'model',
           status: 'completed',
           wallMs: performance.now() - startedAt,
           detail: { ok: false },
@@ -313,7 +329,8 @@ export const withActivity = (provider: Provider, activity: Activity): Provider =
       activity.emit({
         kind: 'stage',
         stageId: requestId,
-        name: 'llm-call',
+        name: LLM_CALL_STAGE,
+        operation: 'model',
         status: 'started',
         detail: { label: o.label, constrained: false },
       })
@@ -323,7 +340,8 @@ export const withActivity = (provider: Provider, activity: Activity): Provider =
         activity.emit({
           kind: 'stage',
           stageId: requestId,
-          name: 'llm-call',
+          name: LLM_CALL_STAGE,
+        operation: 'model',
           status: 'completed',
           wallMs: performance.now() - startedAt,
           detail: { ok: true },
@@ -343,7 +361,8 @@ export const withActivity = (provider: Provider, activity: Activity): Provider =
         activity.emit({
           kind: 'stage',
           stageId: requestId,
-          name: 'llm-call',
+          name: LLM_CALL_STAGE,
+        operation: 'model',
           status: 'completed',
           wallMs: performance.now() - startedAt,
           detail: { ok: false },

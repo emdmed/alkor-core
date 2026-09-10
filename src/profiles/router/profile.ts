@@ -18,7 +18,7 @@
 
 import type { EvalContext, EvalVerdict, ProfileModule, ReviewContext, ReviewResult } from '../../core/profile.ts'
 import { route, type RouteResult, type RouterOptions, type RouteRule } from '../../modes/router.ts'
-import { nextStageId } from '../../core/activity.ts'
+import { LLM_CALL_STAGE, nextStageId } from '../../core/activity.ts'
 
 /** The rules this router uses. Exported so the eval and the interactive path share them. */
 export const ROUTER_RULES: RouteRule[] = [
@@ -80,11 +80,12 @@ export const PROFILE: ProfileModule = {
   needsPack: false,
   topology: {
     stages: [
-      { name: 'rule-match' },
-      { name: 'llm-call', optional: true },
+      { name: 'rule-match', operation: 'code' },
+      { name: LLM_CALL_STAGE, operation: 'model', optional: true },
       {
         name: 'route',
         kind: 'decision',
+        operation: 'decision',
         routes: ROUTE_PROFILES.map((profile) => ({ name: profile, targetProfile: profile })),
       },
     ],
@@ -116,6 +117,7 @@ export const PROFILE: ProfileModule = {
       kind: 'stage',
       stageId: nextStageId(),
       name: 'route',
+      operation: 'decision',
       status: 'completed',
       detail: { profile: result.profile, confidence: Number((result.confidence * 100).toFixed(0)), reason: result.reason },
     })

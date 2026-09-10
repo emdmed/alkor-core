@@ -108,7 +108,7 @@ const stageItem = (s: StageEntry, ctx: BuildCtx): StageItemResult => {
         profile: isRouter ? ifRouterProfile(d) : undefined,
         reason: isRouter ? asStr(d, 'reason') : undefined,
         llm,
-        operation: llm ? 'model' : operationFor(s.name, isRouter),
+        operation: llm ? 'model' : operationFor(s.name, isRouter, s.operation),
         expanded: isRouter,
         childCount: children.length,
         runId: ctx.run.runId,

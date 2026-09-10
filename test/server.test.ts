@@ -67,6 +67,10 @@ test('health endpoint returns profiles and session count', async () => {
     .flatMap((stage: any) => stage.routes ?? [])
     .map((route: any) => route.targetProfile)
   assert.deepEqual(workflowTargets, ['clinical-verified', 'sepsis-verified'])
+  // The gateway's fan and the configured workflow catalogue are the same set, asserted as a
+  // relation rather than as two copies of one list: a workflow added to `[pipeline]` that the
+  // router has no rule for is a card on the dashboard nothing can ever route to.
+  assert.deepEqual([...workflowTargets].sort(), [...(data as any).topology.pipeline.workflows].sort())
   const clinical = topologyProfiles.find((profile) => profile.name === 'clinical')
   assert.ok(clinical.topology.stages[0].routes.some((route: any) => route.name === 'shock-extraction'))
   assert.equal(clinical.topology.stages[0].routes.find((route: any) => route.name === 'shock-extraction').feeds, 'shock')

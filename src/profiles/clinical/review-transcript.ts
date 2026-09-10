@@ -28,10 +28,10 @@ import { serverModel } from '../../core/client.ts'
 import { HARNESS_VERSION } from '../../core/version.ts'
 import { extract } from '../../modes/extract.ts'
 import type { Activity } from '../../core/activity.ts'
-import { nextStageId } from '../../core/activity.ts'
 import { loadSettings } from './settings.ts'
 import { loadTranscriptCases } from './cases.ts'
 import { DOCUMENT_KIND, transcriptRequest } from './contracts.ts'
+import { clinicalStages } from './stages.ts'
 import { parseNoteFormat, type FormatItem, type MedicationItem, type NoteFormat } from './extraction.ts'
 import type { Provider } from '../../core/client.ts'
 import { verifyDerivation, verifyQuote, type DerivationRule, type DerivationVerdict, type QuoteRule } from '../../core/verify.ts'
@@ -229,24 +229,26 @@ export const reviewTranscript = async (o: TranscriptReviewOptions): Promise<Revi
   // be discarded. Runs on dictations only, by [clinical.medicationPass].shapes — the decision
   // is the pack's, so this path and the eval make it the same way or the eval measures a
   // reading the product does not ship. It cannot throw and cannot lose a section.
+  const stages = clinicalStages('transcript', o.activity)
   const medication =
     outcome.parsed && o.medicationPass !== false
-      ? await medicationReading({
-          pack: o.pack,
-          document,
-          reading: outcome.parsed,
-          constrain: o.constrain,
-          baseUrl: o.baseUrl,
-          trace: o.trace,
-          provider: o.provider,
-        })
+      ? await stages.around('medication-pass', () =>
+          medicationReading({
+            pack: o.pack,
+            document,
+            reading: outcome.parsed!,
+            constrain: o.constrain,
+            baseUrl: o.baseUrl,
+            trace: o.trace,
+            provider: o.provider,
+          }),
+        )
       : null
   const reading = outcome.parsed && medication ? applyMedication(outcome.parsed, medication) : outcome.parsed
 
   // The provenance pass over the reading — the verdict totals below are the stage's output,
   // so the node carries them the way the report does.
-  const verifyStage = o.activity ? nextStageId() : undefined
-  o.activity?.emit({ kind: 'stage', stageId: verifyStage, name: 'verify', status: 'started' })
+  const verify = stages.begin('verify')
 
   const first = reading
     ? verifyReading(reading, document, settings.quoteVerification, settings.textDerivation)
@@ -257,38 +259,34 @@ export const reviewTranscript = async (o: TranscriptReviewOptions): Promise<Revi
   // repair.ts for why a second turn is admissible here at all.
   const repair =
     o.repair && first.length
-      ? await repairReading({
-          pack: o.pack,
-          document,
-          items: first,
-          quoteRule: settings.quoteVerification,
-          derivationRule: settings.textDerivation,
-          constrain: o.constrain,
-          baseUrl: o.baseUrl,
-          trace: o.trace,
-          provider: o.provider,
-        })
+      ? await stages.around('transcript-repair', () =>
+          repairReading({
+            pack: o.pack,
+            document,
+            items: first,
+            quoteRule: settings.quoteVerification,
+            derivationRule: settings.textDerivation,
+            constrain: o.constrain,
+            baseUrl: o.baseUrl,
+            trace: o.trace,
+            provider: o.provider,
+          }),
+        )
       : null
   const items = repair?.items ?? first
 
   if (reading) {
     const t = tallyReviewed(items)
-    o.activity?.emit({
-      kind: 'stage',
-      stageId: verifyStage,
-      name: 'verify',
-      status: 'completed',
-      detail: {
-        ok: true,
-        items: t.items,
-        quotesVerified: t.quotesVerified,
-        quotesAbsent: t.quotesAbsent,
-        derivationsOk: t.derivationsOk,
-        repaired: repair ? repair.tally.accepted : 0,
-      },
+    verify.complete({
+      ok: true,
+      items: t.items,
+      quotesVerified: t.quotesVerified,
+      quotesAbsent: t.quotesAbsent,
+      derivationsOk: t.derivationsOk,
+      repaired: repair ? repair.tally.accepted : 0,
     })
   } else {
-    o.activity?.emit({ kind: 'stage', stageId: verifyStage, name: 'verify', status: 'completed', detail: { ok: false } })
+    verify.complete({ ok: false })
   }
 
   const report: TranscriptReport = {

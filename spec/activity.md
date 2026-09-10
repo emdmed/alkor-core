@@ -36,6 +36,7 @@ interface StageEvent {
   status: 'started' | 'completed'
   detail?: StageDetail
   wallMs?: number
+  operation?: 'model' | 'code' | 'orchestrator' | 'decision'
   runId?: string
   stageId?: string
   parentId?: string
@@ -43,6 +44,14 @@ interface StageEvent {
 ```
 
 `detail` is a closed scalar union: `string | number | boolean | null | { from, to, via, confirmed? } | Record<string, string | number | boolean | null>`. Prose is not representable.
+
+### `operation`: what performs the stage
+
+The one fact a view cannot infer from a name. `verify` and `gateway` are arithmetic, `medication-pass` is a second model call, and nothing about either word says so — a dashboard that wants to draw model boundaries otherwise has to keep its own list of every stage name any profile has ever emitted, which goes stale the moment a profile adds a pass.
+
+Optional, and additive rather than a spec bump: a stream that omits it is valid, and a view falls back to whatever it inferred before. Emitters that know should say. It is a property of the STAGE, not of the event, so a `completed` that omits it must not erase what the `started` declared.
+
+The same field appears on `ProfileTopologyStage`, so a dashboard knows the answer for a profile's whole shape before a run starts.
 
 ### Node identity and pairing
 
@@ -54,16 +63,17 @@ A stage is one NODE in a run's decision tree, not one event: a `started`/`comple
 
 Core and the modes paint the generic stages a decision tree is built from; a profile paints only what is its own.
 
-| Stage | Emitted by | `detail` |
-|---|---|---|
-| `pipeline` | `pipeline.ts` | `{ steps }` · `{ stoppedEarly }`; the root of a pipeline run, with each step a child |
-| `<step name>` | `pipeline.ts` | `{ step, profile, input: { ref, field, fromProfile } }` · `{ step, ok }`; one per step, under the pipeline root, and every sub-emission from the step's own mode nests beneath it |
-| `prompt-assembly` | `extract.ts` | `{ constrained, messageCount, promptChars, documentChars, maxTokens? }` — the assembled request crossed into the transport |
-| `llm-call` | `withActivity` | `{ label, constrained }` · `{ ok }`; shares the request's id, so a dashboard joins the node to the `llm.request`/`llm.response` record |
-| `parse` | `extract.ts` | `{ ok }` · `{ ok: false, reason? }` — the completion's parse attempt |
-| `verify` | clinical reviews, verifier profile | the provenance verdicts: `{ ok, read, quoted, unverified }`, `{ ok, items, quotesVerified, quotesAbsent, derivationsOk, repaired }`, or the verifier's `{ ok, verified, issues, confidence }` |
-| `route` | router profile | `{ profile, confidence, reason }` — the pipeline's first branch |
-| `shock-classification`, `shock-extraction`, `gateway` | clinical shock reviews | profile-named stages |
+| Stage | Emitted by | `operation` | `detail` |
+|---|---|---|---|
+| `pipeline` | `pipeline.ts` | `orchestrator` | `{ steps }` · `{ stoppedEarly }`; the root of a pipeline run, with each step a child |
+| `<step name>` | `pipeline.ts` | `orchestrator` | `{ step, profile, input: { ref, field, fromProfile } }` · `{ step, ok }`; one per step, under the pipeline root, and every sub-emission from the step's own mode nests beneath it |
+| `prompt-assembly` | `extract.ts` | `code` | `{ constrained, messageCount, promptChars, documentChars, maxTokens? }` — the assembled request crossed into the transport |
+| `llm-call` | `withActivity` | `model` | `{ label, constrained }` · `{ ok }`; shares the request's id, so a dashboard joins the node to the `llm.request`/`llm.response` record |
+| `parse` | `extract.ts` | `code` | `{ ok }` · `{ ok: false, reason? }` — the completion's parse attempt |
+| `verify` | clinical reviews, verifier profile | `code` | the provenance verdicts: `{ ok, read, quoted, unverified }`, `{ ok, items, quotesVerified, quotesAbsent, derivationsOk, repaired }`, or the verifier's `{ ok, verified, issues, confidence }` |
+| `route` | router profile | `decision` | `{ profile, confidence, reason }` — the pipeline's first branch |
+| `shock-classification`, `shock-extraction`, `medication-pass`, `transcript-repair` | clinical reviews | `model` | brackets around a model pass; the bracket carries the operation, not the anonymous `llm-call` under it |
+| `gateway` | clinical extraction reviews | `code` | `{ via, ... }` — the deterministic rule check over an extracted payload |
 
 A single `completed` emission (no `started` pair) is valid for a leaf decision — `verify` on the verifier, `route`, `gateway` — and renders as a finished node.
 

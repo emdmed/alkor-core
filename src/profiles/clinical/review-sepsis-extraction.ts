@@ -18,12 +18,12 @@ import type { Pack } from '../../core/pack.ts'
 import type { ReviewResult } from '../../core/profile.ts'
 import type { Trace } from '../../core/trace.ts'
 import type { Activity } from '../../core/activity.ts'
-import { nextStageId } from '../../core/activity.ts'
 import { serverModel } from '../../core/client.ts'
 import type { Provider } from '../../core/client.ts'
 import { HARNESS_VERSION } from '../../core/version.ts'
 import { extract } from '../../modes/extract.ts'
 import { CONTRACTS, buildRequest } from './contracts.ts'
+import { clinicalStages } from './stages.ts'
 import { assess, loadSepsisRule, parseSepsis, resolveSepsis, type SepsisExam } from './sepsis.ts'
 import { checkMedprotocolVersion, loadMedprotocolRule } from './medprotocol.ts'
 
@@ -56,10 +56,8 @@ export const reviewSepsisExtraction = async (o: SepsisExtractionReviewOptions): 
     document: label,
   })
 
-  const extractionStage = o.activity ? nextStageId() : undefined
-  o.activity?.emit({ kind: 'stage', stageId: extractionStage, name: 'sepsis-extraction', status: 'started' })
-  const extractionStart = performance.now()
-  const outcome = await extract({
+  const stages = clinicalStages('sepsis-extraction', o.activity)
+  const outcome = await stages.around('sepsis-extraction', () => extract({
     systemPrompt: req.prompt,
     document,
     parse: (raw) => parseSepsis(raw, 'sepsis-extraction'),
@@ -72,8 +70,7 @@ export const reviewSepsisExtraction = async (o: SepsisExtractionReviewOptions): 
     label: 'sepsis-extraction',
     provider: o.provider,
     activity: o.activity,
-  })
-  o.activity?.emit({ kind: 'stage', stageId: extractionStage, name: 'sepsis-extraction', status: 'completed', wallMs: performance.now() - extractionStart })
+  }))
 
   const header =
     `\n=== sepsis extraction · ${label} ===\n` +
@@ -94,12 +91,7 @@ export const reviewSepsisExtraction = async (o: SepsisExtractionReviewOptions): 
     checkMedprotocolVersion(mp, o.pack.name)
     const rule = loadSepsisRule(o.pack)
     const screen = assess(resolveSepsis(exam, rule, mp))
-    o.activity?.emit({
-      kind: 'stage',
-      name: 'gateway',
-      status: 'completed',
-      detail: { via: 'qsofa', score: screen.score, positive: screen.positive },
-    })
+    stages.done('gateway', { via: 'qsofa', score: screen.score, positive: screen.positive })
     text =
       `${header}\n` +
       `  respiratory_rate: ${exam.respiratory_rate} breaths/min\n` +

@@ -19,7 +19,7 @@
  * confident of the two answers half the question and reports it as the whole one.
  */
 
-import { type ClinicalShape, DEFAULT_TASK_FOR_SHAPE, TASKS, type Task } from './contracts.ts'
+import { type ClinicalShape, DEFAULT_TASK_FOR_SHAPE, NOTE_DEFAULT_TASKS, TASK_FEEDS, TASK_ORDER, TASKS, type Task } from './contracts.ts'
 
 /**
  * What a rule is answering, which is what decides whether it may share a plan.
@@ -362,7 +362,7 @@ export const DEFAULT_CLINICAL_RULES: ClinicalRouteRule[] = [
 
 /** Which shape maps to which task, with the `note` shape reading the pack's default. */
 export const taskForShape = (shape: ClinicalShape, defaultTask?: string): Task => {
-  if (shape === 'note' && defaultTask === 'note-format') return 'note-format'
+  if (shape === 'note' && NOTE_DEFAULT_TASKS.includes(defaultTask as Task)) return defaultTask as Task
   return DEFAULT_TASK_FOR_SHAPE[shape]
 }
 
@@ -411,17 +411,23 @@ export const routeClinicalShape = (input: string, defaultTask?: string): Clinica
       shape: rule.shape,
       rule: rule.name,
     }))
-    const order: Task[] = ['shock-extraction', 'shock', 'sepsis-extraction', 'sepsis', 'vital-signs', 'note-format', 'transcript', 'summary']
     const matchedTasks = [...new Set(matches.map((match) => match.task))]
     // A prose route is a two-contract workflow on both arms: extract the closed payload first,
     // then hand that measured payload to the contract that reasons over it. Structured
-    // payloads — an exam or a qSOFA screen — enter their contract directly.
+    // payloads — an exam or a qSOFA screen — enter their contract directly. Which task feeds
+    // which is `TASK_FEEDS`, so the plan and the drawn topology cannot disagree.
     const expand = (task: Task): Task[] => {
-      if (task === 'shock-extraction') return [task, 'shock']
-      if (task === 'sepsis-extraction') return [task, 'sepsis']
-      return [task]
+      const chain: Task[] = []
+      let current: Task | undefined = task
+      while (current && !chain.includes(current)) {
+        chain.push(current)
+        current = TASK_FEEDS[current]
+      }
+      return chain
     }
-    const tasks = [...new Set(matchedTasks.flatMap(expand))].sort((a, b) => order.indexOf(a) - order.indexOf(b))
+    const tasks = [...new Set(matchedTasks.flatMap(expand))].sort(
+      (a, b) => TASK_ORDER.indexOf(a) - TASK_ORDER.indexOf(b),
+    )
     // The reported shape is the WINNER's, not the plan's: a plan has no single shape, and the
     // caller that reads this field wants to know what the router recognised most strongly.
     return {
