@@ -1,0 +1,378 @@
+import { safeParseFloatOrNull } from "../utils/safeParseFloat.ts";
+import type { Values, ExpectedValues } from "./interfaces.ts";
+
+export const analyze = ({ values, isChronic }: { values: Values; isChronic: boolean }) => {
+  const pH = safeParseFloatOrNull(values.pH);
+  const pCO2 = safeParseFloatOrNull(values.pCO2);
+  const HCO3 = safeParseFloatOrNull(values.HCO3);
+  const Na = safeParseFloatOrNull(values.Na);
+  const Cl = safeParseFloatOrNull(values.Cl);
+  const Alb = safeParseFloatOrNull(values.Albumin);
+
+  if (pH === null || pCO2 === null || HCO3 === null) {
+    return null;
+  }
+
+  // ---- Henderson-Hasselbalch internal coherence check ----
+  // pH = 6.1 + log10(HCO3 / (0.03 * pCO2))
+  // Flags inconsistent inputs — analysis still proceeds but results should be treated with caution
+  const expectedPH = 6.1 + Math.log10(HCO3 / (0.03 * pCO2));
+  const hhDeviation = Math.abs(pH - expectedPH);
+  // Tolerance 0.08: accounts for rounding in lab-reported values (Emmett & Narins, AJKD 2001)
+  const hhConsistency = {
+    expectedPH: expectedPH.toFixed(2),
+    measured: pH.toFixed(2),
+    deviation: hhDeviation.toFixed(2),
+    isCoherent: hhDeviation <= 0.08,
+    warning: hhDeviation > 0.08
+      ? `Measured pH (${pH.toFixed(2)}) differs from Henderson-Hasselbalch expected (${expectedPH.toFixed(2)}) by ${hhDeviation.toFixed(2)} — verify lab values`
+      : null,
+  };
+
+  const expectedValues: ExpectedValues = {};
+  let primaryDisorder = "Normal";
+  let compensatoryResponse = "";
+  let additionalDisorders: string[] = [];
+  let compensation = "N/A";
+  const allDisorders: string[] = [];
+
+  // Normal ranges
+  const pH_LOW = 7.35;
+  const pH_HIGH = 7.45;
+  const pCO2_LOW = 36;
+  const pCO2_HIGH = 44;
+  const HCO3_LOW = 22;
+  const HCO3_HIGH = 28;
+
+  // Determine primary disorder based on pH and which parameter moved first/most
+  const isAcidemic = pH < pH_LOW;
+  const isAlkalemic = pH > pH_HIGH;
+  const isNormalPH = pH >= pH_LOW && pH <= pH_HIGH;
+
+  // Calculate how far each parameter has moved from normal
+  const pCO2_midpoint = (pCO2_LOW + pCO2_HIGH) / 2; // 40
+  const HCO3_midpoint = (HCO3_LOW + HCO3_HIGH) / 2; // 25
+
+  // Primary disorder determination
+  if (isAcidemic) {
+    // pH < 7.35 - Acidemia present
+    if (HCO3 < HCO3_LOW && pCO2 > pCO2_HIGH) {
+      // Both indicate acidosis - determine primary
+      const metabolicContribution = (HCO3_midpoint - HCO3) / HCO3_midpoint;
+      const respiratoryContribution = (pCO2 - pCO2_midpoint) / pCO2_midpoint;
+      if (metabolicContribution > respiratoryContribution) {
+        primaryDisorder = "Metabolic Acidosis";
+      } else {
+        primaryDisorder = "Respiratory Acidosis";
+      }
+    } else if (HCO3 < HCO3_LOW) {
+      primaryDisorder = "Metabolic Acidosis";
+    } else if (pCO2 > pCO2_HIGH) {
+      primaryDisorder = "Respiratory Acidosis";
+    } else {
+      primaryDisorder = "Mixed Disorder";
+    }
+  } else if (isAlkalemic) {
+    // pH > 7.45 - Alkalemia present
+    if (HCO3 > HCO3_HIGH && pCO2 < pCO2_LOW) {
+      // Both indicate alkalosis - determine primary
+      const metabolicContribution = (HCO3 - HCO3_midpoint) / HCO3_midpoint;
+      const respiratoryContribution = (pCO2_midpoint - pCO2) / pCO2_midpoint;
+      if (metabolicContribution > respiratoryContribution) {
+        primaryDisorder = "Metabolic Alkalosis";
+      } else {
+        primaryDisorder = "Respiratory Alkalosis";
+      }
+    } else if (HCO3 > HCO3_HIGH) {
+      primaryDisorder = "Metabolic Alkalosis";
+    } else if (pCO2 < pCO2_LOW) {
+      primaryDisorder = "Respiratory Alkalosis";
+    } else {
+      primaryDisorder = "Mixed Disorder";
+    }
+  } else {
+    // Normal pH - check for compensated or mixed disorders
+    if (pCO2 < pCO2_LOW && HCO3 < HCO3_LOW) {
+      // Both low - determine primary based on compensation formulas
+      // Check if HCO3 matches expected for respiratory alkalosis
+      const expectedHCO3_acute = 24 - 0.2 * (40 - pCO2);
+      const expectedHCO3_chronic = 24 - 0.5 * (40 - pCO2);
+
+      if (Math.abs(HCO3 - expectedHCO3_chronic) < 2 || Math.abs(HCO3 - expectedHCO3_acute) < 2) {
+        primaryDisorder = "Respiratory Alkalosis";
+      } else {
+        // Check if pCO2 matches expected for metabolic acidosis
+        const expectedPCO2 = 1.5 * HCO3 + 8;
+        if (Math.abs(pCO2 - expectedPCO2) < 2) {
+          primaryDisorder = "Metabolic Acidosis";
+        } else {
+          primaryDisorder = "Mixed Disorder";
+        }
+      }
+    } else if (pCO2 > pCO2_HIGH && HCO3 > HCO3_HIGH) {
+      // Both high - determine primary based on compensation formulas
+      // Check if HCO3 matches expected for respiratory acidosis
+      const expectedHCO3_acute = 24 + 0.1 * (pCO2 - 40);
+      const expectedHCO3_chronic = 24 + 0.35 * (pCO2 - 40);
+
+      if (Math.abs(HCO3 - expectedHCO3_chronic) < 3 || Math.abs(HCO3 - expectedHCO3_acute) < 3) {
+        primaryDisorder = "Respiratory Acidosis";
+      } else {
+        // Check if pCO2 matches expected for metabolic alkalosis
+        const expectedPCO2 = 0.7 * (HCO3 - 24) + 40;
+        if (Math.abs(pCO2 - expectedPCO2) < 2) {
+          primaryDisorder = "Metabolic Alkalosis";
+        } else {
+          primaryDisorder = "Mixed Disorder";
+        }
+      }
+    } else if (pCO2 > pCO2_HIGH) {
+      primaryDisorder = "Respiratory Acidosis";
+    } else if (pCO2 < pCO2_LOW) {
+      primaryDisorder = "Respiratory Alkalosis";
+    } else if (HCO3 > HCO3_HIGH) {
+      primaryDisorder = "Metabolic Alkalosis";
+    } else if (HCO3 < HCO3_LOW) {
+      primaryDisorder = "Metabolic Acidosis";
+    }
+  }
+
+  // Now calculate expected compensation based on primary disorder
+  // Compensation formulas: Adrogué & Madias, NEJM 1998; Narins & Emmett, Medicine 1980
+  if (primaryDisorder === "Metabolic Acidosis") {
+    // Winter's formula: Expected pCO2 = 1.5 × [HCO3-] + 8 ± 2 (Winter, Ann Intern Med 1967)
+    const expectedPCO2 = 1.5 * HCO3 + 8;
+    expectedValues.low = (expectedPCO2 - 2).toFixed(1);
+    expectedValues.high = (expectedPCO2 + 2).toFixed(1);
+
+    compensatoryResponse = "Respiratory Alkalosis";
+
+    if (pCO2 < expectedPCO2 - 2) {
+      compensation = "Overcompensated";
+      additionalDisorders.push("Respiratory Alkalosis");
+    } else if (pCO2 > expectedPCO2 + 2) {
+      if (pCO2 > pCO2_HIGH) {
+        compensation = "Inadequate compensation";
+        additionalDisorders.push("Respiratory Acidosis");
+      } else {
+        compensation = "Inadequate compensation";
+      }
+    } else {
+      compensation = "Compensated";
+    }
+  } else if (primaryDisorder === "Metabolic Alkalosis") {
+    // Expected pCO2 = 0.7 × ΔHCO3 + 40 ± 5 (Javaheri & Kazemi, NEJM 1980), capped at 55 mmHg physiological ceiling
+    const rawExpectedPCO2 = 0.7 * (HCO3 - 24) + 40;
+    const expectedPCO2 = Math.min(rawExpectedPCO2, 55);
+    expectedValues.low = (expectedPCO2 - 5).toFixed(1);
+    expectedValues.high = Math.min(expectedPCO2 + 5, 55).toFixed(1);
+
+    compensatoryResponse = "Respiratory Acidosis";
+
+    if (pCO2 > expectedPCO2 + 5) {
+      compensation = "Overcompensated";
+      additionalDisorders.push("Respiratory Acidosis");
+    } else if (pCO2 < expectedPCO2 - 5) {
+      if (pCO2 < pCO2_LOW) {
+        compensation = "Inadequate compensation";
+        additionalDisorders.push("Respiratory Alkalosis");
+      } else {
+        compensation = "Inadequate compensation";
+      }
+    } else {
+      compensation = "Compensated";
+    }
+  } else if (primaryDisorder === "Respiratory Acidosis") {
+    // Acute: ΔHCO3 = 0.1 × ΔpCO2 ± 3; Chronic: ΔHCO3 = 0.35 × ΔpCO2 ± 3 (Brackett et al., NEJM 1965; Schwartz & Relman, NEJM 1963)
+    if (isChronic) {
+      // Chronic: ΔHCO3 = 0.35 × ΔpCO2
+      const expectedHCO3 = 24 + 0.35 * (pCO2 - 40);
+      expectedValues.low = (expectedHCO3 - 3).toFixed(1);
+      expectedValues.high = (expectedHCO3 + 3).toFixed(1);
+
+      compensatoryResponse = "Metabolic Alkalosis";
+
+      if (HCO3 > expectedHCO3 + 3) {
+        compensation = "Overcompensated";
+        additionalDisorders.push("Metabolic Alkalosis");
+      } else if (HCO3 < expectedHCO3 - 3) {
+        if (HCO3 < HCO3_LOW) {
+          compensation = "Inadequate compensation";
+          additionalDisorders.push("Metabolic Acidosis");
+        } else {
+          compensation = "Inadequate compensation";
+        }
+      } else {
+        compensation = "Compensated";
+      }
+    } else {
+      // Acute: ΔHCO3 = 0.1 × ΔpCO2
+      const expectedHCO3 = 24 + 0.1 * (pCO2 - 40);
+      expectedValues.low = (expectedHCO3 - 3).toFixed(1);
+      expectedValues.high = (expectedHCO3 + 3).toFixed(1);
+
+      compensatoryResponse = "Metabolic Alkalosis";
+
+      if (HCO3 > expectedHCO3 + 3) {
+        compensation = "Overcompensated";
+        additionalDisorders.push("Metabolic Alkalosis");
+      } else if (HCO3 < expectedHCO3 - 3) {
+        if (HCO3 < HCO3_LOW) {
+          compensation = "Inadequate compensation";
+          additionalDisorders.push("Metabolic Acidosis");
+        } else {
+          compensation = "Inadequate compensation";
+        }
+      } else {
+        compensation = "Compensated";
+      }
+    }
+  } else if (primaryDisorder === "Respiratory Alkalosis") {
+    // Acute: ΔHCO3 = 0.2 × ΔpCO2 ± 2; Chronic: ΔHCO3 = 0.5 × ΔpCO2 ± 2 (Arbus et al., NEJM 1969; Gennari et al., NEJM 1972)
+    if (isChronic) {
+      // Chronic: ΔHCO3 = 0.5 × ΔpCO2
+      const expectedHCO3 = 24 - 0.5 * (40 - pCO2);
+      expectedValues.low = (expectedHCO3 - 2).toFixed(1);
+      expectedValues.high = (expectedHCO3 + 2).toFixed(1);
+
+      compensatoryResponse = "Metabolic Acidosis";
+
+      if (HCO3 < expectedHCO3 - 2) {
+        compensation = "Overcompensated";
+        additionalDisorders.push("Metabolic Acidosis");
+      } else if (HCO3 > expectedHCO3 + 2) {
+        if (HCO3 > HCO3_HIGH) {
+          compensation = "Inadequate compensation";
+          additionalDisorders.push("Metabolic Alkalosis");
+        } else {
+          compensation = "Inadequate compensation";
+        }
+      } else {
+        compensation = "Compensated";
+      }
+    } else {
+      // Acute: ΔHCO3 = 0.2 × ΔpCO2
+      const expectedHCO3 = 24 - 0.2 * (40 - pCO2);
+      expectedValues.low = (expectedHCO3 - 2).toFixed(1);
+      expectedValues.high = (expectedHCO3 + 2).toFixed(1);
+
+      compensatoryResponse = "Metabolic Acidosis";
+
+      if (HCO3 < expectedHCO3 - 2) {
+        compensation = "Overcompensated";
+        additionalDisorders.push("Metabolic Acidosis");
+      } else if (HCO3 > expectedHCO3 + 2) {
+        if (HCO3 > HCO3_HIGH) {
+          compensation = "Inadequate compensation";
+          additionalDisorders.push("Metabolic Alkalosis");
+        } else {
+          compensation = "Inadequate compensation";
+        }
+      } else {
+        compensation = "Compensated";
+      }
+    }
+  }
+
+  // ---- Anion gap calculation ----
+  let anionGap: number | null = null;
+  let agStatus: string | null = null;
+  let correctedAG: number | null = null;
+  let uncorrectedAG: number | null = null;
+
+  if (Na !== null && Cl !== null && HCO3 !== null) {
+    // Calculate basic anion gap
+    uncorrectedAG = Na - (Cl + HCO3);
+    anionGap = uncorrectedAG;
+
+    // Albumin correction for anion gap (if albumin is provided)
+    if (Alb !== null && Alb > 0) {
+      // Corrected AG = Uncorrected AG + 2.5 × (4.0 - measured albumin) (Figge et al., Crit Care Med 1998)
+      correctedAG = uncorrectedAG + 2.5 * (4.0 - Alb);
+      // AG thresholds: >12 High, <8 Low (Kraut & Madias, NEJM 2014; normal AG 8–12 mEq/L)
+      agStatus = correctedAG > 12 ? "High" : correctedAG < 8 ? "Low" : "Normal";
+      // Set anionGap to corrected value for display
+      anionGap = correctedAG;
+    } else {
+      // No albumin correction - use uncorrected AG
+      agStatus = uncorrectedAG > 12 ? "High" : uncorrectedAG < 8 ? "Low" : "Normal";
+    }
+  }
+
+  // ---- Delta ratio (if high anion gap metabolic acidosis) ----
+  // Delta-delta: ΔAG / ΔHCO3; <1 = concurrent NAGMA, 1-2 = pure HAGMA, >2 = concurrent met alk (Wrenn, Ann Emerg Med 1990)
+  let deltaRatio: number | null = null;
+  let deltaRatioInterpretation: string | null = null;
+
+  if (primaryDisorder === "Metabolic Acidosis" && agStatus === "High" && anionGap !== null) {
+    const deltaAG = anionGap - 12;
+    const deltaHCO3 = 24 - HCO3;
+
+    if (deltaHCO3 > 0) {
+      deltaRatio = deltaAG / deltaHCO3;
+
+      if (deltaRatio < 1) {
+        deltaRatioInterpretation = "Normal AG metabolic acidosis also present";
+        additionalDisorders.push("Non-AG Metabolic Acidosis");
+      } else if (deltaRatio >= 1 && deltaRatio < 2) {
+        deltaRatioInterpretation = "Pure high AG metabolic acidosis";
+      } else {
+        deltaRatioInterpretation = "Metabolic alkalosis also present";
+        additionalDisorders.push("Metabolic Alkalosis");
+      }
+    }
+  }
+
+  // Build allDisorders array (after delta-ratio so those disorders are included)
+  if (primaryDisorder !== "Normal") {
+    allDisorders.push(primaryDisorder);
+  }
+  if (compensatoryResponse) {
+    allDisorders.push(compensatoryResponse);
+  }
+  allDisorders.push(...additionalDisorders);
+
+  // Build comprehensive interpretation
+  let interpretation = "";
+  if (primaryDisorder !== "Normal" && primaryDisorder !== "Mixed Disorder") {
+    // Check for high anion gap if metabolic acidosis
+    if (primaryDisorder === "Metabolic Acidosis" && agStatus === "High") {
+      interpretation = `Anion Gap Metabolic Acidosis. Primary ${primaryDisorder}`;
+    } else {
+      interpretation = `Primary ${primaryDisorder}`;
+    }
+
+    if (compensatoryResponse && compensation !== "N/A") {
+      interpretation += `, with ${compensation} by ${compensatoryResponse}`;
+    }
+
+    if (additionalDisorders.length > 0) {
+      interpretation += ` and ${additionalDisorders.join(" and ")}`;
+    }
+
+    interpretation += ".";
+  } else if (primaryDisorder === "Mixed Disorder") {
+    interpretation = "Complex Mixed Acid-Base Disorder.";
+  } else {
+    interpretation = "Normal acid-base status.";
+  }
+
+  const result = {
+    disorder: primaryDisorder,
+    compensatoryResponse,
+    additionalDisorders,
+    compensation,
+    interpretation,
+    expectedValues,
+    anionGap: anionGap !== null ? anionGap.toFixed(1) : null,
+    uncorrectedAG: uncorrectedAG !== null ? uncorrectedAG.toFixed(1) : null,
+    correctedAG: correctedAG !== null ? correctedAG.toFixed(1) : null,
+    agStatus,
+    deltaRatio: deltaRatio !== null ? deltaRatio.toFixed(2) : null,
+    deltaRatioInterpretation,
+    allDisorders,
+    hhConsistency,
+  };
+
+  return result;
+};

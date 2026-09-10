@@ -9,7 +9,16 @@
     "`erasableSyntaxOnly` is the load-bearing setting: it refuses enums, parameter properties",
     "and namespaces — the constructs node cannot strip — so the typechecker and the runtime",
     "agree about what this repository is allowed to contain. Without it, tsc would happily pass",
-    "code node refuses to start."
+    "code node refuses to start.",
+    "",
+    "src/vendor/ is EXCLUDED here and checked by tsconfig.vendor.json instead, which relaxes",
+    "`noUncheckedIndexedAccess` and nothing else. Vendored code is upstream's to write and ours",
+    "to re-copy, so holding it to a stricter setting than its own repository does would mean",
+    "patching 24 index accesses on every re-sync — a standing invitation to edit a copy that is",
+    "supposed to stay a copy. It is still typechecked, and still under `verbatimModuleSyntax`,",
+    "because that is the setting that catches the one class of error that actually stops the",
+    "vendored CLI from starting: a type imported without `import type` survives tsc's default",
+    "and does not survive node's stripping. `npm run typecheck` runs both files."
   ],
   "compilerOptions": {
     "lib": ["ES2024"],
@@ -32,5 +41,6 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "exclude": ["src/vendor/**"]
 }

@@ -516,10 +516,19 @@ shapes = ["dictation"]
 # cohort it is not in. Delegating the parse is right; delegating the criterion would silently
 # re-point this contract at a rule Vazquez et al. did not publish.
 #
+# WHERE THE CLI COMES FROM. It is checked into this repository, at src/vendor/medprotocol —
+# a copy of v0.7.10, verified against the upstream build on 29 invocations covering every command
+# and both halves of its error contract. A bare `command` like the one below means THAT copy, not
+# whatever is on $PATH: the pack's numbers should not be a property of what the operator happened
+# to install, and the CLI is a few thousand lines of arithmetic with no dependencies, so carrying
+# it costs less than requiring it. src/vendor/medprotocol/VENDOR.md is the whole argument.
+#
 # `command` is an argv ARRAY, not a shell string, so a path with a space in it is not a quoting
-# bug. Override the executable with MEDPROTOCOL_BIN — the command is a property of a machine
-# while the VERSION is a property of this contract, which is why only the first is overridable.
-# The version is checked once per run and a mismatch refuses it.
+# bug. A first element containing a path separator is taken literally instead, and
+# MEDPROTOCOL_BIN overrides everything — the command is a property of a machine while the
+# VERSION is a property of this contract, which is why only the first is overridable. The
+# version is checked once per run, against the vendored CLI's own constant, and a mismatch
+# refuses the run.
 [clinical.medprotocol]
 command = ["medprotocol"]
 version = "0.7.10"

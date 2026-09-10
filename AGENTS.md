@@ -21,6 +21,13 @@ error. Always run `npm run check` (test + typecheck) before committing.
   is the worked example; it is not special to core.
 - `packs/` — contract packs: prompts, schemas, eval cases, goldens. The clinical pack is the
   only one that lives in this repository; others are pointed to from `profiles.toml`.
+- `src/vendor/` — third-party code copied in verbatim, not written here. Currently the
+  medprotocol CLI v0.7.10, which the clinical profile shells out to for every numeric decision;
+  carrying it is what makes the reference pack reproducible on a clean clone. It is a copy, not
+  a fork: do not fix, refactor, or restyle anything under it, and read
+  `src/vendor/medprotocol/VENDOR.md` before touching it at all. It is typechecked by
+  `tsconfig.vendor.json` on upstream's settings rather than this repository's, and excluded from
+  `tsconfig.json` for that reason.
 - `src/index.ts` — the public API. Everything a profile may import is re-exported here;
   nothing that is itself a profile is exported. Deep imports are unsupported.
 - `src/tui/` — dashboards over the activity feed, sharing one pure core. `state.ts` (the

@@ -1,0 +1,20 @@
+{
+  "// why": [
+    "The vendored medprotocol CLI, typechecked on the terms of the repository it was copied",
+    "from rather than on this one's. See the note in tsconfig.json: the only difference is",
+    "`noUncheckedIndexedAccess`, which upstream does not set and which accounts for every one",
+    "of the 24 errors a copy otherwise raises. Relaxing it here keeps the copy a copy.",
+    "",
+    "What is deliberately NOT relaxed is `verbatimModuleSyntax`. Node runs this CLI by",
+    "stripping its types, so a type imported without `import type` is a module that throws at",
+    "startup — two such imports existed in the copied source and this is what found them.",
+    "Anyone re-syncing the vendor directory should expect to fix that class again and nothing",
+    "else."
+  ],
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noUncheckedIndexedAccess": false
+  },
+  "include": ["src/vendor/**/*.ts"],
+  "exclude": []
+}

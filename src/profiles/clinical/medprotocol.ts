@@ -19,17 +19,33 @@
  * admitted to a cohort it is not in. So this module returns FACTS — the parsed numbers and the
  * CLI's own categories — and `[clinical.shockExam]` decides what they mean for this contract.
  *
- * THE ERROR CONTRACT IS THE NON-OBVIOUS PART, and it is inconsistent. Measured against v0.7.10:
- * `vitals --bp 78` (a missing diastolic) exits 0 with `{"error": ...}` on stdout, while
- * `vitals --bp NaN/NaN` exits 1 with the same shape. So NEITHER the exit code nor its absence
- * can be trusted on its own — a caller keying on the status would read the first as a result,
- * find no `bloodPressure`, and carry an undefined systolic into `undefined < 90`, which is
- * `false`: every patient outside the cohort, a plausible number, and a rule that never ran.
- * `run` below therefore looks for the `error` key on BOTH paths and reports either as a refusal.
+ * THE ERROR CONTRACT IS THE NON-OBVIOUS PART. Re-measured against the vendored v0.7.10 now that
+ * it is in the repository to measure: `vitals --bp 78` (a missing diastolic) and
+ * `vitals --bp NaN/NaN` BOTH exit 1 with `{"error": ...}` on stderr and an empty stdout. An
+ * earlier note here recorded the first as exiting 0 with the error on stdout; that is not what
+ * this build does, and the differential run in VENDOR.md is the check.
+ *
+ * `run` below nonetheless searches for the `error` key on BOTH streams and on BOTH exit paths,
+ * and that is deliberate rather than leftover. What must never happen is a refusal read as a
+ * result: a caller that took an exit-0 empty object as an answer would find no `bloodPressure`,
+ * and carry an undefined systolic into `undefined < 90`, which is `false` — every patient
+ * outside the cohort, a plausible number, and a rule that never ran. Handling the path this
+ * build does not currently take costs four lines; being wrong about which path it takes costs a
+ * silent cohort gate.
  */
 import { execFileSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { type Pack } from '../../core/pack.ts'
 import { ProfileError } from '../../core/profile.ts'
+
+/**
+ * The copy of the CLI that travels with this repository. See src/vendor/medprotocol/VENDOR.md.
+ *
+ * Resolved from THIS MODULE'S URL rather than from the working directory, because the eval is
+ * run from wherever the user happens to be standing and a cwd-relative path would make the
+ * cohort gate a property of the shell's location.
+ */
+const VENDORED = fileURLToPath(new URL('../../vendor/medprotocol/index.ts', import.meta.url))
 
 /**
  * How to invoke the CLI, and which version the pack's numbers were measured against.
@@ -47,12 +63,26 @@ export interface MedprotocolRule {
 }
 
 /**
- * The pack's declaration, with `MEDPROTOCOL_BIN` allowed to override the executable.
+ * The pack's declaration, resolved against the copy of the CLI this repository carries.
  *
- * The override exists because the COMMAND is a property of a machine while the VERSION is a
- * property of the contract. A pack committed with one developer's absolute path would be
- * unusable everywhere else, and a pack that let the environment choose the version would be a
- * pack whose numbers nobody can reproduce. So the first is overridable and the second is not.
+ * THREE WAYS THIS RESOLVES, in order. `MEDPROTOCOL_BIN` wins, and is how the tests point the
+ * profile at a fixture and how an operator points it at their own build. A BARE NAME — a
+ * `command` whose first element has no path separator, which is what every pack in this
+ * repository declares — resolves to the vendored CLI under src/vendor/medprotocol, run with
+ * this same node. Anything else is passed through as written, so a pack that names a path or a
+ * different executable still gets what it asked for.
+ *
+ * WHY THE BARE NAME NO LONGER MEANS `$PATH`. It used to, and that made the reference pack's
+ * numbers a property of what the operator happened to have installed: no medprotocol on PATH
+ * and the clinical profile did not run at all; a medprotocol of a different version and it
+ * refused, correctly but uselessly, on a machine that had no way to fix it. The CLI is three
+ * thousand lines of arithmetic with no dependencies of its own, so it is checked in — and once
+ * it is checked in, the version pin below stops being a hurdle for the reader and goes back to
+ * being what it was for: a statement that the answer key and the tool agree.
+ *
+ * The COMMAND is still a property of a machine while the VERSION is a property of the contract,
+ * which is why only the first is overridable. A pack that let the environment choose the
+ * version would be a pack whose numbers nobody can reproduce.
  */
 export const loadMedprotocolRule = (pack: Pack): MedprotocolRule => {
   const manifest = pack.manifest as { clinical?: { medprotocol?: Partial<MedprotocolRule> } }
@@ -64,11 +94,22 @@ export const loadMedprotocolRule = (pack: Pack): MedprotocolRule => {
         'name it is a pack whose cohort gate is undefined',
     )
   }
-  const override = process.env.MEDPROTOCOL_BIN
+  const declared = m.command as string[]
   return {
-    command: override ? [override] : (m.command as string[]),
+    command: resolveCommand(declared),
     version: m.version,
   }
+}
+
+/** `MEDPROTOCOL_BIN`, else the vendored CLI for a bare name, else the declaration verbatim. */
+const resolveCommand = (declared: string[]): string[] => {
+  const override = process.env.MEDPROTOCOL_BIN
+  if (override) return [override]
+  const bin = declared[0]!
+  // `process.execPath` rather than `node`, so the CLI runs on the interpreter that is already
+  // running this profile — the vendored source is TypeScript and needs a node that strips it.
+  if (!bin.includes('/') && !bin.includes('\\')) return [process.execPath, VENDORED, ...declared.slice(1)]
+  return declared
 }
 
 /** One invocation, as JSON, or a refusal that names what was run. */
