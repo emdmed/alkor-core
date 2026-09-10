@@ -224,6 +224,28 @@ export const CONTRACTS = {
     samplingKey: 'shock_extraction',
     documentKind: 'default',
   },
+  /**
+   * The shock-pipeline pass: prose note → extraction → shock classification, end-to-end.
+   *
+   * Chains two LLM calls under one `--task` flag: the extraction contract produces a
+   * ShockExam payload, and the shock contract classifies it. What is graded is the FINAL
+   * category agreement — extraction errors that cause a wrong category are counted as a
+   * single pipeline failure. A sub-gate on exact-match extraction measures whether the
+   * pipeline fails because the model cannot read prose or because it cannot apply the rule.
+   *
+   * Its own `samplingKey` and `schemaNameField` are unique by the tasks.test.ts contract.
+   * The prompt, schema and golden keys resolve to the existing shock pack files — the
+   * pipeline reuses the shock contracts, not new ones.
+   */
+  'shock-pipeline': {
+    id: 'shock-pipeline',
+    promptKey: 'shockPrompt',
+    schemaKey: 'shockSchema',
+    goldenKey: 'shockSchemaGolden',
+    schemaNameField: 'shockPipelineSchemaName',
+    samplingKey: 'shock_pipeline',
+    documentKind: 'default',
+  },
   /** The repair pass: the failed items of a reading, handed back with the transcript. */
   'transcript-repair': {
     id: 'transcript-repair',
@@ -246,8 +268,8 @@ export const CONTRACTS = {
  * contract that sits looking complete and reports nothing, which is the state it was in for
  * exactly as long as it took to write an eval mode for it.
  */
-export type Task = 'vital-signs' | 'summary' | 'note-format' | 'transcript' | 'shock' | 'shock-extraction' | 'sepsis'
-export const TASKS: Task[] = ['vital-signs', 'summary', 'note-format', 'transcript', 'shock', 'shock-extraction', 'sepsis']
+export type Task = 'vital-signs' | 'summary' | 'note-format' | 'transcript' | 'shock' | 'shock-extraction' | 'shock-pipeline' | 'sepsis'
+export const TASKS: Task[] = ['vital-signs', 'summary', 'note-format', 'transcript', 'shock', 'shock-extraction', 'shock-pipeline', 'sepsis']
 
 export type ClinicalShape = 'exam-json' | 'qsofa-json' | 'shock-suspicion' | 'dialogue' | 'dictation' | 'vitals-note' | 'note' | 'summary-input'
 

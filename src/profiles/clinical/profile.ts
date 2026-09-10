@@ -31,10 +31,12 @@ import { reviewVitalSigns, vitalDocumentNames } from './review.ts'
 import { reviewTranscript, transcriptDocumentNames } from './review-transcript.ts'
 import { reviewShock } from './review-shock.ts'
 import { shockDocumentNames } from './shock-eval.ts'
+import type { ShockExam } from './shock.ts'
 import { reviewSepsis } from './review-sepsis.ts'
 import { reviewNoteFormat } from './review-note-format.ts'
 import { reviewShockExtraction, type ShockExtractionReviewOptions } from './review-shock-extraction.ts'
 import { runShockExtractionEval, shockExtractionDocumentNames } from './shock-extraction-eval.ts'
+import { runShockPipelineEval, shockPipelineDocumentNames } from './shock-pipeline-eval.ts'
 
 export const PROFILE: ProfileModule = {
   name: 'clinical',
@@ -80,6 +82,7 @@ export const PROFILE: ProfileModule = {
     if (task === 'transcript') return transcriptDocumentNames(pack)
     if (task === 'shock') return shockDocumentNames(pack)
     if (task === 'shock-extraction') return shockExtractionDocumentNames(pack)
+    if (task === 'shock-pipeline') return shockPipelineDocumentNames(pack)
     if (task === 'sepsis') return sepsisDocumentNames(pack)
     return vitalDocumentNames(pack)
   },
@@ -183,6 +186,7 @@ export const PROFILE: ProfileModule = {
       else if (task === 'shock') results.push(await runShockEval(shared))
       else if (task === 'sepsis') results.push(await runSepsisEval(shared))
       else if (task === 'shock-extraction') results.push(await runShockExtractionEval(shared))
+      else if (task === 'shock-pipeline') results.push(await runShockPipelineEval(shared))
       else results.push(await runTranscriptEval(shared))
     }
 
@@ -282,6 +286,27 @@ const executeClinicalTask = async (ctx: ReviewContext, shared: { pack: Pack; bas
   if (task === 'shock') return reviewShock({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider, activity: ctx.activity })
   if (task === 'sepsis') return reviewSepsis({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider, activity: ctx.activity })
   if (task === 'shock-extraction') return reviewShockExtraction({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider, activity: ctx.activity })
+  if (task === 'shock-pipeline') {
+    // Chain extraction → classification. The extraction step reads prose; the classification
+    // step reads the extracted exam as JSON text, exactly as the standalone shock review does.
+    const extractionResult = await reviewShockExtraction({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider, activity: ctx.activity })
+    if (!extractionResult.ok || !extractionResult.report) {
+      return { ...extractionResult, text: `shock-pipeline: extraction failed — ${extractionResult.text}` }
+    }
+    const exam = (extractionResult.report as { exam?: ShockExam }).exam
+    if (!exam) {
+      return { ...extractionResult, text: `shock-pipeline: extraction produced no exam payload — ${extractionResult.text}` }
+    }
+    const classificationResult = await reviewShock({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: { kind: 'text', text: JSON.stringify(exam), label: extractionResult.label }, provider: shared.provider, activity: ctx.activity })
+    return {
+      text: `${extractionResult.text}\n${classificationResult.text}`,
+      ok: extractionResult.ok && classificationResult.ok,
+      raw: classificationResult.raw,
+      document: extractionResult.document,
+      label: extractionResult.label,
+      report: { extraction: extractionResult.report, classification: classificationResult.ok },
+    }
+  }
   if (task === 'note-format') return reviewNoteFormat({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider, activity: ctx.activity })
 
   throw new ProfileError(

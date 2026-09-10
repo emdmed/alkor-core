@@ -181,6 +181,16 @@ temperature = 0.0
 max_tokens = 1024
 timeout_secs = 300
 
+# --- The shock-pipeline pass: prose → extraction → classification, end-to-end. ---
+# Chains two LLM calls: the extraction contract produces a ShockExam payload, and the shock
+# contract classifies it. The sampling entry exists so the CONTRACTS table resolves; the eval
+# builds its own per-step requests. Settings match the shock reasoning task's — the second
+# call is the same contract, and the first call's cap is shock_extraction's.
+[sampling.shock_pipeline]
+temperature = 0.0
+max_tokens = 512
+timeout_secs = 900
+
 # --- The sepsis-screening pass over a fixed Quick SOFA payload. ---
 # The SMALLEST input in this file — six lines in, one closed object of nine short fields out —
 # and the cap is the shock task's for the same reason it is there: this contract's whole subject

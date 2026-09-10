@@ -50,6 +50,8 @@ import {
 } from '../src/profiles/clinical/shock.ts'
 import { checkMedprotocolVersion, evaluateVitals, loadMedprotocolRule } from '../src/profiles/clinical/medprotocol.ts'
 
+process.env.MEDPROTOCOL_BIN = join(import.meta.dirname, 'fixtures', 'medprotocol.js')
+
 const pack = loadPack(join(import.meta.dirname, '..', 'packs', 'clinical'))
 const rule = loadShockRule(pack)
 const mp = loadMedprotocolRule(pack)
@@ -1038,5 +1040,37 @@ test('the prompt never shows a cohort verdict the code disagrees with', () => {
       f.in_studied_cohort,
       'a worked example states a cohort verdict resolveExam does not produce',
     )
+  }
+})
+
+// --- shock-pipeline ---------------------------------------------------------------------------
+
+test('shock-pipeline is in TASKS and has a CONTRACTS entry with shock-pipeline schema name', () => {
+  assert.ok((TASKS as string[]).includes('shock-pipeline'), 'shock-pipeline is in TASKS')
+  const c = CONTRACTS['shock-pipeline']
+  assert.equal(c.id, 'shock-pipeline')
+  assert.equal(c.schemaNameField, 'shockPipelineSchemaName')
+  assert.equal(c.samplingKey, 'shock_pipeline')
+  assert.equal(c.documentKind, 'default')
+  // Shares shock's prompt, schema and golden — the pipeline chains the same two contracts.
+  assert.equal(c.promptKey, 'shockPrompt')
+  assert.equal(c.schemaKey, 'shockSchema')
+  assert.equal(c.goldenKey, 'shockSchemaGolden')
+})
+
+test('shock-pipeline eval loads and builds requests for both steps', async () => {
+  const { runShockPipelineEval } = await import('../src/profiles/clinical/shock-pipeline-eval.ts')
+  assert.equal(typeof runShockPipelineEval, 'function')
+  // The extraction cases file has entries for the shock extraction cases.
+  const raw = JSON.parse(pack.read('shockExtractionCases')) as { cases: Array<{ name: string; expect?: string }> }
+  assert.ok(raw.cases.length >= 3, 'at least 3 extraction cases')
+  // Each case that names an expect has a valid shock category.
+  for (const c of raw.cases) {
+    if (c.expect) {
+      assert.ok(
+        ['septic', 'cardiogenic', 'hypovolemic', 'indeterminate'].includes(c.expect),
+        `case ${c.name} has valid expect`,
+      )
+    }
   }
 })

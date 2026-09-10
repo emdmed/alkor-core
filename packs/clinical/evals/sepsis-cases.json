@@ -7,11 +7,13 @@
   "_floors": {
     "screenAgreementFloor": "The gate: did the model report the positive/negative screen the CLI computes. The floor tolerates a handful of cases and stops early, on the shock reasoning — a corpus this size moves in coarse steps and a wrong verdict has nothing to be except wrong, since the payload is closed and the screen is stated in the prompt.",
     "echoFidelityFloor": "Did the model repeat the three qSOFA inputs as the payload states them. 1.0, and unlike the agreement floor it has no error budget: copying three numbers out of a seven-line payload is not reasoning, and a right verdict reached from misread inputs is right about a patient the payload does not contain.",
-    "criteriaFidelityFloor": "Did the model list exactly the criteria the inputs meet. 1.0. A criterion cited that is not met is the model re-deriving the screen and asserting a falsehood; a met criterion omitted is the model failing to read the (already-computed) criteria_met line. Both are the exact failure this contract exists to expose, so neither has any budget."
+    "criteriaFidelityFloor": "Did the model list exactly the criteria the inputs meet. 1.0. A criterion cited that is not met is the model re-deriving the screen and asserting a falsehood; a met criterion omitted is the model failing to read the (already-computed) criteria_met line. Both are the exact failure this contract exists to expose, so neither has any budget.",
+    "scoreFidelityFloor": "Did the model state the CLI's qsofa_score exactly. 1.0. The score is a single already-computed integer the payload states as fact, and a screen that reaches the right verdict from the wrong score is reasoning about arithmetic the payload does not support — the exact failure this contract exists to keep out, so like the echo and criteria floors it has no error budget."
   },
   "screenAgreementFloor": 0.84,
   "echoFidelityFloor": 1.0,
   "criteriaFidelityFloor": 1.0,
+  "scoreFidelityFloor": 1.0,
   "cases": [
     {
       "name": "sp-01-three-meet",

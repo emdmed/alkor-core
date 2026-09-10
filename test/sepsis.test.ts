@@ -45,6 +45,8 @@ import {
 } from '../src/profiles/clinical/sepsis.ts'
 import { checkMedprotocolVersion, evaluateQSOFA, loadMedprotocolRule } from '../src/profiles/clinical/medprotocol.ts'
 
+process.env.MEDPROTOCOL_BIN = join(import.meta.dirname, 'fixtures', 'medprotocol.js')
+
 const pack = loadPack(join(import.meta.dirname, '..', 'packs', 'clinical'))
 const rule = loadSepsisRule(pack)
 const mp = loadMedprotocolRule(pack)
@@ -193,6 +195,7 @@ test('a perfect reply scores perfect on every axis', () => {
     echoErrors: [],
     criteriaCorrect: true,
     criteriaErrors: [],
+    scoreCorrect: true,
     statedScore: r.screen.score,
   })
 })
@@ -275,6 +278,31 @@ test('a met criterion that is omitted is caught, and a screen that got the verdi
   assert.deepEqual(s.criteriaErrors, [met[0]])
 })
 
+test('a misstated qsofa_score is caught on the score axis, even from a right verdict', () => {
+  const c = cases.cases.find((c) => c.expect && assess(c.resolved).score >= 2)!
+  const r = c.resolved
+  const good: SepsisReply = {
+    respiratory_rate: r.exam.respiratory_rate,
+    systolic_bp: r.exam.systolic_bp,
+    gcs: r.exam.gcs,
+    qsofa_score: r.screen.score - 1,
+    positive: r.screen.positive,
+    criteria_met: CRITERIA.filter((cc) => r.criteria[cc]),
+    screen_reason: 'two criteria are met and the screen is positive',
+    assessment_confidence: 0.9,
+    notes: null,
+  }
+  const s = scoreReply(good, r)
+  assert.equal(s.screenAgrees, true, 'the verdict is right')
+  assert.equal(s.criteriaCorrect, true, 'and so are the criteria')
+  assert.equal(s.scoreCorrect, false, 'but the stated score is the CLI minus one')
+  assert.equal(s.statedScore, r.screen.score - 1)
+  assert.equal(s.scoreError, r.screen.score)
+  // The miss is present only on a miss, so a perfect reply keeps an exact shape.
+  const perfect = scoreReply({ ...good, qsofa_score: r.screen.score }, r)
+  assert.ok(!('scoreError' in perfect), 'scoreError appears only when the score is wrong')
+})
+
 // --- Parser -----------------------------------------------------------------------------
 
 test('parseSepsisReply accepts a legal reply and refuses each malformed one', () => {
@@ -288,6 +316,15 @@ test('parseSepsisReply accepts a legal reply and refuses each malformed one', ()
   assert.throws(() => parseSepsisReply('{"respiratory_rate":24,"systolic_bp":88,"gcs":12,"qsofa_score":3,"positive":"true","criteria_met":[],"screen_reason":null,"assessment_confidence":0.9,"notes":null}'), /positive/)
   assert.throws(() => parseSepsisReply('{"respiratory_rate":24,"systolic_bp":88,"gcs":12,"qsofa_score":3,"positive":true,"criteria_met":["capillary_refill"],"screen_reason":null,"assessment_confidence":0.9,"notes":null}'), /criteria/)
   assert.throws(() => parseSepsisReply('{"respiratory_rate":24,"systolic_bp":88,"gcs":12,"qsofa_score":3,"positive":true,"criteria_met":[],"screen_reason":null,"assessment_confidence":"certain","notes":null}'), /assessment_confidence/)
+  // The schema declares uniqueItems: true, and the parser matches it — a criterion named
+  // twice is narration filling a list, not a reading of the screen.
+  assert.throws(
+    () =>
+      parseSepsisReply(
+        '{"respiratory_rate":24,"systolic_bp":88,"gcs":12,"qsofa_score":3,"positive":true,"criteria_met":["respiratory_rate","respiratory_rate"],"screen_reason":null,"assessment_confidence":0.9,"notes":null}',
+      ),
+    /more than once/,
+  )
 })
 
 test('parseSepsis accepts a legal payload and refuses a missing or out-of-range input', () => {
@@ -481,6 +518,34 @@ test('a run where nothing parsed fails rather than clearing a floor on zero case
 })
 
 /**
+ * A duplicate criterion cannot clear the eval under unconstrained decoding.
+ *
+ * The schema declares uniqueItems and the parser matches it, so a model that repeats a
+ * criterion to fill the list is refused like any other fence. Run at difficulty 4, where every
+ * case has a criterion to repeat: rate-threshold (sp-13) and bp-threshold (sp-14), both with a
+ * second criterion met — every completion is rejected, nothing measures, and a gate that used
+ * to swallow the duplicate through a Set now fails loudly on `measured`.
+ */
+test('a duplicate criterion cannot clear the eval under unconstrained decoding', async () => {
+  const stub = await serve((body) => {
+    const base = JSON.parse(perfectFor(caseOfBody(body)))
+    if (base.criteria_met.length) base.criteria_met.push(base.criteria_met[0])
+    return JSON.stringify(base)
+  })
+  const { trace } = tracing()
+  try {
+    const result = await quiet(() =>
+      runSepsisEval({ pack, baseUrl: stub.url, trace, constrain: false, cachePrompt: false, difficulty: '4' }),
+    )
+    assert.equal(result.measured, false, 'every reply was refused like a fence')
+    assert.equal(gatePasses(result), false)
+    for (const g of result.gates!) assert.equal(gatePasses(g), false, `${g.name} cleared on nothing`)
+  } finally {
+    await stub.close()
+  }
+})
+
+/**
  * One invented criterion on ONE case out of fourteen fails the whole run.
  *
  * criteriaFidelityFloor is 1.0, so a single case where the model listed a criterion that was
@@ -508,6 +573,41 @@ test('one criterion that is not met fails the run, with the verdict still perfec
     // The trace names the case and the criterion, so the failure is actionable without a re-run.
     const bad = lines().find((l) => l.event === 'case' && l.case === 'sp-13-rr-just-below')
     assert.deepEqual(bad.score.criteriaErrors, ['respiratory_rate'])
+  } finally {
+    await stub.close()
+  }
+})
+
+/**
+ * One misstated qsofa_score on ONE case out of fourteen fails the whole run.
+ *
+ * scoreFidelityFloor is 1.0, by the same argument as the criteria floor: the score is a single
+ * already-computed integer the payload states as fact, and a screen that reaches the right
+ * verdict from the wrong score is reasoning about arithmetic the payload does not support.
+ */
+test('one misstated qsofa_score fails the run, with the verdict still perfect', async () => {
+  const stub = await serve((body) => {
+    const c = caseOfBody(body)
+    const base = JSON.parse(perfectFor(c))
+    if (c.name === 'sp-13-rr-just-below') base.qsofa_score = base.qsofa_score - 1
+    return JSON.stringify(base)
+  })
+  const { trace, lines } = tracing()
+  try {
+    const result = await quiet(() =>
+      runSepsisEval({ pack, baseUrl: stub.url, trace, constrain: true, cachePrompt: false }),
+    )
+    assert.equal(result.score, 1, 'every verdict still agrees with the screen')
+    assert.equal(gatePasses(result), true, 'so the headline gate passes')
+    const score = result.gates!.find((g) => g.name === 'scoreFidelity')!
+    assert.equal(gatePasses(score), false, 'and the run still fails, on the sub-gate')
+
+    // The trace names the case and the stated-vs-reference score, so the failure is actionable
+    // without a re-run.
+    const bad = lines().find((l) => l.event === 'case' && l.case === 'sp-13-rr-just-below')
+    assert.equal(bad.score.scoreCorrect, false)
+    assert.equal(bad.score.statedScore, 1)
+    assert.equal(bad.score.scoreError, 2)
   } finally {
     await stub.close()
   }

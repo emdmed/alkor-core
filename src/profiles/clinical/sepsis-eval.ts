@@ -1,5 +1,5 @@
 /**
- * The sepsis eval: one constrained pass per payload, three gates, one reference arm in code.
+ * The sepsis eval: one constrained pass per payload, four gates, one reference arm in code.
  *
  * It is built like `shock-eval.ts` — same transport, same trace, same `TaskResult` — and the
  * only difference is what is measured. The shock contract grades where a heuristic draws its
@@ -220,6 +220,9 @@ export const runSepsisEval = async (o: SepsisEvalOptions): Promise<TaskResult> =
       for (const f of score.criteriaErrors) {
         misses.push(`criteria      ${c.name} — ${f} is ${c.resolved.criteria[f] ? 'met' : 'not met'}, model listed ${reply.criteria_met.includes(f) ? 'it' : 'it not'}`)
       }
+      if (!score.scoreCorrect) {
+        misses.push(`score         ${c.name} — medprotocol scores it ${truth.score}, model said ${reply.qsofa_score}`)
+      }
 
       observations.push({ case: c.name, run, completion: outcome.raw ?? '', score: JSON.stringify(score) })
       o.trace.write({
@@ -241,8 +244,9 @@ export const runSepsisEval = async (o: SepsisEvalOptions): Promise<TaskResult> =
       console.log(
         `${c.name.padEnd(30)} ${c.class.padEnd(15)} d${c.difficulty} ${mark} ` +
           `rule ${truth.positive ? 'POSITIVE ' : 'negative '} model ${reply.positive ? 'POSITIVE ' : 'negative '} ` +
-          `echo ${score.echoCorrect ? 'ok ' : 'BAD'} ` +
-          `criteria ${score.criteriaCorrect ? 'ok' : 'BAD'}`,
+          `echo ${score.echoCorrect ? 'ok ' : 'BAD '} ` +
+          `criteria ${score.criteriaCorrect ? 'ok' : 'BAD'} ` +
+          `score ${score.scoreCorrect ? 'ok' : 'BAD'}`,
       )
     }
   }
@@ -257,6 +261,7 @@ export const runSepsisEval = async (o: SepsisEvalOptions): Promise<TaskResult> =
     { name: 'screenAgreement', score: t.screenAgreement, floor: floors.screenAgreementFloor, measured },
     { name: 'echoFidelity', score: t.echoFidelity, floor: floors.echoFidelityFloor, measured },
     { name: 'criteriaFidelity', score: t.criteriaFidelity, floor: floors.criteriaFidelityFloor, measured },
+    { name: 'scoreFidelity', score: t.scoreFidelity, floor: floors.scoreFidelityFloor, measured },
   ]
 
   console.log(`\n${'—'.repeat(78)}`)
@@ -268,6 +273,9 @@ export const runSepsisEval = async (o: SepsisEvalOptions): Promise<TaskResult> =
   )
   console.log(
     `criteria      ${pct(scores.filter((s) => s.criteriaCorrect).length, scores.length)}  <- sub-gate, floor ${(floors.criteriaFidelityFloor * 100).toFixed(0)}% — exactly the criteria the payload meets`,
+  )
+  console.log(
+    `score         ${pct(scores.filter((s) => s.scoreCorrect).length, scores.length)}  <- sub-gate, floor ${(floors.scoreFidelityFloor * 100).toFixed(0)}% — the CLI's qsofa_score, stated exactly`,
   )
   console.log(`failed runs  ${failedRuns}`)
 
@@ -335,7 +343,7 @@ export const runSepsisEval = async (o: SepsisEvalOptions): Promise<TaskResult> =
     summary:
       `screen ${pct(scores.filter((s) => s.screenAgrees).length, scores.length)} ` +
       `(floor ${(floors.screenAgreementFloor * 100).toFixed(0)}%, vs a rule arm that is 100% by construction) · ` +
-      `echo ${(t.echoFidelity * 100).toFixed(0)}% · criteria ${(t.criteriaFidelity * 100).toFixed(0)}%` +
+      `echo ${(t.echoFidelity * 100).toFixed(0)}% · criteria ${(t.criteriaFidelity * 100).toFixed(0)}% · score ${(t.scoreFidelity * 100).toFixed(0)}%` +
       (failedRuns ? ` · ${failedRuns} failed runs` : ''),
     bench,
   }

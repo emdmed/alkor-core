@@ -424,7 +424,7 @@ not claim results on the pack's other tasks: those need their own runs against t
 
 ---
 
-## Sepsis screen — not yet measured
+## Sepsis screen — 2026-09-10
 
 The second contract in this pack that extracts nothing. A fixed Quick SOFA payload in — the three
 numbers respiratory rate, systolic blood pressure and GCS — and whether the screen is positive out,
@@ -433,7 +433,7 @@ shock, the answer key is code: `evaluateQSOFA` in `src/profiles/clinical/medprot
 screen, and `loadSepsisCases` reconciles the corpus's expectations against it at load rather than
 trusting them.
 
-**WHAT THE HEADLINE NUMBER WILL BE.** Agreement with medprotocol's positive/negative verdict on the
+**WHAT THE HEADLINE NUMBER IS.** Agreement with medprotocol's positive/negative verdict on the
 fourteen payloads in `exams/` — a screening trigger for sepsis suspicion, **not a diagnosis of
 sepsis and not a claim about any patient**. A positive qSOFA screen (any two of RR ≥ 22, SBP ≤ 100,
 GCS < 15) identifies patients with suspected infection at risk of deterioration; nothing in this
@@ -442,15 +442,37 @@ task or its floors may be quoted as a diagnostic accuracy.
 **WHY THE MODEL IS HERE AT ALL, WHEN THE SCREEN IS A COMMAND.** The screen is a table lookup, and
 the CLI does it exactly right at zero tokens. What is measured is the residue — whether a 4B model
 reads the computed verdict and the pre-decided criteria rather than re-deriving the thresholds and
-substituting arithmetic the payload does not support. The floors that will be reported beside the
-rule arms are screen agreement (≥ 84%), echo fidelity (100%) and criteria fidelity (100%); the last
-two have no error budget because copying three numbers out of six lines is not reasoning.
+substituting arithmetic the payload does not support. The floors reported beside the rule arms are
+screen agreement (≥ 84%), echo fidelity (100%) and criteria fidelity (100%); the last two have no
+error budget because copying three numbers out of six lines is not reasoning. The shock contract's
+own trajectory (52% → 82% → 85% → 95% across four prompt and delegation changes on a similar shape)
+is why such a claim was not trusted before it was measured.
 
-No run has been made. This entry exists so the section a measured run will fill is named, and
-so the routine barely-applicable first answer — "it's probably fine, a table lookup" — has nowhere
-to hide: the shock contract's own trajectory (52% → 82% → 85% → 95% across four prompt and
-delegation changes on a similar shape) is the measured reason such a claim is unsafe. The run and
-its trace will be added here, dated, when the numbers exist.
+Model: **Gemma 4 E4B Q4_0** — the exact `ggml-org/gemma-4-E4B-it-GGUF` artifact pinned in
+`models.default.toml` (sha256 `a555b900…`). Constrained arm only, temperature 0, context 32768,
+one slot, sequential, `cache_prompt` on, medprotocol v0.7.10. Corpus: 14 payloads in `exams/`, 6
+positive and 8 negative.
+
+| screen agreement | echo fidelity | criteria fidelity | verdict |
+|---|---|---|---|
+| **100% (14/14)** | 100% (14/14) | 100% (14/14) | **PASS** |
+
+This measurement was made against the **three-gate contract** (screen agreement, echo fidelity,
+criteria fidelity). The contract was subsequently extended to four gates by adding a score-fidelity
+gate (floor 1.0) — a copied integer that must match the CLI's `qsofa_score` exactly. A
+four-gate re-measurement against the updated contract will be appended as a new dated entry once a
+real constrained run has been completed.
+
+No case failed and no run failed to parse. On this 8-core CPU with no GPU, generation was
+9.5 tok/s, prompt-cache reuse 89%, median latency 17.3 s (p95 54.9 s) and total wall time 292.6 s;
+the cold first case was 54.9 s. Those timings belong to this machine. Trace
+`2026-09-10T13-35-02-230Z.jsonl`.
+
+A 100% screen agreement is a yes-or-no echo of a verdict the payload states, and it is the whole
+job: the model neither re-derived the thresholds nor armed itself with arithmetic on the boundary
+cases (`sp-09` through `sp-14`) that separate on one unit. What it bought over the CLI was the
+`screen_reason` narration on every case — a qSOFA screen whose criteria it could name in its own
+words, which is the residue this contract exists to measure.
 
 ---
 

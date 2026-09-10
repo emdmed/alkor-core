@@ -5,6 +5,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { join } from 'node:path'
 import { nullTrace } from '../src/core/trace.ts'
 import { loadConfig, requireProfile } from '../src/core/config.ts'
 import { loadPack, resolvePackRoot } from '../src/core/pack.ts'
@@ -16,6 +17,8 @@ import { emptyTally, absorb, ratio } from '../src/profiles/clinical/scorer.ts'
 import { buildPipeline, runPipeline } from '../src/modes/pipeline.ts'
 import type { ProfileModule } from '../src/core/profile.ts'
 import type { ChatOptions, Provider } from '../src/core/client.ts'
+
+process.env.MEDPROTOCOL_BIN = join(import.meta.dirname, 'fixtures', 'medprotocol.js')
 
 test('smoke test passes when pipeline steps are well-formed', async () => {
   const cfg = loadConfig()

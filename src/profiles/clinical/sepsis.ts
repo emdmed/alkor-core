@@ -267,6 +267,10 @@ export interface SepsisScore {
   criteriaCorrect: boolean
   /** Criteria the model named that were not met, or met criteria it omitted. */
   criteriaErrors: Criterion[]
+  /** Did the model state the CLI's `qsofa_score` exactly? The payload states it as a fact. */
+  scoreCorrect: boolean
+  /** The reference score, present only when the model misstated it, for the trace. */
+  scoreError?: number
   /** The model's score, when it stated one, for the trace. */
   statedScore?: number
 }
@@ -289,14 +293,21 @@ export const scoreReply = (reply: SepsisReply, r: ResolvedSepsis): SepsisScore =
     if (shouldBe !== is) criteriaErrors.push(c)
   }
 
-  return {
+  const scoreCorrect = reply.qsofa_score === truth.score
+  const score: SepsisScore = {
     screenAgrees: reply.positive === truth.positive,
     echoCorrect: echoErrors.length === 0,
     echoErrors,
     criteriaCorrect: criteriaErrors.length === 0,
     criteriaErrors,
+    scoreCorrect,
     statedScore: reply.qsofa_score,
   }
+  // `scoreError` is present only on a miss, so a perfect reply keeps an exact shape: Node's
+  // deepStrictEqual treats an own `undefined` key as a difference, and the repo's perfect-reply
+  // test pins the whole object.
+  if (!scoreCorrect) score.scoreError = truth.score
+  return score
 }
 
 // --- Totals over a corpus -------------------------------------------------------------------------
@@ -306,6 +317,7 @@ export interface SepsisTotals {
   screenAgreement: number
   echoFidelity: number
   criteriaFidelity: number
+  scoreFidelity: number
 }
 
 /**
@@ -320,6 +332,7 @@ export const gate = (t: SepsisTotals, floors: SepsisFloors): { pass: boolean; fa
   if (t.screenAgreement < floors.screenAgreementFloor) failed.push('screenAgreement')
   if (t.echoFidelity < floors.echoFidelityFloor) failed.push('echoFidelity')
   if (t.criteriaFidelity < floors.criteriaFidelityFloor) failed.push('criteriaFidelity')
+  if (t.scoreFidelity < floors.scoreFidelityFloor) failed.push('scoreFidelity')
   return { pass: failed.length === 0, failed }
 }
 
@@ -331,6 +344,7 @@ export const totals = (scores: SepsisScore[]): SepsisTotals => {
     screenAgreement: share(scores, (s) => s.screenAgrees),
     echoFidelity: share(scores, (s) => s.echoCorrect),
     criteriaFidelity: share(scores, (s) => s.criteriaCorrect),
+    scoreFidelity: share(scores, (s) => s.scoreCorrect),
   }
 }
 
@@ -340,6 +354,7 @@ export interface SepsisFloors {
   screenAgreementFloor: number
   echoFidelityFloor: number
   criteriaFidelityFloor: number
+  scoreFidelityFloor: number
 }
 
 export interface SepsisCase {
@@ -370,7 +385,7 @@ export const loadSepsisCases = (pack: Pack, mp: MedprotocolRule, key = 'sepsisCa
   const rule = loadSepsisRule(pack)
   const raw = JSON.parse(pack.read(key)) as Partial<SepsisCases> & { cases?: unknown }
 
-  const floorKeys = ['screenAgreementFloor', 'echoFidelityFloor', 'criteriaFidelityFloor'] as const
+  const floorKeys = ['screenAgreementFloor', 'echoFidelityFloor', 'criteriaFidelityFloor', 'scoreFidelityFloor'] as const
   for (const k of floorKeys) {
     const v = raw[k]
     if (typeof v !== 'number' || v < 0 || v > 1) {
@@ -465,10 +480,18 @@ export const parseSepsisReply = (raw: string): SepsisReply => {
   const criteria = (field: string): Criterion[] => {
     const v = o[field]
     if (!Array.isArray(v)) throw new Error(`${field} was ${JSON.stringify(v)}, expected an array of criteria`)
+    const seen = new Set<string>()
     for (const x of v) {
       if (typeof x !== 'string' || !(CRITERIA as readonly string[]).includes(x)) {
         throw new Error(`${field} contains ${JSON.stringify(x)}, which is not one of ${CRITERIA.join(', ')}`)
       }
+      if (seen.has(x)) {
+        throw new Error(
+          `${field} lists ${x} more than once — the schema declares uniqueItems: true, and a criterion ` +
+            'named twice is a model narrating to fill the list rather than reading the screen',
+        )
+      }
+      seen.add(x)
     }
     return v as Criterion[]
   }

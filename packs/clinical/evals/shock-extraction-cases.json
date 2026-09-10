@@ -1,18 +1,22 @@
 {
   "_comment": "Shock-extraction eval cases: synthetic prose notes that restate the findings of the existing shock exam payloads. The expectation for each case is the SAME exam.json the downstream reasoning task already grades against, so the two tasks share a truth source even though their inputs differ.",
+  "_expectNote": "The `expect` field on each case carries the classification the shock rule computes from that case's exam payload. It is here so shock-pipeline can score end-to-end agreement without cross-referencing shock-cases.json. The field is backward-compatible: the extraction eval ignores it.",
   "exactMatchFloor": 0.67,
   "cases": [
     {
       "name": "sh-01-septic-classic",
-      "difficulty": 1
+      "difficulty": 1,
+      "expect": "septic"
     },
     {
       "name": "sh-02-cardiogenic-classic",
-      "difficulty": 1
+      "difficulty": 1,
+      "expect": "cardiogenic"
     },
     {
       "name": "sh-03-hypovolemic-classic",
-      "difficulty": 1
+      "difficulty": 1,
+      "expect": "hypovolemic"
     }
   ]
 }

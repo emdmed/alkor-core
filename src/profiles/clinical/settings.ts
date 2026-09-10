@@ -70,6 +70,12 @@ export interface ClinicalSettings {
    */
   shockExtractionSchemaName?: string
   /**
+   * `json_schema.name` for the shock-pipeline pass (extraction → classification), on the same
+   * terms: absent means the pack has no pipeline contract, and assembly refuses rather than
+   * guessing a label.
+   */
+  shockPipelineSchemaName?: string
+  /**
    * `json_schema.name` for the sepsis-screening pass, on the same terms: absent means the pack
    * has no sepsis contract, and assembly refuses rather than guessing a label.
    */
@@ -162,6 +168,7 @@ export type SchemaNameField =
   | 'medicationSchemaName'
   | 'shockSchemaName'
   | 'shockExtractionSchemaName'
+  | 'shockPipelineSchemaName'
   | 'sepsisSchemaName'
 
 /**

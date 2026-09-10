@@ -73,24 +73,19 @@ export const PROFILE: ProfileModule = {
       checkMedprotocolVersion(medprotocol, ctx.pack.name)
       const resolved = resolveSepsis(exam, loadSepsisRule(ctx.pack), medprotocol)
       const score = scoreReply(reply, resolved)
-      const duplicateCriteria = reply.criteria_met.filter(
-        (criterion, index) => reply.criteria_met.indexOf(criterion) !== index,
-      )
 
+      // `parseSepsisReply` refuses a duplicate criterion outright — the schema declares
+      // uniqueItems — so a duplicate surfaces here as a refusal, never as a criteria choice.
       const report: SepsisVerificationReport = {
         echoOk: score.echoCorrect,
-        criteriaOk: score.criteriaCorrect && duplicateCriteria.length === 0,
+        criteriaOk: score.criteriaCorrect,
         screenOk: score.screenAgrees,
         scoreOk: reply.qsofa_score === resolved.screen.score,
         issues: [],
       }
       if (!report.echoOk) report.issues.push(`echo mismatch: ${score.echoErrors.join(', ')}`)
       if (!report.criteriaOk) {
-        const details = [
-          ...score.criteriaErrors,
-          ...duplicateCriteria.map((criterion) => `duplicate ${criterion}`),
-        ]
-        report.issues.push(`criteria mismatch: ${details.join(', ')}`)
+        report.issues.push(`criteria mismatch: ${score.criteriaErrors.join(', ')}`)
       }
       if (!report.screenOk) {
         report.issues.push(`screen mismatch: extraction says ${reply.positive}, medprotocol says ${resolved.screen.positive}`)

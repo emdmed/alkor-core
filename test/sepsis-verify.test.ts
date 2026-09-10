@@ -17,6 +17,8 @@ import {
 } from '../src/profiles/clinical/sepsis.ts'
 import { PROFILE, type SepsisVerificationReport } from '../src/profiles/sepsis-verify/profile.ts'
 
+process.env.MEDPROTOCOL_BIN = join(import.meta.dirname, 'fixtures', 'medprotocol.js')
+
 const pack = loadPack(join(import.meta.dirname, '..', 'packs', 'clinical'))
 const cases = loadSepsisCases(pack, loadMedprotocolRule(pack)).cases
 
@@ -101,7 +103,7 @@ test('reports echo, criteria, screen, and score mismatches independently', async
   }
 })
 
-test('duplicate criteria are not accepted as an exact criteria match', async () => {
+test('duplicate criteria are refused like a fence, never accepted as an exact criteria match', async () => {
   const base = replyFor(0)
   const result = await review(cases[0]!.exam, JSON.stringify({
     ...base,
@@ -110,7 +112,7 @@ test('duplicate criteria are not accepted as an exact criteria match', async () 
   assert.equal(result.ok, false)
   const report = result.report as SepsisVerificationReport
   assert.equal(report.criteriaOk, false)
-  assert.match(report.issues[0]!, /duplicate/)
+  assert.match(report.issues[0]!, /more than once/)
 })
 
 test('refuses malformed composed input and malformed extraction JSON', async () => {

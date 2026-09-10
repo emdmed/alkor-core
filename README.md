@@ -466,9 +466,9 @@ Every run writes JSONL to `${XDG_STATE_HOME:-~/.local/state}/medextract/traces/<
 raw completion, which for a clinical profile means the note. A profile that handles patient
 data supplies a `redact` hook and must set one before tracing anything real.
 
-## Six tasks over four corpora
+## Eight tasks over four corpora
 
-The reference pack grades six contracts, and `--task` chooses:
+The reference pack grades eight contracts, and `--task` chooses:
 
 ```bash
 node src/cli.ts eval --profile clinical --constrain                     # vital-signs, the default
@@ -477,7 +477,7 @@ node src/cli.ts eval --profile clinical --constrain --task note-format  # one no
 node src/cli.ts eval --profile clinical --constrain --task transcript   # a dictation, sorted into the same four
 node src/cli.ts eval --profile clinical --constrain --task shock        # a JSON exam payload, category + residue
 node src/cli.ts eval --profile clinical --constrain --task sepsis       # a qSOFA payload, positive/negative + criteria
-node src/cli.ts eval --profile clinical --constrain --task all          # the seven, each gated on its own floor
+node src/cli.ts eval --profile clinical --constrain --task all          # the eight, each gated on its own floor
 ```
 
 | task | input | what it returns | gate |
@@ -487,7 +487,8 @@ node src/cli.ts eval --profile clinical --constrain --task all          # the se
 | `note-format` | one note | four sections; every item carries a `quote` and a derived `text` | item recall ≥ 75%, **plus** provenance ≥ 90%, derivation ≥ 90% and *nothing invented* (100%) |
 | `transcript` | one **dictated transcript** — speech, out of order, correcting itself | the same four sections, same `quote` and `text` | item recall ≥ 65%, same three sub-gates at 85 / 85 / 100% — **provisional, unmeasured** |
 | `shock` | one **JSON exam payload** — vital signs, capillary refill, mental status | category + `indeterminate_reason` + agreement with rule-based reference | agreement ≥ 70%, concordance ≥ 80%, coverage ≥ 90%, format valid 100%, schema valid 100% |
-| `sepsis` | one **qSOFA payload** — respiratory rate, systolic BP, GCS | positive/negative screen + `criteria_met` + agreement with the medprotocol CLI | screen agreement ≥ 84%, echo 100%, criteria fidelity 100% — **provisional, unmeasured** |
+| `shock-pipeline` | one **prose shock case** — notes describing vitals, exam, history | category, chaining extraction → classification | extraction exact ≥ 67%, category agreement ≥ 70%, echo fidelity 100%, not invented 100% — **provisional, unmeasured** |
+| `sepsis` | one **qSOFA payload** — respiratory rate, systolic BP, GCS | positive/negative screen + `criteria_met` + agreement with the medprotocol CLI | screen agreement ≥ 84%, echo 100%, criteria fidelity 100%, score fidelity 100% — **provisional, unmeasured** |
 
 Three things about this arrangement are the reason it is worth having, and none of them are
 visible in a single-task pack:
@@ -743,7 +744,8 @@ longer exists, so an entry there gets a new date rather than an edit.
 | router (intent classification, 98.1% on 54 cases) | done, tested |
 | clinical internal router (shape-based, 100% on 70 cases) | done, tested |
 | shock category contract (20 cases, rule-based reference arm) | done, tested |
-| sepsis screen contract (14 cases, medprotocol reference arm) | done, tested — awaiting a measured run for RESULTS.md |
+| sepsis screen contract (14 cases, medprotocol reference arm) | done — 100% on three gates (pre–score-fidelity, 2026-09-10); four-gate re-measurement pending, `RESULTS.md` |
+| shock-pipeline prose→classification (3 extraction cases, chained) | done, tested — **provisional, unmeasured** |
 | verifier (30 cases, 100% catch, 0% FP on 4B model) | done, tested |
 | pipeline mode (multi-profile orchestration, state passing, checkpointing) | done, tested |
 | clinical-verified pipeline (extract → verify, fidelity eval) | done, tested |

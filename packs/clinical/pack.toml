@@ -305,10 +305,12 @@ literatureSchemaName = "literature_search"
 shockSchemaName = "shock_category"
 # The shock-extraction pass, its own label so a server log can tell extraction from reasoning.
 shockExtractionSchemaName = "shock_exam_extraction"
+# The shock-pipeline pass, chaining extraction and classification end-to-end.
+shockPipelineSchemaName = "shock_pipeline"
 # The sepsis-screening pass, its own label for the same reason.
 sepsisSchemaName = "sepsis_screen"
 
-# Which task `eval --profile clinical` runs when none is named. `--task all` runs the seven,
+# Which task `eval --profile clinical` runs when none is named. `--task all` runs the eight,
 # and each clears its own floor: averaging them would let a ceiling on one hide a failure in
 # another, which matters here because vital signs is the mature task and the newer ones are
 # not.
@@ -519,7 +521,7 @@ shapes = ["dictation"]
 # while the VERSION is a property of this contract, which is why only the first is overridable.
 # The version is checked once per run and a mismatch refuses it.
 [clinical.medprotocol]
-command = ["node", "/home/enrique/projects/medprotocol-core/packages/medprotocol/dist/index.js"]
+command = ["medprotocol"]
 version = "0.7.10"
 
 [clinical.shockExam]
