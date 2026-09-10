@@ -1,7 +1,7 @@
 /** The browser graph's model stays deterministic and testable without a renderer. */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildExpandedPipelinesGraph, buildGraph, buildPipelinesGraph, buildProgressGraph, buildProjectGraph } from '../web/src/lib/graph.ts'
+import { buildExpandedPipelinesGraph, buildGraph, buildPipelinesGraph, buildProgressGraph, buildProjectGraph } from '../web/src/lib/graph/index.ts'
 import { emptyState } from '../src/tui/state.ts'
 
 test('an active nested stage marks its step lineage and renders inline', () => {

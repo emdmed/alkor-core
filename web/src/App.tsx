@@ -9,7 +9,7 @@ import { Drawer } from './components/Drawer.tsx'
 import { EventLog } from './components/EventLog.tsx'
 import { ChatPanel } from './components/ChatPanel.tsx'
 import { useMedextract } from './hooks/useMedextract.ts'
-import type { GraphNodeData } from './lib/graph.ts'
+import type { GraphNodeData } from './lib/graph/index.ts'
 
 const DEFAULT_URL = (import.meta.env.VITE_MEDEXTRACT_URL as string | undefined) ?? 'http://127.0.0.1:3000'
 

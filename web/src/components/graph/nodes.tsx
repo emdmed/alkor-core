@@ -2,11 +2,11 @@
  * Custom ReactFlow node components for the pipeline graph.
  *
  * These are deliberately dumb: they paint `GraphNodeData` and wire the handles that
- * the (pure) layout in `lib/graph.ts` connects. Status colours and glyphs mirror the
+ * the (pure) layout in `lib/graph/` connects. Status colours and glyphs mirror the
  * terminal TUI and the rest of the dashboard via the `g-*` CSS classes in styles.css.
  */
 import { Handle, Position, type NodeProps } from '@xyflow/react'
-import type { GraphNode, GraphNodeData } from '../../lib/graph.ts'
+import type { GraphNode, GraphNodeData } from '../../lib/graph/index.ts'
 import { fmtSec } from '../../lib/format.ts'
 import { Braces, Check, ChevronDown, ChevronRight, Circle, Cpu, FileInput, FileOutput, GitBranch, LoaderCircle, Orbit, X } from 'lucide-react'
 
