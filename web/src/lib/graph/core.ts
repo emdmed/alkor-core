@@ -121,11 +121,16 @@ export const flowEdge = (
     branch: { stroke: 'var(--route-selected)', width: 2.4 },
     ghost: { stroke: 'var(--route-possible)', width: 1.2, dash: '5 4' },
   }
-  const c = COLORS[kind]
+  // The edge into a node that is running right now carries the document: it takes the
+  // live colour and the marching dash, so "where is the work" is answerable from the
+  // canvas at any zoom, without reading a single label.
+  const live = target.data.status === 'active'
+  const c = live ? { stroke: 'var(--primary)', width: 2.4, dash: undefined } : COLORS[kind]
   return {
     id: `${source.id}→${target.id}${label ? `:${label}` : ''}`,
     source: source.id,
     target: target.id,
+    className: live ? 'is-live' : undefined,
     sourceHandle,
     targetHandle,
     type: kind === 'ghost' ? 'smoothstep' : 'smoothstep',
@@ -169,7 +174,9 @@ export const CHIP_W = 168
 export const GAP = 76
 export const SUB_GAP = 22
 const COLUMN_PITCH = STEP_W + GAP
-export const ROW_GAP = 82
+/* Enough vertical air for a smoothstep edge to turn and land its arrowhead, and no
+   more: the old 82 left the entry node marooned above a board it belongs to. */
+export const ROW_GAP = 60
 export const columnX = (rank: number): number => MAIN_X + rank * COLUMN_PITCH
 
 /* Compact-card geometry contract. A CompactPipelineNode card is rendered by the browser
@@ -218,7 +225,8 @@ export const layoutHeightOf = (n: GraphNode): number => {
         + (d.inputRef ? 18 : 0)
         + ((d.childCount ?? 0) > 0 ? 24 : 0)
     case 'group': return 0
-    case 'gateway': return 56
+    // The front door grows a line once it has a decision to report.
+    case 'gateway': return d.chosenProfile ? 76 : 56
     case 'compact-pipeline': {
       const steps = (n.data.steps as CompactStepData[] | undefined) ?? []
       const routerCount = steps.filter((step) => step.router && step.chosenProfile).length

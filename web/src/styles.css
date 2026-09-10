@@ -122,7 +122,12 @@ body {
 }
 
 ::selection { background: color-mix(in oklab, var(--primary) 25%, white); color: var(--foreground); }
-input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .inspected-json {
+input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-json {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+/* Inside a graph node, monospace marks machine output — identifiers, timings, token
+   counts — and never the node's own name or its explanatory line. */
+.g-meta, .g-time, .g-prof, .g-detail, .g-shape, .g-chip-meta, .g-transfer code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
@@ -1443,8 +1448,19 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   }
 }
 
-/* --- compact pipeline node -------------------------------------------------- */
+/* --- compact pipeline node --------------------------------------------------
+
+   Three tiers share one card grammar and are told apart by material, never by a
+   label: the workflow card is the lifted white surface that owns the document, a
+   route card is recessed into the canvas because it runs INSIDE that workflow, and
+   colour is reserved for work that actually happened. At rest the whole board is
+   paper and ink, so the first tint on it is information.
+
+   Row heights here are a layout contract: `core.ts` advances the deterministic
+   sibling layout by them and nothing measures the DOM first. Changing a min-height
+   below means changing its constant in the same edit. */
 .g-compact {
+  position: relative;
   width: 360px;
   box-sizing: border-box;
   background: var(--card);
@@ -1453,100 +1469,133 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   padding: 0;
   font-size: 0.75rem;
   color: var(--foreground);
-  box-shadow: 0 7px 16px -17px oklch(30% 0.04 210 / 0.55);
+  box-shadow: 0 8px 18px -16px oklch(30% 0.04 210 / 0.5);
   overflow: hidden;
   transition: border-color 180ms ease-out, background-color 180ms ease-out, box-shadow 180ms ease-out;
 }
 .g-compact:hover { border-color: var(--ring); }
-.g-compact.is-active { border-color: color-mix(in oklab, var(--success) 72%, var(--border)); }
-.g-compact.is-done { border-color: color-mix(in oklab, var(--success) 48%, var(--border)); background: color-mix(in oklab, var(--success) 3%, var(--card)); }
-.g-compact.is-failed { border-color: color-mix(in oklab, var(--destructive) 48%, var(--border)); background: var(--failed-surface); }
-.g-compact.is-idle { background: var(--queued-surface); }
-.g-compact.is-muted { opacity: 0.62; }
+.g-compact.is-active {
+  border-color: color-mix(in oklab, var(--primary) 55%, var(--border));
+  box-shadow: 0 10px 22px -16px color-mix(in oklab, var(--primary) 45%, transparent);
+}
+.g-compact.is-done { border-color: color-mix(in oklab, var(--success) 45%, var(--border)); }
+.g-compact.is-failed { border-color: color-mix(in oklab, var(--destructive) 45%, var(--border)); background: var(--failed-surface); }
+.g-compact.is-muted { opacity: 0.7; }
 
 /* A route card is one branch of a profile's own decision, nested in the workflow that
-   runs it: same card language, lighter frame, so it reads as contained rather than peer. */
-.g-compact.is-route { border-style: dashed; box-shadow: none; }
+   runs it: same card language, recessed into the canvas, so it reads as contained
+   rather than as a peer of the workflow above it. */
+.g-compact.is-route {
+  background: color-mix(in oklab, var(--muted) 45%, var(--card));
+  border-style: dashed;
+  box-shadow: none;
+}
 .g-compact.is-route.is-active,
 .g-compact.is-route.is-done,
 .g-compact.is-route.is-failed { border-style: solid; }
-.g-compact.is-route .c-header { background: color-mix(in oklab, var(--secondary) 22%, transparent); }
-.c-header-route {
-  font-size: 0.62rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--muted-foreground);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 1px 6px;
-  flex: none;
+.g-compact.is-route .c-header {
+  background: transparent;
+  border-bottom-color: color-mix(in oklab, var(--border) 70%, transparent);
 }
+.g-compact.is-route .c-header-label { font-size: 0.76rem; font-weight: 650; }
+
 .c-route-note {
   box-sizing: border-box;
   min-height: 22px;
-  padding: 3px 11px;
-  font-size: 0.68rem;
-  color: var(--muted-foreground);
-  border-bottom: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+  padding: 4px 12px;
+  font-size: 0.66rem;
+  letter-spacing: 0.01em;
+  color: color-mix(in oklab, var(--muted-foreground) 88%, transparent);
 }
 .is-failed > .c-route-note { color: var(--destructive); }
 
 .c-header {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   min-height: 38px;
-  padding: 7px 11px;
+  padding: 7px 12px;
   border-bottom: 1px solid var(--border);
-  background: color-mix(in oklab, var(--secondary) 34%, transparent);
+  background: color-mix(in oklab, var(--secondary) 30%, transparent);
 }
-.c-header-glyph { display: inline-flex; align-items: center; justify-content: center; width: 16px; color: var(--success); flex: none; }
+.is-active > .c-header { background: color-mix(in oklab, var(--primary) 10%, var(--card)); }
+.is-done > .c-header { background: color-mix(in oklab, var(--success) 11%, var(--card)); }
+.is-failed > .c-header { background: color-mix(in oklab, var(--destructive) 8%, var(--card)); }
+
+.c-header-glyph { display: inline-flex; align-items: center; justify-content: center; width: 14px; color: var(--success); flex: none; }
 .is-active .c-header-glyph { color: var(--primary); }
 .is-failed .c-header-glyph { color: var(--destructive); }
-.is-idle .c-header-glyph { color: var(--muted-foreground); }
+.is-idle .c-header-glyph { display: none; }
 .c-header-glyph svg { width: 13px; height: 13px; }
-.c-header-label { font-weight: 700; color: var(--foreground); font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.c-header-status {
-  margin-left: auto;
-  padding: 1px 6px;
-  border-radius: 8px;
-  background: color-mix(in oklab, var(--success) 13%, var(--card));
-  color: color-mix(in oklab, var(--success) 82%, var(--foreground));
-  font-size: 0.7rem;
+.c-header-label {
+  flex: 1 1 auto;
+  min-width: 0;
   font-weight: 700;
+  font-size: 0.83rem;
+  letter-spacing: -0.012em;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* What the card holds, where a repeated "Queued" chip would have gone. */
+.c-header-summary {
+  flex: none;
+  font-size: 0.68rem;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.is-active .c-header-status { background: color-mix(in oklab, var(--primary) 12%, var(--card)); color: var(--primary); }
-.is-failed .c-header-status { background: color-mix(in oklab, var(--destructive) 10%, var(--card)); color: var(--destructive); }
-.is-idle .c-header-status { background: var(--muted); color: var(--muted-foreground); }
-.c-header-time { color: var(--muted-foreground); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.7rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.c-header-inspect {
+.c-header-status {
   flex: none;
-  margin-left: 6px;
-  padding: 3px 8px;
-  min-height: 22px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: transparent;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: nowrap;
+  background: color-mix(in oklab, var(--primary) 14%, var(--card));
+  color: color-mix(in oklab, var(--primary) 55%, var(--foreground));
+}
+.is-failed .c-header-status { background: color-mix(in oklab, var(--destructive) 12%, var(--card)); color: var(--destructive); }
+.c-header-time {
+  flex: none;
   color: var(--muted-foreground);
-  font-family: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.c-header-inspect {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-right: -3px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: color-mix(in oklab, var(--muted-foreground) 80%, transparent);
   cursor: pointer;
   position: relative;
 }
+.c-header-inspect svg { width: 13px; height: 13px; }
 .c-header-inspect::before {
   content: '';
   position: absolute;
   inset: -8px -6px -8px -6px;
 }
-.c-header-inspect:hover { color: var(--primary); border-color: var(--ring); }
+.c-header-inspect:hover { background: color-mix(in oklab, var(--primary) 12%, transparent); color: var(--primary); }
 .c-header-inspect:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
 
+/* 3px of progress under the header, and nothing at all before the first step lands. */
 .c-progress {
   height: 3px;
-  background: var(--muted);
+  background: color-mix(in oklab, var(--muted) 70%, transparent);
   overflow: hidden;
 }
+.c-progress-empty { background: transparent; }
 .c-progress-fill {
   width: 100%;
   height: 100%;
@@ -1554,37 +1603,49 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   transform-origin: left center;
   transition: transform 280ms ease-out;
 }
-.c-progress-active {
-  background: var(--primary);
-  animation: c-progress-pulse 1.4s ease-in-out infinite;
-}
-@keyframes c-progress-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.55; }
+.c-progress-active { background: var(--primary); }
+/* The finished steps are solid; a light scans the part that has not happened yet. */
+.c-progress-running {
+  background-image: linear-gradient(90deg, transparent, color-mix(in oklab, var(--primary) 85%, transparent), transparent);
+  background-repeat: no-repeat;
+  background-size: 32% 100%;
+  animation: c-scan 1.9s cubic-bezier(0.45, 0, 0.55, 1) infinite;
 }
 
+/* The two rows that are not work: where the document came in and what left. */
 .c-terminal {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   min-height: 28px;
-  padding: 5px 11px;
-  font-size: 0.7rem;
+  padding: 5px 12px;
+  font-size: 0.66rem;
   color: var(--muted-foreground);
-  border-bottom: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
-  background: color-mix(in oklab, var(--muted) 30%, transparent);
+  background: color-mix(in oklab, var(--muted) 26%, transparent);
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 55%, transparent);
 }
-.c-terminal:last-child { border-bottom: 0; }
-.c-terminal-icon { opacity: 0.65; flex: none; }
-.c-terminal-label { font-weight: 650; }
-.c-terminal-meta { margin-left: auto; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.7rem; font-variant-numeric: tabular-nums; }
+.c-terminal:last-child { border-bottom: 0; border-top: 1px solid color-mix(in oklab, var(--border) 55%, transparent); }
+.c-terminal-icon { width: 12px; height: 12px; opacity: 0.6; flex: none; }
+.c-terminal-label {
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.c-terminal-meta {
+  margin-left: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  text-transform: none;
+}
 
 .c-steps {
   display: flex;
   flex-direction: column;
 }
 .c-empty {
-  padding: 10px 11px;
+  padding: 10px 12px;
   color: var(--muted-foreground);
   font-size: 0.7rem;
   font-style: italic;
@@ -1597,49 +1658,54 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 .c-step {
   display: flex;
   flex-direction: column;
-  padding: 0 10px;
-  border-bottom: 1px solid color-mix(in oklab, var(--border) 50%, transparent);
+  padding: 0 12px;
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 45%, transparent);
 }
 .c-step:last-child { border-bottom: 0; }
-.c-step.is-active { background: color-mix(in oklab, var(--success) 11%, var(--card)); }
-.c-step.is-done { background: color-mix(in oklab, var(--success) 4%, var(--card)); }
+/* Idle rows stay paper: colour on this card always means work happened. */
+.c-step.is-active { background: color-mix(in oklab, var(--primary) 9%, var(--card)); }
+.c-step.is-done { background: color-mix(in oklab, var(--success) 5%, var(--card)); }
 .c-step.is-failed { background: color-mix(in oklab, var(--destructive) 6%, var(--card)); }
-.c-step.is-idle { background: color-mix(in oklab, var(--muted) 42%, var(--card)); color: var(--muted-foreground); }
-.c-step.c-step-router { background: color-mix(in oklab, var(--caution) 6%, transparent); }
-.c-step.c-step-router.is-active { background: color-mix(in oklab, var(--caution) 13%, var(--card)); }
+.c-step.c-step-router.is-active { background: color-mix(in oklab, var(--caution) 12%, var(--card)); }
 
 .c-step-main {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   min-height: 36px;
   cursor: default;
 }
 .c-step-num {
-  width: 19px;
-  height: 19px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background: var(--muted);
-  color: var(--muted-foreground);
-  font-size: 0.7rem;
-  font-weight: 700;
+  width: 13px;
   flex: none;
+  text-align: right;
+  color: var(--muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
 }
-.c-step-status { display: inline-flex; align-items: center; justify-content: center; width: 13px; color: var(--muted-foreground); flex: none; }
+.c-step-status { display: inline-flex; align-items: center; justify-content: center; width: 12px; color: var(--muted-foreground); flex: none; }
 .c-step-status svg { width: 12px; height: 12px; }
-.is-active .c-step-status { color: var(--primary); }
-.is-done .c-step-status { color: var(--success); }
-.is-failed .c-step-status { color: var(--destructive); }
-.c-step-label { flex: 1 1 auto; min-width: 5ch; color: var(--foreground); font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.is-idle .c-step-label { color: var(--muted-foreground); }
-.c-step-meta { display: inline-flex; align-items: baseline; justify-content: flex-end; gap: 7px; min-width: 0; max-width: 48%; margin-left: auto; flex: 0 1 auto; }
+.is-active > .c-step-main > .c-step-status { color: var(--primary); }
+.is-done > .c-step-main > .c-step-status { color: var(--success); }
+.is-failed > .c-step-main > .c-step-status { color: var(--destructive); }
+.c-step-label {
+  flex: 1 1 auto;
+  min-width: 5ch;
+  color: var(--foreground);
+  font-weight: 600;
+  font-size: 0.76rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.is-idle > .c-step-main > .c-step-label { color: color-mix(in oklab, var(--foreground) 82%, transparent); }
+.c-step-meta { display: inline-flex; align-items: baseline; justify-content: flex-end; gap: 8px; min-width: 0; max-width: 52%; margin-left: auto; flex: 0 1 auto; }
+/* Only ever painted when the step hands off to another profile — the card names its own. */
 .c-step-profile {
   color: var(--muted-foreground);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1656,12 +1722,13 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   display: inline-grid;
   place-items: center;
   flex: none;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
+  margin-right: -5px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 7px;
   background: transparent;
-  color: var(--muted-foreground);
+  color: color-mix(in oklab, var(--muted-foreground) 80%, transparent);
   cursor: pointer;
   position: relative;
 }
@@ -1670,7 +1737,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 .c-step-toggle::before {
   content: '';
   position: absolute;
-  inset: -10px -6px -10px -6px;
+  inset: -11px -8px -11px -8px;
 }
 .c-step-toggle:hover { background: var(--muted); color: var(--foreground); }
 .c-step-toggle:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
@@ -1680,14 +1747,14 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   align-items: center;
   gap: 6px;
   min-height: 27px;
-  padding: 0 0 6px 46px;
+  padding: 0 0 6px 33px;
   color: var(--muted-foreground);
   font-size: 0.7rem;
 }
 .c-step-router-info svg { width: 10px; height: 10px; flex: none; opacity: 0.7; }
 .c-step-route-label { font-weight: 600; }
-.c-step-chosen { color: var(--success); font-weight: 700; }
-.c-step-conf { color: var(--ev-pipeline); font-weight: 700; }
+.c-step-chosen { color: color-mix(in oklab, var(--success) 52%, var(--foreground)); font-weight: 700; }
+.c-step-conf { color: var(--ev-pipeline); font-weight: 700; font-variant-numeric: tabular-nums; }
 .c-step-rule {
   font-size: 0.7rem;
   border: 1px solid var(--border);
@@ -1696,41 +1763,137 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   color: var(--muted-foreground);
 }
 
+/* Disclosed stages hang off a guide rail under the step that ran them. */
 .c-stages {
   display: flex;
   flex-direction: column;
-  padding: 3px 0 6px 18px;
-  border-left: 1px solid var(--border);
-  margin: 0 0 4px 46px;
+  padding: 3px 0 6px 16px;
+  border-left: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+  margin: 0 0 4px 33px;
 }
 
 .c-stage {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 7px;
   padding: 2px 0;
-  font-size: 0.7rem;
-  color: var(--muted-foreground);
+  font-size: 0.71rem;
+  color: color-mix(in oklab, var(--foreground) 74%, transparent);
 }
-.c-stage-dot {
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
+.c-stage-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
   flex: none;
+  color: color-mix(in oklab, var(--muted-foreground) 70%, transparent);
 }
-.c-stage.is-active .c-stage-dot { background: var(--primary); }
-.c-stage.is-done .c-stage-dot { background: var(--success); }
-.c-stage.is-failed .c-stage-dot { background: var(--destructive); }
-.c-stage.is-idle .c-stage-dot { background: var(--muted-foreground); opacity: 0.5; }
-.c-stage svg { width: 9px; height: 9px; flex: none; }
+.c-stage.is-active .c-stage-glyph { color: var(--primary); }
+.c-stage.is-done .c-stage-glyph { color: var(--success); }
+.c-stage.is-failed .c-stage-glyph { color: var(--destructive); }
+.c-stage.is-active { color: var(--foreground); font-weight: 600; }
+.c-stage svg { width: 11px; height: 11px; flex: none; }
 .c-stage-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.c-stage-meta { display: inline-flex; align-items: baseline; gap: 7px; margin-left: auto; white-space: nowrap; flex: none; }
-.c-stage-time { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.7rem; font-variant-numeric: tabular-nums; }
-.c-stage-llm { font-size: 0.7rem; }
+.c-stage-meta { display: inline-flex; align-items: baseline; gap: 8px; margin-left: auto; white-space: nowrap; flex: none; color: var(--muted-foreground); }
+.c-stage-time { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.69rem; font-variant-numeric: tabular-nums; }
+.c-stage-llm { font-size: 0.69rem; }
+
+/* --- motion: a run in flight --------------------------------------------------
+
+   A case here takes tens of seconds on purpose — a small model on local hardware —
+   so motion's whole job is to say the machine is alive and to say WHERE the work is.
+   One material carries it: a slow light travelling in the direction the document
+   moves, along the edge into the running card, across the running row, and through
+   the part of the progress track that has not happened yet. Everything else is
+   arrival: a check that stamps in, a row that settles out of its landing colour. The
+   running row itself stays still — its tint and spinner already say so, and a light
+   crossing the text is harder to read past than it is worth.
+   Nothing loops except inside a card that is actually running, so a finished board
+   is completely still. */
+
+@keyframes c-scan {
+  from { background-position: -55% 0; }
+  to { background-position: 155% 0; }
+}
+
+/* A running card breathes at the edge of its own frame: one ring, no glow. */
+.g-compact.is-active::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--primary);
+  border-radius: 11px;
+  opacity: 0.3;
+  pointer-events: none;
+  animation: c-breathe 3.2s ease-in-out infinite;
+}
+@keyframes c-breathe {
+  0%, 100% { opacity: 0.14; }
+  50% { opacity: 0.5; }
+}
+
+/* Arrivals, and only while the card is still working: a finished board never flashes. */
+.g-compact.is-active .c-step.is-done { animation: c-settle 760ms cubic-bezier(0.16, 1, 0.3, 1) 1; }
+@keyframes c-settle {
+  from { background-color: color-mix(in oklab, var(--success) 22%, var(--card)); }
+  to { background-color: color-mix(in oklab, var(--success) 5%, var(--card)); }
+}
+.g-compact.is-active .c-step.is-done .c-step-status svg { animation: c-stamp 260ms cubic-bezier(0.16, 1, 0.3, 1) 1; }
+@keyframes c-stamp {
+  from { opacity: 0; transform: scale(0.5); }
+  to { opacity: 1; transform: none; }
+}
+/* Stages land one at a time inside the step that is running them. */
+.g-compact.is-active .c-stage { animation: c-stage-in 200ms ease-out both; }
+@keyframes c-stage-in {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* A card arriving on the canvas rises into place once, and never again. Muted cards
+   land at their own resting opacity so the entrance cannot un-mute them. */
+.react-flow__node .g-compact:not(.is-muted),
+.react-flow__node .g-gateway { animation: g-node-in 300ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+.react-flow__node .g-compact.is-muted { animation: g-node-in-muted 300ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+@keyframes g-node-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes g-node-in-muted {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 0.7; transform: none; }
+}
+
+/* The edge that currently carries the document. */
+.react-flow__edge.is-live .react-flow__edge-path {
+  stroke-dasharray: 4 8;
+  animation: g-edge-flow 700ms linear infinite;
+}
+@keyframes g-edge-flow {
+  to { stroke-dashoffset: -12; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .c-progress-fill, .g-compact { transition: none; }
   .c-progress-active, .status-spin { animation: none; }
+  /* Keep every state legible, drop the travel: no scanning light, no breathing ring,
+     no entrances, no marching edge. An arrival still fades in, because a step landing
+     is the one event worth noticing. */
+  .c-progress-running,
+  .g-compact.is-active::after,
+  .g-compact.is-active .c-step.is-done,
+  .g-compact.is-active .c-stage,
+  .react-flow__node .g-compact:not(.is-muted),
+  .react-flow__node .g-compact.is-muted,
+  .react-flow__node .g-gateway,
+  .react-flow__edge.is-live .react-flow__edge-path { animation: none; }
+  /* A frozen gradient is a stray highlight, not a still frame of a sweep. */
+  .c-progress-running { background-image: none; }
+  .g-compact.is-active .c-step.is-done .c-step-status svg { animation: c-stamp-in 200ms ease-out 1; }
+}
+@keyframes c-stamp-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* compact mode toggle button */
@@ -1751,9 +1914,43 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 .react-flow__edge-path { stroke-linecap: round; }
 .react-flow__edge-text { fill: var(--muted-foreground); font-size: 0.7rem; }
 
-/* --- gateway node (product pipeline front door) ------------------------------- */
+/* --- gateway node (product pipeline front door) -------------------------------
+   The front door is where the board starts reading, so it takes the compact card's
+   voice — same name weight, same quiet paper — and earns its distinction from being
+   the one node that states a decision rather than listing work. */
 .g-gateway { width: 340px; }
 .g-gateway .g-card {
-  background: color-mix(in oklab, var(--caution) 8%, var(--card));
-  border-color: color-mix(in oklab, var(--caution) 42%, var(--border));
+  gap: 3px;
+  padding: 9px 12px;
+  background: var(--card);
+  border-color: var(--border);
+  box-shadow: 0 8px 18px -16px oklch(30% 0.04 210 / 0.5);
 }
+.g-gateway .g-label {
+  font-size: 0.83rem;
+  font-weight: 700;
+  letter-spacing: -0.012em;
+}
+.g-gateway .g-glyph { color: var(--muted-foreground); }
+.g-gateway.g-done .g-glyph,
+.g-gateway .g-done .g-glyph { color: var(--success); }
+/* "ENTRY" is a wayfinding note, not a badge competing with the node's name. */
+.g-gateway .g-entry-tag {
+  margin-left: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+}
+.g-gateway .g-work-badge {
+  background: color-mix(in oklab, var(--caution) 20%, var(--card));
+  color: var(--ev-pipeline);
+  font-size: 0.66rem;
+}
+.g-gateway .g-meta { font-size: 0.68rem; }
+.g-gateway .g-decide { gap: 6px; font-size: 0.7rem; }
+.g-gateway .g-decide svg { width: 10px; height: 10px; flex: none; opacity: 0.7; }
+.g-route-label { font-weight: 600; }

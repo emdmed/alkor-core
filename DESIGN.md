@@ -116,7 +116,9 @@ Primary workspace surfaces use gently rounded 14px corners. Graph nodes use a sl
 
 ### Execution Graph
 
-The graph uses a pale dotted paper canvas, muted data edges, mint selected-route edges, and pale dashed possible-route edges. Keep graph labels and metadata monospaced for scanning.
+The graph uses a pale dotted paper canvas, muted data edges, mint selected-route edges, and pale dashed possible-route edges. Node metadata — identifiers, profiles, timings, token counts — stays monospaced for scanning; a node's own name and its explanatory line are humanist sans, like every other name in the workspace.
+
+Three tiers share one card grammar and are told apart by material rather than by a label: the product pipeline is the front door, a workflow card is the lifted white surface that owns the document, and a route card is recessed into the canvas because it runs inside that workflow. State is carried by glyph, surface tint, and progress; a status word appears only for work in flight or work that failed, so a board where nothing has run yet stays paper and ink and the first colour on it means something happened.
 
 ## Do's and Don'ts
 

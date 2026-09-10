@@ -2,12 +2,18 @@
  * CompactPipelineNode — renders a pipeline as a single container node with all
  * steps listed inside it, dramatically reducing canvas size while keeping all
  * workflow steps visible at all times.
+ *
+ * The card reads as three tiers on one canvas: the product pipeline decides, a
+ * workflow card owns the document that arrived, and a route card is one branch that
+ * workflow could take. Tier shows in fill and weight; state shows in the glyph, the
+ * surface, and a word that only appears when something is actually happening. A board
+ * where nothing has run yet stays quiet, so the first colour on it means work.
  */
 import { memo, useLayoutEffect } from 'react'
 import { Handle, Position, useUpdateNodeInternals, type NodeProps } from '@xyflow/react'
 import type { GraphNode, GraphNodeData, CompactStepData, CompactStageData } from '../../lib/graph/index.ts'
 import { fmtSec } from '../../lib/format.ts'
-import { ArrowRight, Braces, Check, ChevronDown, ChevronRight, Cpu, FileInput, FileOutput, GitBranch, LoaderCircle, Orbit, X } from 'lucide-react'
+import { ArrowRight, Braces, Check, ChevronDown, ChevronRight, Cpu, FileInput, FileOutput, GitBranch, LoaderCircle, Orbit, PanelRight, X } from 'lucide-react'
 
 const statusClass = (status: CompactStepData['status']): string => `is-${status}`
 
@@ -18,11 +24,28 @@ const StatusIcon = ({ status }: { status: CompactStepData['status'] }) =>
   status === 'active' ? <LoaderCircle className="status-spin" /> : status === 'done' ? <Check /> : status === 'failed' ? <X /> : null
 
 const OperationIcon = ({ operation }: { operation?: string }) => {
-  if (operation === 'model') return <Cpu size={10} />
-  if (operation === 'code') return <Braces size={10} />
-  if (operation === 'decision') return <GitBranch size={10} />
-  if (operation === 'orchestrator') return <Orbit size={10} />
+  if (operation === 'model') return <Cpu size={11} />
+  if (operation === 'code') return <Braces size={11} />
+  if (operation === 'decision') return <GitBranch size={11} />
+  if (operation === 'orchestrator') return <Orbit size={11} />
   return null
+}
+
+/**
+ * What the header says about progress when no status word is showing.
+ *
+ * At rest every card on the board is queued, so a "Queued" chip on each of them is the
+ * same sentence four times over and crowds out the card's name. The count is what an
+ * operator cannot already see: how much work this card holds, and how far in it is.
+ */
+const summaryOf = (steps: CompactStepData[], unit: 'step' | 'pass'): string | undefined => {
+  if (steps.length === 0) return undefined
+  const plural = unit === 'pass' ? 'passes' : 'steps'
+  const active = steps.findIndex((step) => step.status === 'active')
+  if (active >= 0) return `${unit} ${active + 1} of ${steps.length}`
+  const done = steps.filter((step) => step.status === 'done').length
+  if (done > 0 && done < steps.length) return `${done} of ${steps.length} ${plural}`
+  return `${steps.length} ${steps.length === 1 ? unit : plural}`
 }
 
 const Progress = ({ steps }: { steps: CompactStepData[] }) => {
@@ -31,7 +54,7 @@ const Progress = ({ steps }: { steps: CompactStepData[] }) => {
   const active = steps.some((step) => step.status === 'active')
   const pct = (done / steps.length) * 100
   return (
-    <div className="c-progress">
+    <div className={`c-progress${done === 0 && !active ? ' c-progress-empty' : ''}${active ? ' c-progress-running' : ''}`}>
       <div
         className={`c-progress-fill${active ? ' c-progress-active' : ''}`}
         style={{ transform: `scaleX(${pct / 100})` }}
@@ -51,8 +74,9 @@ const StageRow = ({ stage }: { stage: CompactStageData }) => (
     aria-label={`${stage.name}: ${statusLabel(stage.status)}`}
     style={stage.depth > 0 ? { paddingLeft: stage.depth * 14, marginLeft: 0 } : undefined}
   >
-    <span className="c-stage-dot" title={statusLabel(stage.status)} />
-    <OperationIcon operation={stage.operation} />
+    <span className="c-stage-glyph" title={statusLabel(stage.status)}>
+      <OperationIcon operation={stage.operation} />
+    </span>
     <span className="c-stage-name">{stage.name}</span>
     {(stage.wallMs != null || stage.llm) && (
       <span className="c-stage-meta">
@@ -63,8 +87,17 @@ const StageRow = ({ stage }: { stage: CompactStageData }) => (
   </div>
 )
 
-const StepRow = ({ step, expanded, onToggle }: { step: CompactStepData; expanded: boolean; onToggle: () => void }) => {
+const StepRow = ({ step, ownerProfile, expanded, onToggle }: {
+  step: CompactStepData
+  ownerProfile?: string
+  expanded: boolean
+  onToggle: () => void
+}) => {
   const hasStages = step.stages.length > 0
+  // The card already names the profile it runs; repeating it on every row spends the
+  // widest column in the card on a word the reader just read, and truncates the one
+  // case that matters — a step that hands off to a DIFFERENT profile.
+  const profile = step.profile && step.profile !== ownerProfile ? step.profile : undefined
   return (
     <div className={`c-step ${statusClass(step.status)}${step.router ? ' c-step-router' : ''}`}>
       <div className="c-step-main">
@@ -75,7 +108,7 @@ const StepRow = ({ step, expanded, onToggle }: { step: CompactStepData; expanded
         </span>
         <span className="c-step-label">{step.name}</span>
         <span className="c-step-meta">
-          <span className="c-step-profile">{step.profile}</span>
+          {profile && <span className="c-step-profile" title={step.profile}>{profile}</span>}
           {step.wallMs != null && <span className="c-step-time">{fmtSec(step.wallMs)}</span>}
         </span>
         {hasStages && (
@@ -85,7 +118,7 @@ const StepRow = ({ step, expanded, onToggle }: { step: CompactStepData; expanded
             aria-label={expanded ? `Hide stages for step ${step.name}` : `Show stages for step ${step.name}`}
             aria-expanded={expanded}
           >
-            {expanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+            {expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
           </button>
         )}
       </div>
@@ -124,6 +157,11 @@ export const CompactPipelineNode = memo(({ id, data }: NodeProps<GraphNode>) => 
   // A route card is one branch of a profile's own decision, drawn inside the workflow that
   // contains it. It carries no Input/Output rows: the document arrived at the workflow.
   const isRoute = d.terminals === false
+  // A workflow runs steps; a route runs the passes of one syndrome. Naming them apart is
+  // how the two tiers stay distinguishable once both are collapsed to a list of rows.
+  const summary = summaryOf(steps, isRoute ? 'pass' : 'step')
+  // Only a state an operator can act on earns a word: work in flight, or work that broke.
+  const flagged = d.status === 'active' || d.status === 'failed'
 
   return (
     <div className={`g-compact ${statusClass(d.status)}${d.muted ? ' is-muted' : ''}${isRoute ? ' is-route' : ''}`}>
@@ -133,17 +171,19 @@ export const CompactPipelineNode = memo(({ id, data }: NodeProps<GraphNode>) => 
       <div className="c-header">
         <span className="c-header-glyph"><StatusIcon status={d.status} /></span>
         <span className="c-header-label">{d.label}</span>
-        {isRoute && d.routeOf && <span className="c-header-route">{d.routeOf} route</span>}
-        <span className="c-header-status">{statusLabel(d.status)}</span>
+        {flagged
+          ? <span className="c-header-status">{statusLabel(d.status)}</span>
+          : summary && <span className="c-header-summary">{summary}</span>}
         {d.wallMs != null && <span className="c-header-time">{fmtSec(d.wallMs)}</span>}
         {d.onInspect && (
           <button
             className="c-header-inspect"
             type="button"
-            title="Inspect this workflow"
+            title={`Inspect ${d.label}`}
             onClick={(event) => { event.stopPropagation(); d.onInspect?.() }}
           >
-            Inspect
+            <PanelRight aria-hidden="true" />
+            <span className="sr-only">Inspect {d.label}</span>
           </button>
         )}
       </div>
@@ -167,6 +207,7 @@ export const CompactPipelineNode = memo(({ id, data }: NodeProps<GraphNode>) => 
           <StepRow
             key={step.stepNo}
             step={step}
+            ownerProfile={d.profile}
             expanded={Boolean(step.expanded)}
             onToggle={step.onToggle ?? (() => {})}
           />

@@ -928,7 +928,11 @@ test('compact graph paints the selected workflow branch and mutes the rest', () 
   assert.equal(alternate.data.muted, true)
   assert.equal(branch.data?.kind, 'branch')
   assert.equal(branch.data?.label, 'selected')
-  assert.equal(branch.style?.stroke, 'var(--route-selected)')
+  // The workflow is running, so the edge into it is the one carrying the document: it
+  // takes the live colour and the marching dash rather than the settled route green.
+  assert.equal(branch.className, 'is-live')
+  assert.equal(branch.style?.stroke, 'var(--primary)')
+  assert.equal(ghost.className, undefined, 'a route nothing is running on never marches')
   assert.equal(ghost.data?.kind, 'ghost')
   assert.equal(graph.edges.filter((edge) => edge.data?.kind === 'branch').length, 1, 'exactly one workflow is highlighted')
 })
@@ -1055,7 +1059,10 @@ test('compact graph derives active, done, failed, and stopped workflow status', 
   done.topology = defs
   done.runs.set('run-1', { runId: 'run-1', profile: 'wf', status: 'completed', wallMs: 1200 })
   done.pipelines.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'work', profile: 'worker', status: 'completed', ok: true }] })
-  assert.equal(buildCompactGraph(done, 'run-1', new Set()).nodes.find((node) => node.id === 'compact-run-1')!.data.status, 'done')
+  const doneGraph = buildCompactGraph(done, 'run-1', new Set())
+  assert.equal(doneGraph.nodes.find((node) => node.id === 'compact-run-1')!.data.status, 'done')
+  // Nothing is in flight any more, so nothing on the canvas may still be moving.
+  assert.ok(doneGraph.edges.every((edge) => edge.className !== 'is-live'), 'a finished board holds still')
 
   const failed = emptyState()
   failed.topology = defs

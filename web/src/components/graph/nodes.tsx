@@ -8,7 +8,7 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import type { GraphNode, GraphNodeData } from '../../lib/graph/index.ts'
 import { fmtSec } from '../../lib/format.ts'
-import { Braces, Check, ChevronDown, ChevronRight, Circle, Cpu, FileInput, FileOutput, GitBranch, LoaderCircle, Orbit, X } from 'lucide-react'
+import { ArrowRight, Braces, Check, ChevronDown, ChevronRight, Circle, Cpu, FileInput, FileOutput, GitBranch, LoaderCircle, Orbit, X } from 'lucide-react'
 import { CompactPipelineNode } from './CompactPipelineNode.tsx'
 
 const statusClass = (status: GraphNodeData['status']): string =>
@@ -37,8 +37,8 @@ const Title = ({ data, chevron }: { data: GraphNodeData; chevron?: boolean }) =>
     ) : null}
     <span className="g-glyph" aria-label={data.status}><StatusGlyph status={data.status} /></span>
     <span className="g-label">{data.label}</span>
-    {data.operation && <OperationBadge operation={data.operation} />}
     {data.entryPoint && <span className="g-entry-tag" aria-label="Main routing entry point">ENTRY</span>}
+    {data.operation && <OperationBadge operation={data.operation} />}
   </div>
 )
 
@@ -270,8 +270,12 @@ export const GatewayNode = (props: NodeProps<GraphNode>) => {
         <Title data={data} />
         {data.chosenProfile && (
           <div className="g-decide">
-            <span className="g-route-line">Selected: {data.chosenProfile}</span>
-            {data.confidence != null && <span className="g-conf">{(data.confidence * 100).toFixed(0)}%</span>}
+            {/* Same sentence the compact cards use for a routing decision, so one canvas
+                does not name the same act two different ways. */}
+            <span className="g-route-label">Route</span>
+            <ArrowRight aria-hidden="true" />
+            <span className="g-route-line">{data.chosenProfile}</span>
+            {data.confidence != null && <span className="g-conf">{(data.confidence * 100).toFixed(0)}% confidence</span>}
             {data.ruleVsModel && <span className="g-rule-vs">{data.ruleVsModel}</span>}
           </div>
         )}
