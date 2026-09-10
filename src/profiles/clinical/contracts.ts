@@ -225,6 +225,28 @@ export const CONTRACTS = {
     documentKind: 'default',
   },
   /**
+   * The sepsis-extraction pass: a free-text clinical note in, the SepsisExam payload the
+   * screening contract consumes out. It stands to `sepsis` exactly as `shock-extraction`
+   * stands to `shock`, and it exists for a reason the router made unavoidable: `reviewSepsis`
+   * calls `parseSepsis`, which requires all three qSOFA numbers, so a note routed straight to
+   * the screening contract does not screen a patient — it throws. Prose reaches qSOFA through
+   * here or it does not reach it at all.
+   *
+   * It cannot borrow the shock extraction's output either, and that is worth stating because
+   * the two passes read the same note: `ShockExam` carries a systolic, but it carries no
+   * respiratory rate and no GCS, and a screen missing two of its three criteria is a screen
+   * that never ran.
+   */
+  'sepsis-extraction': {
+    id: 'sepsis-extraction',
+    promptKey: 'sepsisExtractionPrompt',
+    schemaKey: 'sepsisExtractionSchema',
+    goldenKey: 'sepsisExtractionSchemaGolden',
+    schemaNameField: 'sepsisExtractionSchemaName',
+    samplingKey: 'sepsis_extraction',
+    documentKind: 'default',
+  },
+  /**
    * The shock-pipeline pass: prose note → extraction → shock classification, end-to-end.
    *
    * Chains two LLM calls under one `--task` flag: the extraction contract produces a
@@ -268,16 +290,35 @@ export const CONTRACTS = {
  * contract that sits looking complete and reports nothing, which is the state it was in for
  * exactly as long as it took to write an eval mode for it.
  */
-export type Task = 'vital-signs' | 'summary' | 'note-format' | 'transcript' | 'shock' | 'shock-extraction' | 'shock-pipeline' | 'sepsis'
-export const TASKS: Task[] = ['vital-signs', 'summary', 'note-format', 'transcript', 'shock', 'shock-extraction', 'shock-pipeline', 'sepsis']
+export type Task = 'vital-signs' | 'summary' | 'note-format' | 'transcript' | 'shock' | 'shock-extraction' | 'shock-pipeline' | 'sepsis' | 'sepsis-extraction'
+export const TASKS: Task[] = ['vital-signs', 'summary', 'note-format', 'transcript', 'shock', 'shock-extraction', 'shock-pipeline', 'sepsis', 'sepsis-extraction']
 
-export type ClinicalShape = 'exam-json' | 'qsofa-json' | 'shock-suspicion' | 'dialogue' | 'dictation' | 'vitals-note' | 'note' | 'summary-input'
+/**
+ * Tasks that are REVIEWABLE but not GRADED: the profile can run them over a document, and no
+ * eval mode scores them, because the pack declares no answer key for them.
+ *
+ * Stated here, once, because two things read it and they must not disagree: `--task all`
+ * skips these rather than dying on them, and the eval dispatch refuses them by name rather
+ * than by falling off the end of its chain into whatever branch happens to be last.
+ *
+ * `sepsis-extraction` is the first and currently the only member. It ships a prompt, a schema
+ * and a parser, and the routed pipeline runs it — but nobody has measured whether a small
+ * model reads three qSOFA numbers off prose correctly, so it reports no percentage. The day a
+ * corpus arrives, it comes off this list in the same commit as its eval.
+ */
+export const UNGRADED_TASKS: Task[] = ['sepsis-extraction']
+
+/** The tasks `--task all` runs: every task that can actually report a number. */
+export const GRADED_TASKS: Task[] = TASKS.filter((t) => !UNGRADED_TASKS.includes(t))
+
+export type ClinicalShape = 'exam-json' | 'qsofa-json' | 'shock-suspicion' | 'sepsis-suspicion' | 'dialogue' | 'dictation' | 'vitals-note' | 'note' | 'summary-input'
 
 /** The default task each shape routes to. The `note` shape is overridden by the pack's `defaultTask`. */
 export const DEFAULT_TASK_FOR_SHAPE: Record<ClinicalShape, Task> = {
   'exam-json': 'shock',
   'qsofa-json': 'sepsis',
   'shock-suspicion': 'shock-extraction',
+  'sepsis-suspicion': 'sepsis-extraction',
   'summary-input': 'summary',
   dialogue: 'transcript',
   dictation: 'transcript',

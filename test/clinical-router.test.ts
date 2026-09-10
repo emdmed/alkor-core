@@ -239,9 +239,80 @@ test('shock-suspicion wins over vitals-note because confidence 0.92 > 0.9', () =
   assert.equal(r.task, 'shock-extraction')
 })
 
+// --- Sepsis suspicion, and the two questions one note can raise -----------------------------
+
+test('sepsis-suspicion shape: infection plus a qSOFA criterion routes through extraction', () => {
+  const r = routeClinicalShape('Patient with suspected urinary tract infection, tachypneic at 24, GCS 13.')
+  assert.equal(r.shape, 'sepsis-suspicion')
+  assert.equal(r.task, 'sepsis-extraction')
+  assert.deepEqual(r.tasks, ['sepsis-extraction', 'sepsis'])
+  assert.equal(r.confidence, 0.92)
+})
+
+test('sepsis-suspicion shape: a single criterion does not match', () => {
+  const r = routeClinicalShape('Patient treated for a wound infection, now comfortable.')
+  assert.notEqual(r.shape, 'sepsis-suspicion')
+})
+
+/**
+ * The case the whole two-kind rule split exists for.
+ *
+ * Septic shock is not a third condition to detect — it is a note that meets the shock criteria
+ * and the sepsis criteria at once, and both workflows have to run. Under the old
+ * winner-take-all collapse only the higher-confidence rule survived, and since these two sit at
+ * the same confidence by design, a tie was the ONLY way both ever ran. That is an accident, not
+ * a policy, and this asserts the policy: the plan is the union, in dependency order.
+ */
+test('septic shock prose raises both questions and plans all four workflows in order', () => {
+  const r = routeClinicalShape(
+    'Patient with suspected pneumonia. Hypotensive at 88/54 for 45 minutes, tachypneic with ' +
+      'respiratory rate 24, GCS 12 and confused. Peripheries warm, capillary refill brisk.',
+  )
+  assert.deepEqual(r.tasks, ['shock-extraction', 'shock', 'sepsis-extraction', 'sepsis'])
+  assert.match(r.reason, /shock-suspicion/)
+  assert.match(r.reason, /sepsis-suspicion/)
+})
+
+test('shock prose without infection does not raise the sepsis question', () => {
+  const r = routeClinicalShape(
+    'Patient hypotensive with cool mottled extremities and delayed capillary refill after major haemorrhage.',
+  )
+  assert.deepEqual(r.tasks, ['shock-extraction', 'shock'])
+})
+
+/**
+ * A structured shock exam says `hypotension` and can say `mental_status`, which reads as two
+ * sepsis criteria and very nearly routed a payload with no respiratory rate and no GCS into an
+ * extraction pass that had no prose to extract them from.
+ */
+test('a structured shock exam payload is not sent to the sepsis workflow', () => {
+  const r = routeClinicalShape(
+    JSON.stringify({
+      hypotension: { systolic: 80, diastolic: 50, duration_minutes: 45 },
+      heart_rate: 110,
+      mental_status: 'confused',
+    }),
+  )
+  assert.equal(r.shape, 'exam-json')
+  assert.deepEqual(r.tasks, ['shock'])
+})
+
+/**
+ * Modality still wins outright, and this is the boundary of the change: a dialogue is a
+ * document shape, not a clinical question, so a transcript that mentions shock is transcribed
+ * rather than fanned out into extraction passes over a two-speaker conversation.
+ */
+test('a dialogue mentioning shock is still transcribed, not fanned out', () => {
+  const r = routeClinicalShape(
+    'Doctor: Your blood pressure is low and you seem confused.\nPatient: I feel faint, I think I am in shock.',
+  )
+  assert.equal(r.shape, 'dialogue')
+  assert.deepEqual(r.tasks, ['transcript'])
+})
+
 // --- taskForShape --------------------------------------------------------------------------
 
-const allShapes: ClinicalShape[] = ['exam-json', 'shock-suspicion', 'dialogue', 'dictation', 'vitals-note', 'note', 'summary-input']
+const allShapes: ClinicalShape[] = ['exam-json', 'qsofa-json', 'shock-suspicion', 'sepsis-suspicion', 'dialogue', 'dictation', 'vitals-note', 'note', 'summary-input']
 
 for (const shape of allShapes) {
   test(`taskForShape(${shape}) returns the default task`, () => {
@@ -412,6 +483,180 @@ test('clinical profile executes a multi-route plan sequentially and emits it for
   assert.deepEqual((result.report as any).routes, ['shock', 'sepsis'])
   const route = activity.recent().find((event: any) => event.kind === 'stage' && event.name === 'route') as any
   assert.deepEqual(route.detail.tasks, ['shock', 'sepsis'])
+})
+
+/**
+ * The septic-shock note, end to end: two questions, four passes, two handoffs.
+ *
+ * What this is really guarding is that each reasoning contract reads ITS OWN extraction's
+ * payload. Both extractions run over the same prose, and both downstream contracts parse their
+ * input as a closed object, so a handoff that crossed the wires would not throw — the sepsis
+ * screen would receive a shock exam, fail to find a respiratory rate, and report as though the
+ * model could not answer. So the assertions are on the bytes each stage received, not just on
+ * the order the stages ran in.
+ */
+test('a septic shock note runs both workflows, each reasoning over its own extraction', async () => {
+  const { PROFILE } = await import('../src/profiles/clinical/profile.ts')
+
+  const shockExam = {
+    hypotension: { systolic: 88, diastolic: 54, duration_minutes: 45 },
+    heart_rate: 118,
+    skin_temperature: 'warm',
+    jugular_venous_pressure: 'normal_or_low',
+    capillary_refill: 'brisk',
+    pulse_volume: 'bounding',
+    lung_exam: 'clear',
+  }
+  const sepsisExam = { respiratory_rate: 24, systolic_bp: 88, gcs: 12 }
+
+  const calls: string[] = []
+  const received: Record<string, string> = {}
+  const provider = {
+    async chat(o: { label: string; userPrompt: string }): Promise<string> {
+      calls.push(o.label)
+      received[o.label] = o.userPrompt
+      if (o.label === 'shock-extraction') return JSON.stringify(shockExam)
+      if (o.label === 'sepsis-extraction') return JSON.stringify(sepsisExam)
+      if (o.label === 'shock') return JSON.stringify({
+        skin_temperature: 'warm',
+        jugular_venous_pressure: 'normal_or_low',
+        shock_category: 'septic',
+        supporting_findings: ['skin_temperature', 'jugular_venous_pressure'],
+        discordant_findings: [],
+        indeterminate_reason: null,
+        assessment_confidence: 0.9,
+        notes: null,
+      })
+      if (o.label === 'sepsis') return JSON.stringify({
+        respiratory_rate: 24,
+        systolic_bp: 88,
+        gcs: 12,
+        qsofa_score: 3,
+        positive: true,
+        criteria_met: ['respiratory_rate', 'systolic_bp', 'altered_mental_status'],
+        screen_reason: 'all three criteria met',
+        assessment_confidence: 0.9,
+        notes: null,
+      })
+      throw new Error(`unexpected model call ${o.label}`)
+    },
+  } as any
+
+  const note =
+    'Patient with suspected pneumonia. Hypotensive at 88/54 for 45 minutes, tachypneic with ' +
+    'respiratory rate 24, GCS 12 and confused. Peripheries warm, capillary refill brisk.'
+
+  const activity = createActivity()
+  const result = await PROFILE.review!({
+    pack,
+    trace: { write: () => {}, close: () => {} } as any,
+    input: { kind: 'text', text: note, label: 'septic-shock-note' },
+    options: {},
+    provider,
+    activity,
+  } as any)
+
+  assert.deepEqual(calls, ['shock-extraction', 'shock', 'sepsis-extraction', 'sepsis'])
+  assert.equal(result.ok, true)
+  assert.deepEqual((result.report as any).routes, ['shock-extraction', 'shock', 'sepsis-extraction', 'sepsis'])
+
+  // Both extractions read the note itself.
+  assert.ok(received['shock-extraction']!.includes('suspected pneumonia'))
+  assert.ok(received['sepsis-extraction']!.includes('suspected pneumonia'))
+
+  // Each reasoning pass read its own upstream payload, and neither read the prose.
+  assert.ok(received['shock']!.includes('jugular_venous_pressure'))
+  assert.ok(!received['shock']!.includes('suspected pneumonia'))
+  assert.ok(received['sepsis']!.includes('24'))
+  assert.ok(!received['sepsis']!.includes('jugular_venous_pressure'))
+
+  const route = activity.recent().find((e: any) => e.kind === 'stage' && e.name === 'route') as any
+  assert.deepEqual(route.detail.tasks, ['shock-extraction', 'shock', 'sepsis-extraction', 'sepsis'])
+})
+
+/**
+ * A downstream contract must not fall back to the prose when its extraction came back empty.
+ * The sepsis arm is checked here and the shock arm is unaffected: one failed extraction stops
+ * its own workflow and no other.
+ */
+test('a failed sepsis extraction skips only its own screen', async () => {
+  const { PROFILE } = await import('../src/profiles/clinical/profile.ts')
+
+  const calls: string[] = []
+  const provider = {
+    async chat(o: { label: string }): Promise<string> {
+      calls.push(o.label)
+      if (o.label === 'sepsis-extraction') return 'I cannot determine the GCS from this note.'
+      if (o.label === 'shock-extraction') return JSON.stringify({
+        hypotension: { systolic: 88, diastolic: 54, duration_minutes: 45 },
+        heart_rate: 118,
+        skin_temperature: 'warm',
+        jugular_venous_pressure: 'normal_or_low',
+        capillary_refill: 'brisk',
+        pulse_volume: 'bounding',
+        lung_exam: 'clear',
+      })
+      if (o.label === 'shock') return JSON.stringify({
+        skin_temperature: 'warm',
+        jugular_venous_pressure: 'normal_or_low',
+        shock_category: 'septic',
+        supporting_findings: ['skin_temperature', 'jugular_venous_pressure'],
+        discordant_findings: [],
+        indeterminate_reason: null,
+        assessment_confidence: 0.9,
+        notes: null,
+      })
+      throw new Error(`unexpected model call ${o.label}`)
+    },
+  } as any
+
+  const result = await PROFILE.review!({
+    pack,
+    trace: { write: () => {}, close: () => {} } as any,
+    input: {
+      kind: 'text',
+      text:
+        'Patient with suspected pneumonia. Hypotensive at 88/54 for 45 minutes, tachypneic with ' +
+        'respiratory rate 24, GCS 12 and confused. Peripheries warm, capillary refill brisk.',
+      label: 'septic-shock-note',
+    },
+    options: {},
+    provider,
+  } as any)
+
+  // The screen was never called: it is absent from the call list, not called with the prose.
+  assert.deepEqual(calls, ['shock-extraction', 'shock', 'sepsis-extraction'])
+  assert.equal(result.ok, false)
+  const results = (result.report as any).results
+  assert.equal(results['shock'].ok, true)
+  assert.equal(results['sepsis'].ok, false)
+  assert.match(results['sepsis'].output, /sepsis-extraction produced no usable payload/)
+})
+
+/**
+ * The eval dispatch used to end in an unguarded `else` that ran the TRANSCRIPT eval, so a task
+ * in TASKS with no eval mode would have been graded against transcripts and the number filed
+ * under its own name — a false pass that looks exactly like a real one. Both halves are pinned
+ * here: `all` skips the ungraded task, and naming it explicitly refuses instead of grading
+ * something else.
+ */
+test('an ungraded task is excluded from --task all and refused when named', async () => {
+  const { GRADED_TASKS, TASKS, UNGRADED_TASKS } = await import('../src/profiles/clinical/contracts.ts')
+  assert.ok(UNGRADED_TASKS.includes('sepsis-extraction' as Task))
+  assert.ok(!GRADED_TASKS.includes('sepsis-extraction' as Task))
+  assert.deepEqual(GRADED_TASKS, TASKS.filter((t) => !UNGRADED_TASKS.includes(t)))
+
+  const { PROFILE } = await import('../src/profiles/clinical/profile.ts')
+  await assert.rejects(
+    () =>
+      PROFILE.runEval!({
+        pack,
+        baseUrl: 'http://127.0.0.1:1',
+        trace: { write: () => {}, close: () => {} } as any,
+        options: { task: 'sepsis-extraction' },
+      } as any),
+    /has no eval mode/,
+  )
 })
 
 test('clinical profile caches completed result and returns it on resume', async () => {

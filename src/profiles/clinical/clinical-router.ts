@@ -6,16 +6,40 @@
  * `--task` override. It is fast and deterministic (rule-based, no model call),
  * and runs *before* any GPU pass so the wrong schema is never sent.
  *
- * Shapes are properties of the input bytes, not contract names. Most shapes map to one
- * task. A payload satisfying more than one definitive shape returns an ordered task plan;
- * for example, a combined shock/qSOFA payload runs shock before sepsis.
+ * Shapes are properties of the input bytes, not contract names. Most shapes map to one task,
+ * and an input that raises more than one clinical question returns an ordered task plan: a
+ * septic-shock note runs the shock workflow and the sepsis workflow, four passes in all.
+ *
+ * THE PLAN IS A UNION, NOT A WINNER, and that distinction is the reason the rules carry a
+ * `kind`. This router used to collapse to the single highest-confidence rule, which meant the
+ * only way two workflows ever ran together was if their rules happened to sit at exactly the
+ * same confidence — an accident of two numbers in a table, not a decision. Septic shock is
+ * precisely the case that made it wrong: it is not a third condition to detect, it is a note
+ * that meets the shock criteria and the sepsis criteria at once, and detecting only the more
+ * confident of the two answers half the question and reports it as the whole one.
  */
 
 import { type ClinicalShape, DEFAULT_TASK_FOR_SHAPE, TASKS, type Task } from './contracts.ts'
 
+/**
+ * What a rule is answering, which is what decides whether it may share a plan.
+ *
+ * `modality` rules describe the SHAPE OF THE DOCUMENT — a dialogue, a dictation, a list of
+ * paths, a note with vitals in it. A document has exactly one of these, so they compete and
+ * the highest confidence wins.
+ *
+ * `question` rules describe WHAT IS BEING ASKED ABOUT THE PATIENT — is this shock, is this
+ * sepsis. A patient can be both, and septic shock is precisely the case where they are: it
+ * meets the shock criteria and the sepsis criteria at once, and answering only the more
+ * confident of the two answers half the question. So question rules do not compete with each
+ * other; every one that fires contributes its workflow to the plan.
+ */
+export type ClinicalRuleKind = 'modality' | 'question'
+
 export interface ClinicalRouteRule {
   name: string
   shape: ClinicalShape
+  kind: ClinicalRuleKind
   detect: (input: string) => boolean
   confidence: number
 }
@@ -210,54 +234,127 @@ const isShockSuspicion = (input: string): boolean => {
   return criteria >= 2
 }
 
+// --- Sepsis suspicion detection ----------------------------------------------------------
+
+/**
+ * A suspected source of infection. Sepsis is organ dysfunction caused by INFECTION, so a note
+ * with organ dysfunction and no infection anywhere in it is describing something else — which
+ * is what keeps a haemorrhagic shock note out of the sepsis workflow.
+ */
+const INFECTION_TERMS = [
+  'infection', 'infected', 'pneumonia', 'urinary tract infection', 'uti', 'pyelonephritis',
+  'cellulitis', 'meningitis', 'cholangitis', 'cholecystitis', 'abscess', 'bacteremia',
+  'bacteraemia', 'endocarditis', 'empyema', 'osteomyelitis', 'peritonitis',
+  'fever', 'febrile', 'pyrexia', 'source of infection', 'antibiotics', 'purulent',
+]
+
+/**
+ * The three qSOFA criteria as they appear in PROSE, one group per criterion.
+ *
+ * These are deliberately the same three the screening contract scores — respiratory rate,
+ * systolic blood pressure, and mental status — rather than a wider net of sepsis-adjacent
+ * words. A router that fired on a criterion the downstream contract does not read would send
+ * notes to a screen that cannot use them.
+ */
+const QSOFA_PROSE_GROUPS = [
+  ['tachypnea', 'tachypnoea', 'tachypneic', 'tachypnoeic', 'respiratory rate', 'breathing fast', 'rapid breathing', 'increased work of breathing'],
+  ['hypotension', 'hypotensive', 'low blood pressure', 'low bp', 'systolic', 'sbp'],
+  ['altered mental status', 'altered mental state', 'confusion', 'confused', 'obtunded', 'obtundation', 'gcs', 'glasgow coma', 'drowsy', 'lethargic', 'encephalopathy', 'unresponsive'],
+]
+
+/** Explicit naming of the syndrome, which counts as one criterion the way `shock` does. */
+const SEPSIS_GENERAL_TERMS = ['sepsis', 'septic', 'septicaemia', 'septicemia', 'qsofa', 'q-sofa']
+
+/**
+ * Two independent signals of sepsis, on the shock rule's terms and for the same reason:
+ * one alone is too common in an ordinary note to route on, and the extraction pass this
+ * leads to is a GPU call that a stray mention of a fever should not buy.
+ *
+ * STRUCTURED PAYLOADS ARE EXCLUDED, both kinds, and the two exclusions are not the same
+ * argument. A qSOFA payload is excluded because it has its own definitive route: it can go
+ * straight to the screen with no extraction pass in front of it. A SHOCK exam payload is
+ * excluded because it cannot be screened at all — it carries a systolic, but no respiratory
+ * rate and no GCS, so two of the three criteria are absent and there is no prose left to
+ * extract them from. Firing here would buy a GPU call that can only fail, and it nearly did:
+ * the exam payload says `hypotension` and `mental_status`, which reads as two criteria.
+ */
+const isSepsisSuspicion = (input: string): boolean => {
+  if (isSepsisJson(input) || isExamJson(input)) return false
+  const lower = input.toLowerCase()
+
+  let criteria = 0
+  if (INFECTION_TERMS.some((k) => (k.includes(' ') ? lower.includes(k) : new RegExp(`\\b${k}\\b`, 'i').test(input)))) criteria++
+  for (const group of QSOFA_PROSE_GROUPS) {
+    if (group.some((k) => (k.includes(' ') ? lower.includes(k) : new RegExp(`\\b${k}\\b`, 'i').test(input)))) criteria++
+  }
+  if (SEPSIS_GENERAL_TERMS.some((k) => new RegExp(`\\b${k}\\b`, 'i').test(input))) criteria++
+
+  return criteria >= 2
+}
+
 // --- Rule set ------------------------------------------------------------------------------
 
 export const DEFAULT_CLINICAL_RULES: ClinicalRouteRule[] = [
   {
     name: 'qsofa-json',
     shape: 'qsofa-json',
+    kind: 'question',
     detect: isSepsisJson,
     confidence: 1.0,
   },
   {
     name: 'exam-json',
     shape: 'exam-json',
+    kind: 'question',
     detect: isExamJson,
     confidence: 1.0,
   },
   {
     name: 'summary-input',
     shape: 'summary-input',
+    kind: 'modality',
     detect: isSummaryInput,
     confidence: 1.0,
   },
   {
     name: 'dialogue',
     shape: 'dialogue',
+    kind: 'modality',
     detect: isDialogue,
     confidence: 0.95,
   },
   {
     name: 'dictation',
     shape: 'dictation',
+    kind: 'modality',
     detect: isDictation,
     confidence: 0.95,
   },
   {
     name: 'shock-suspicion',
     shape: 'shock-suspicion',
+    kind: 'question',
     detect: isShockSuspicion,
+    confidence: 0.92,
+  },
+  {
+    name: 'sepsis-suspicion',
+    shape: 'sepsis-suspicion',
+    kind: 'question',
+    detect: isSepsisSuspicion,
     confidence: 0.92,
   },
   {
     name: 'vitals-note',
     shape: 'vitals-note',
+    kind: 'modality',
     detect: isVitalsNote,
     confidence: 0.9,
   },
   {
     name: 'note',
     shape: 'note',
+    kind: 'modality',
     detect: isClinicalNote,
     confidence: 0.7,
   },
@@ -272,44 +369,65 @@ export const taskForShape = (shape: ClinicalShape, defaultTask?: string): Task =
 // --- Router --------------------------------------------------------------------------------
 
 /**
- * Classify the clinical input shape and return the ordered matching workflow plan.
+ * Classify the clinical input and return the ordered workflow plan it needs.
  *
- * Rules are ordered by confidence for the primary, backwards-compatible `task`. All
- * equally definitive matches remain in `tasks`, because one payload can require more
- * than one workflow.
+ * Highest confidence still picks the winner and still fills the backwards-compatible `task`
+ * and `shape`. What decides the rest of the plan is the winner's KIND — see `ClinicalRuleKind`
+ * — because a document has one shape but can raise several clinical questions.
+ *
+ * The plan is returned in DEPENDENCY ORDER, and the two prose arms expand as they go: a
+ * `shock-extraction` in the plan implies the `shock` pass that consumes its payload, and a
+ * `sepsis-extraction` implies the `sepsis` screen. A structured payload skips its extraction
+ * because it already is the payload.
  *
  * @param input — the raw document text or payload
  * @param defaultTask — the pack's declared `defaultTask`, used only for the `note` shape
  */
 export const routeClinicalShape = (input: string, defaultTask?: string): ClinicalRouteResult => {
-  let confidence = -1
-  const matches: Array<{ task: Task; shape: ClinicalShape; rule: string }> = []
+  const fired = DEFAULT_CLINICAL_RULES.filter((rule) => rule.detect(input))
 
-  for (const rule of DEFAULT_CLINICAL_RULES) {
-    if (rule.detect(input)) {
-      if (rule.confidence > confidence) {
-        confidence = rule.confidence
-        matches.length = 0
-      }
-      if (rule.confidence === confidence) {
-        matches.push({ task: taskForShape(rule.shape, defaultTask), shape: rule.shape, rule: rule.name })
-      }
-    }
-  }
+  // The winner decides which KIND of rule this document is answered by, and the highest
+  // confidence still picks it. What changed is what happens next: when a question rule wins,
+  // every OTHER question rule that fired joins the plan regardless of its own confidence,
+  // because they are not rival readings of one document — they are separate clinical
+  // questions the same note raises. Septic shock is the case: `exam-json` or
+  // `shock-suspicion` wins on confidence, and the sepsis question is still open.
+  //
+  // A modality winner keeps the old behaviour exactly, ties included: a document has one
+  // shape, so a dialogue is not also a list of paths.
+  let top: ClinicalRouteRule | undefined
+  for (const rule of fired) if (!top || rule.confidence > top.confidence) top = rule
 
-  if (matches.length > 0) {
-    const order: Task[] = ['shock-extraction', 'shock', 'sepsis', 'vital-signs', 'note-format', 'transcript', 'summary']
+  const contributing = top === undefined
+    ? []
+    : top.kind === 'question'
+      ? fired.filter((rule) => rule.kind === 'question')
+      : fired.filter((rule) => rule.kind === 'modality' && rule.confidence === top!.confidence)
+
+  if (top !== undefined && contributing.length > 0) {
+    const confidence = top.confidence
+    const matches = contributing.map((rule) => ({
+      task: taskForShape(rule.shape, defaultTask),
+      shape: rule.shape,
+      rule: rule.name,
+    }))
+    const order: Task[] = ['shock-extraction', 'shock', 'sepsis-extraction', 'sepsis', 'vital-signs', 'note-format', 'transcript', 'summary']
     const matchedTasks = [...new Set(matches.map((match) => match.task))]
-    // A prose shock route is a two-contract workflow: extract the closed exam payload first,
-    // then hand that measured payload to the classifier. Structured shock payloads enter the
-    // classifier directly.
-    const tasks = [...new Set(matchedTasks.flatMap((task) => task === 'shock-extraction' ? [task, 'shock' as const] : [task]))]
-      .sort((a, b) => order.indexOf(a) - order.indexOf(b))
-    const primary = matches.find((match) => match.task === tasks[0]) ?? matches[0]!
+    // A prose route is a two-contract workflow on both arms: extract the closed payload first,
+    // then hand that measured payload to the contract that reasons over it. Structured
+    // payloads — an exam or a qSOFA screen — enter their contract directly.
+    const expand = (task: Task): Task[] => {
+      if (task === 'shock-extraction') return [task, 'shock']
+      if (task === 'sepsis-extraction') return [task, 'sepsis']
+      return [task]
+    }
+    const tasks = [...new Set(matchedTasks.flatMap(expand))].sort((a, b) => order.indexOf(a) - order.indexOf(b))
+    // The reported shape is the WINNER's, not the plan's: a plan has no single shape, and the
+    // caller that reads this field wants to know what the router recognised most strongly.
     return {
       task: tasks[0]!,
       tasks,
-      shape: primary.shape,
+      shape: top.shape,
       confidence,
       reason: `${matches.length === 1 ? 'rule' : 'rules'}: ${matches.map((match) => match.rule).join(', ')}`,
     }

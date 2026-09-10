@@ -206,3 +206,15 @@ timeout_secs = 900
 temperature = 0.0
 max_tokens = 512
 timeout_secs = 900
+
+# --- The sepsis-extraction pass over a free-text clinical note. ---
+# The cap and the deadline are shock_extraction's, chosen the same way and for the same reason:
+# the input is prose that the model has to read through to find three numbers, so the ceiling is
+# a property of the NOTE rather than of the three-field object that comes out. Copying the shock
+# arm's numbers rather than picking smaller ones is deliberate — the two passes read the same
+# corpus of notes, and a tighter cap here would make a truncation on this arm and not that one a
+# fact about the cap rather than about the model.
+[sampling.sepsis_extraction]
+temperature = 0.0
+max_tokens = 1024
+timeout_secs = 300

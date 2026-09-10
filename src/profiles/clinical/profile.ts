@@ -23,7 +23,7 @@ import { runShockEval } from './shock-eval.ts'
 import { runSepsisEval, sepsisDocumentNames } from './sepsis-eval.ts'
 import { gatePasses, runNoteFormatEval, runSummaryEval, runTranscriptEval, type TaskResult } from './set-eval.ts'
 import { loadSettings } from './settings.ts'
-import { TASKS, type Task } from './contracts.ts'
+import { GRADED_TASKS, TASKS, type Task } from './contracts.ts'
 import { clinicalRedactor } from './redact.ts'
 import { rescoreSummaryLine, rescoreTrace } from './rescore.ts'
 import { routeClinicalShape, type ClinicalRouteResult } from './clinical-router.ts'
@@ -33,6 +33,7 @@ import { reviewShock } from './review-shock.ts'
 import { shockDocumentNames } from './shock-eval.ts'
 import type { ShockExam } from './shock.ts'
 import { reviewSepsis } from './review-sepsis.ts'
+import { reviewSepsisExtraction } from './review-sepsis-extraction.ts'
 import { reviewNoteFormat } from './review-note-format.ts'
 import { reviewShockExtraction, type ShockExtractionReviewOptions } from './review-shock-extraction.ts'
 import { runShockExtractionEval, shockExtractionDocumentNames } from './shock-extraction-eval.ts'
@@ -67,6 +68,14 @@ export const PROFILE: ProfileModule = {
           feeds: 'shock',
         },
         { name: 'shock', stages: [{ name: 'shock-classification' }, { name: 'llm-call' }, { name: 'verify' }] },
+        {
+          name: 'sepsis-extraction',
+          stages: [{ name: 'sepsis-extraction' }, { name: 'llm-call' }, { name: 'parse' }],
+          // The shock arm's opposite number: prose takes the long path, while an already
+          // structured qSOFA payload may enter `sepsis` directly. A septic-shock note takes
+          // BOTH long paths, which is why these two feeds are drawn separately.
+          feeds: 'sepsis',
+        },
         { name: 'sepsis', stages: [{ name: 'sepsis-screening' }, { name: 'llm-call' }, { name: 'verify' }] },
         { name: 'summary', available: false },
       ],
@@ -187,7 +196,19 @@ export const PROFILE: ProfileModule = {
       else if (task === 'sepsis') results.push(await runSepsisEval(shared))
       else if (task === 'shock-extraction') results.push(await runShockExtractionEval(shared))
       else if (task === 'shock-pipeline') results.push(await runShockPipelineEval(shared))
-      else results.push(await runTranscriptEval(shared))
+      else if (task === 'transcript') results.push(await runTranscriptEval(shared))
+      // NAMED rather than reached by falling off the end of the chain. This was an unguarded
+      // `else` that ran the transcript eval for anything it did not recognise, so the day a
+      // task joined TASKS without an eval mode — which is the day `sepsis-extraction` did —
+      // `--task all` would have graded transcripts and filed the number under the new task's
+      // name. A task with no eval corpus has to say so.
+      else {
+        throw new ProfileError(
+          `--task '${task}' has no eval mode in this profile: it is reviewable (\`extract\`) but ` +
+            'not yet graded, because the pack declares no answer key for it — add its cases to ' +
+            'the pack and its eval to this chain in the same commit',
+        )
+      }
     }
 
     // EVERY task clears its own floor, and every sub-gate within a task clears its own.
@@ -260,7 +281,9 @@ const resolveCaseDocument = (pack: Pack, caseName: string): string => {
  */
 const requestedTasks = (requested: unknown, fallback: string): Task[] => {
   if (requested === undefined || requested === 'default') return [asTask(fallback)]
-  if (requested === 'all') return TASKS
+  // `all` is every task that can report a number, which is no longer every task: a reviewable
+  // but ungraded contract in this list would stop the run at the first task with no answer key.
+  if (requested === 'all') return GRADED_TASKS
   return [asTask(String(requested))]
 }
 
@@ -286,6 +309,7 @@ const executeClinicalTask = async (ctx: ReviewContext, shared: { pack: Pack; bas
   if (task === 'shock') return reviewShock({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider, activity: ctx.activity })
   if (task === 'sepsis') return reviewSepsis({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider, activity: ctx.activity })
   if (task === 'shock-extraction') return reviewShockExtraction({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider, activity: ctx.activity })
+  if (task === 'sepsis-extraction') return reviewSepsisExtraction({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider, activity: ctx.activity })
   if (task === 'shock-pipeline') {
     // Chain extraction → classification. The extraction step reads prose; the classification
     // step reads the extracted exam as JSON text, exactly as the standalone shock review does.
@@ -323,25 +347,42 @@ const executeClinicalRoute = async (
 ): Promise<ReviewResult> => {
   if (tasks.length === 1) return executeClinicalTask(ctx, shared, tasks[0]!)
 
+  /**
+   * Which task feeds which, for the two arms that are a pipeline rather than a single pass.
+   *
+   * Both arms have the same shape — prose in, a closed payload out, that payload into the
+   * contract that reasons over it — so the handoff is one table rather than one branch per
+   * arm. That matters now that a plan can contain BOTH: a septic-shock note runs four tasks,
+   * and each downstream task must read its own upstream payload and not the other's.
+   */
+  const FEEDS: Partial<Record<Task, Task>> = { shock: 'shock-extraction', sepsis: 'sepsis-extraction' }
+
   const results: Array<{ task: Task; result: ReviewResult }> = []
-  let shockInput: ReviewContext['input'] | undefined
-  let shockExtractionAttempted = false
+  /** Payload produced by each extraction that ran, keyed by the extraction task. */
+  const extracted = new Map<Task, ReviewContext['input']>()
+  const attempted = new Set<Task>()
   for (const task of tasks) {
-    if (task === 'shock' && shockExtractionAttempted && !shockInput) {
+    const upstream = FEEDS[task]
+    // An upstream that RAN and produced nothing usable stops its downstream rather than letting
+    // it read the original prose. The alternative is worse than a skip: the reasoning contracts
+    // parse their input as a closed payload, so a note arriving there fails as a parse error and
+    // reports as though the model could not answer, when what actually happened is that the
+    // extraction it depended on came back empty.
+    if (upstream && attempted.has(upstream) && !extracted.has(upstream)) {
       results.push({
         task,
-        result: { text: 'shock classification skipped: shock extraction produced no usable exam', ok: false },
+        result: { text: `${task} skipped: ${upstream} produced no usable payload`, ok: false },
       })
       continue
     }
-    const taskShared = task === 'shock' && shockInput ? { ...shared, input: shockInput } : shared
-    const result = await executeClinicalTask(ctx, taskShared, task)
+    const feed = upstream ? extracted.get(upstream) : undefined
+    const result = await executeClinicalTask(ctx, feed ? { ...shared, input: feed } : shared, task)
     results.push({ task, result })
 
-    if (task === 'shock-extraction') {
-      shockExtractionAttempted = true
+    if (task === 'shock-extraction' || task === 'sepsis-extraction') {
+      attempted.add(task)
       const exam = (result.report as { exam?: unknown } | undefined)?.exam
-      if (result.ok && exam) shockInput = { kind: 'text', text: JSON.stringify(exam), label: result.label }
+      if (result.ok && exam) extracted.set(task, { kind: 'text', text: JSON.stringify(exam), label: result.label })
     }
   }
 
