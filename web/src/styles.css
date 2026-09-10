@@ -1464,6 +1464,33 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 .g-compact.is-idle { background: var(--queued-surface); }
 .g-compact.is-muted { opacity: 0.62; }
 
+/* A route card is one branch of a profile's own decision, nested in the workflow that
+   runs it: same card language, lighter frame, so it reads as contained rather than peer. */
+.g-compact.is-route { border-style: dashed; box-shadow: none; }
+.g-compact.is-route.is-active,
+.g-compact.is-route.is-done,
+.g-compact.is-route.is-failed { border-style: solid; }
+.g-compact.is-route .c-header { background: color-mix(in oklab, var(--secondary) 22%, transparent); }
+.c-header-route {
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 6px;
+  flex: none;
+}
+.c-route-note {
+  box-sizing: border-box;
+  min-height: 22px;
+  padding: 3px 11px;
+  font-size: 0.68rem;
+  color: var(--muted-foreground);
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+}
+.is-failed > .c-route-note { color: var(--destructive); }
+
 .c-header {
   display: flex;
   align-items: center;

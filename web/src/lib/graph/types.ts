@@ -22,6 +22,8 @@ export interface CompactStepData {
   inputRef?: string
   router?: boolean
   chosenProfile?: string
+  /** Every route this step's own decision selected; a note can raise more than one. */
+  tasks?: string[]
   confidence?: number
   ruleVsModel?: string
   reason?: string
@@ -71,6 +73,10 @@ export interface GraphNodeData {
   inputRef?: string
   /** Compact-view card: the workflow's steps, in execution order. */
   steps?: CompactStepData[]
+  /** False on a card nested inside a workflow: its Input/Output belong to the workflow. */
+  terminals?: boolean
+  /** The profile whose own decision produced this card, when the card is one of its routes. */
+  routeOf?: string
   router?: boolean
   shape?: string
   task?: string

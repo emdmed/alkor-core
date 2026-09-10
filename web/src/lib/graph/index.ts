@@ -24,13 +24,16 @@ export type {
 export { detailTextOf, stageState } from './core.ts'
 
 export {
+  CHIP_W,
   COMPACT_HEADER_H,
   COMPACT_PROGRESS_H,
   COMPACT_ROUTER_H,
+  COMPACT_ROUTE_NOTE_H,
   COMPACT_STAGE_H,
   COMPACT_STAGES_EXTRAS_H,
   COMPACT_STEP_H,
   COMPACT_TERMINAL_H,
+  COMPACT_W,
   ROW_GAP,
   compactStepKey,
   layoutHeightOf,

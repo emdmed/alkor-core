@@ -9,7 +9,7 @@
  */
 import { stageTreeForRun } from '../../../../src/tui/state.ts'
 import type { PipelineDefinition, PipelineStepEntry, ProjectState, RunEntry, StageEntry } from '../../../../src/tui/state.ts'
-import type { ProfileTopologyStage } from '../../../../src/core/topology.ts'
+import type { ProfileTopologyRoute, ProfileTopologyStage } from '../../../../src/core/topology.ts'
 import type { NodeState } from '../format.ts'
 import {
   MAIN_X,
@@ -193,6 +193,62 @@ const mergeSteps = (executed: PipelineStepEntry[], def?: PipelineDefinition): St
     })
   }
   return rows
+}
+
+/**
+ * One thing a routing profile can decide to DO, with everything that decision drags in.
+ *
+ * A profile's route fan is not flat: `shock-extraction` exists to feed `shock`, and a
+ * reader who sees them as two peers has to know the domain to know they are one answer to
+ * one question. The `feeds` edge the topology already publishes says which, so a chain of
+ * routes collapses into the group its terminal route names — `shock`, `sepsis` — with the
+ * feeders kept in execution order inside it.
+ */
+export interface RouteGroup {
+  /** The terminal route's name: what this branch of the profile is called. */
+  name: string
+  /** Every route in the chain, feeders first, terminal last. */
+  routes: ProfileTopologyRoute[]
+  /** False when the runtime declares it can name this route but not execute it. */
+  available: boolean
+}
+
+/**
+ * The route groups a profile's own decision stage can choose between.
+ *
+ * Read off the published topology and nothing else: a profile that declares no routes has
+ * no groups, and the dashboard then draws it as the single opaque step it is.
+ */
+export const declaredRouteGroups = (state: ProjectState, profileName: string): RouteGroup[] => {
+  const profile = state.topology.profiles.find((candidate) => candidate.name === profileName)
+  const routes: ProfileTopologyRoute[] = []
+  const visit = (stages: ProfileTopologyStage[]): void => {
+    for (const stage of stages) {
+      for (const route of stage.routes ?? []) routes.push(route)
+    }
+  }
+  if (profile?.topology) visit(profile.topology.stages)
+  if (routes.length === 0) return []
+
+  const byName = new Map(routes.map((route) => [route.name, route]))
+  // A route that feeds another is a step of that other route's answer, never a peer of it.
+  const feeders = new Set(routes.filter((route) => route.feeds && byName.has(route.feeds)).map((route) => route.name))
+
+  const groups: RouteGroup[] = []
+  for (const route of routes) {
+    if (feeders.has(route.name)) continue
+    // Declared order is execution order, and a feeder is declared before what it feeds.
+    // Chains may be longer than one link, so the feeders are collected transitively.
+    const upstream = (name: string): ProfileTopologyRoute[] =>
+      routes.filter((candidate) => candidate.feeds === name).flatMap((candidate) => [...upstream(candidate.name), candidate])
+    const members = [...upstream(route.name), route]
+    groups.push({
+      name: route.name,
+      routes: members,
+      available: members.every((member) => member.available !== false),
+    })
+  }
+  return groups
 }
 
 export const declaredRouteTargets = (state: ProjectState, profileName: string): string[] => {

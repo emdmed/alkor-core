@@ -121,14 +121,19 @@ export const CompactPipelineNode = memo(({ id, data }: NodeProps<GraphNode>) => 
     updateNodeInternals(id)
   }, [updateNodeInternals, id, expansionSignature])
 
+  // A route card is one branch of a profile's own decision, drawn inside the workflow that
+  // contains it. It carries no Input/Output rows: the document arrived at the workflow.
+  const isRoute = d.terminals === false
+
   return (
-    <div className={`g-compact ${statusClass(d.status)}${d.muted ? ' is-muted' : ''}`}>
+    <div className={`g-compact ${statusClass(d.status)}${d.muted ? ' is-muted' : ''}${isRoute ? ' is-route' : ''}`}>
       <Handle id="t" type="target" position={Position.Top} />
       <Handle id="s" type="source" position={Position.Bottom} />
 
       <div className="c-header">
         <span className="c-header-glyph"><StatusIcon status={d.status} /></span>
         <span className="c-header-label">{d.label}</span>
+        {isRoute && d.routeOf && <span className="c-header-route">{d.routeOf} route</span>}
         <span className="c-header-status">{statusLabel(d.status)}</span>
         {d.wallMs != null && <span className="c-header-time">{fmtSec(d.wallMs)}</span>}
         {d.onInspect && (
@@ -145,11 +150,17 @@ export const CompactPipelineNode = memo(({ id, data }: NodeProps<GraphNode>) => 
 
       <Progress steps={steps} />
 
-      <div className="c-terminal">
-        <FileInput size={12} className="c-terminal-icon" />
-        <span className="c-terminal-label">Input</span>
-        {d.detailText && <span className="c-terminal-meta">{d.detailText}</span>}
-      </div>
+      {isRoute ? (
+        (d.detailText || d.reason) && (
+          <div className="c-route-note">{d.detailText ?? d.reason}</div>
+        )
+      ) : (
+        <div className="c-terminal">
+          <FileInput size={12} className="c-terminal-icon" />
+          <span className="c-terminal-label">Input</span>
+          {d.detailText && <span className="c-terminal-meta">{d.detailText}</span>}
+        </div>
+      )}
 
       <div className="c-steps">
         {steps.map((step) => (
@@ -167,11 +178,13 @@ export const CompactPipelineNode = memo(({ id, data }: NodeProps<GraphNode>) => 
         )}
       </div>
 
-      <div className="c-terminal">
-        <FileOutput size={12} className="c-terminal-icon" />
-        <span className="c-terminal-label">Output</span>
-        {d.wallMs != null && <span className="c-terminal-meta">{fmtSec(d.wallMs)}</span>}
-      </div>
+      {!isRoute && (
+        <div className="c-terminal">
+          <FileOutput size={12} className="c-terminal-icon" />
+          <span className="c-terminal-label">Output</span>
+          {d.wallMs != null && <span className="c-terminal-meta">{fmtSec(d.wallMs)}</span>}
+        </div>
+      )}
     </div>
   )
 })

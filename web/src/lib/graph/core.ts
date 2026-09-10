@@ -184,6 +184,13 @@ export const COMPACT_ROUTER_H = 27 /* .c-step-router-info min-height, border-box
 export const COMPACT_STAGE_H = 20 /* one .c-stage row: 2px pad top/bottom + 16px nowrap line */
 export const COMPACT_STAGES_EXTRAS_H = 13 /* .c-stages pad-top 3 + pad-bottom 6 + margin-bottom 4 */
 const COMPACT_BASE_H = COMPACT_HEADER_H + COMPACT_PROGRESS_H + COMPACT_TERMINAL_H * 2
+export const COMPACT_ROUTE_NOTE_H = 22 /* .c-route-note min-height, border-box */
+/** One compact card's rendered width; route cards sit side by side on this pitch. */
+export const COMPACT_W = 360
+/** Gap between two route cards of the same workflow, across and down. */
+export const ROUTE_GAP = 40
+/** Vertical gap between two stacked route chips in the fan's last column. */
+export const CHIP_GAP = 12
 
 /**
  * Stable disclosure key for one compact step disclosure. Formed from the owning
@@ -219,7 +226,12 @@ export const layoutHeightOf = (n: GraphNode): number => {
       // margin land once per disclosed step, and each disclosed stage owns one row.
       const disclosed = steps.filter((step) => (step.stageRowCount ?? (step.expanded ? step.stages.length : 0)) > 0)
       const stageRows = disclosed.reduce((total, step) => total + (step.stageRowCount ?? step.stages.length), 0)
-      return COMPACT_BASE_H
+      // A route card inside a workflow renders no Input/Output rows: the workflow's own
+      // card already owns the document that arrived and the output that left.
+      const base = d.terminals === false
+        ? COMPACT_BASE_H - COMPACT_TERMINAL_H * 2 + (d.detailText || d.reason ? COMPACT_ROUTE_NOTE_H : 0)
+        : COMPACT_BASE_H
+      return base
         + steps.length * COMPACT_STEP_H
         + routerCount * COMPACT_ROUTER_H
         + disclosed.length * COMPACT_STAGES_EXTRAS_H

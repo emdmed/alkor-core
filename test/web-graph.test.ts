@@ -17,6 +17,9 @@ import {
   COMPACT_STAGES_EXTRAS_H,
   COMPACT_STEP_H,
   COMPACT_TERMINAL_H,
+  COMPACT_ROUTE_NOTE_H,
+  COMPACT_W,
+  CHIP_W,
 } from '../web/src/lib/graph/index.ts'
 import { emptyState } from '../src/tui/state.ts'
 
@@ -1387,4 +1390,264 @@ test('compact graph returns the same expanded set the steps paint', () => {
   assert.equal(graph.expanded.has(key0), true)
   assert.equal(graph.expanded.has(key1), false, 'a closed step never leaks into the view-level set')
   assert.equal(compactStepKey('compact-run-1', 3), 'compact-run-1/step-3')
+})
+
+/* ------------------------------------------------------------------ route branches inside a workflow */
+
+/**
+ * A workflow whose first step is a profile that routes internally — the clinical shape:
+ * one decision, a two-pass shock arm, a two-pass sepsis arm, and one single-pass task.
+ */
+const routingProfileTopology = () => ({
+  stages: [{
+    name: 'route',
+    kind: 'decision' as const,
+    operation: 'decision' as const,
+    routes: [
+      { name: 'shock-extraction', feeds: 'shock', stages: [{ name: 'shock-extraction', operation: 'model' as const }, { name: 'llm-call', operation: 'model' as const }, { name: 'gateway', operation: 'code' as const }] },
+      { name: 'shock', stages: [{ name: 'shock-classification', operation: 'model' as const }, { name: 'llm-call', operation: 'model' as const }, { name: 'verify', operation: 'code' as const }] },
+      { name: 'sepsis-extraction', feeds: 'sepsis', stages: [{ name: 'sepsis-extraction', operation: 'model' as const }, { name: 'llm-call', operation: 'model' as const }, { name: 'gateway', operation: 'code' as const }] },
+      { name: 'sepsis', stages: [{ name: 'sepsis-screening', operation: 'model' as const }, { name: 'llm-call', operation: 'model' as const }, { name: 'verify', operation: 'code' as const }] },
+      { name: 'vital-signs', stages: [{ name: 'llm-call', operation: 'model' as const }, { name: 'verify', operation: 'code' as const }] },
+      { name: 'summary', available: false },
+    ],
+  }],
+})
+
+const routingWorkflowState = () => {
+  const state = emptyState()
+  state.topology = {
+    profiles: [
+      { name: 'workflow-router', mode: 'router' },
+      { name: 'clinical', mode: 'extract', topology: routingProfileTopology() },
+      { name: 'verifier', mode: 'extract' },
+    ],
+    pipeline: { router: 'workflow-router', workflows: ['clinical-verified'], defaultWorkflow: 'clinical-verified' },
+    pipelines: [{
+      name: 'clinical-verified',
+      steps: [
+        { name: 'extract', profile: 'clinical', input: 'initial' },
+        { name: 'verify-source', profile: 'verifier' },
+      ],
+    }],
+  }
+  return state
+}
+
+/** A septic-shock note: the clinical decision returns BOTH syndromes, four tasks in all. */
+const bothSyndromesRun = () => {
+  const state = routingWorkflowState()
+  state.runs.set('run-1', { runId: 'run-1', profile: 'clinical-verified', status: 'started' })
+  state.routes.push({ runId: 'run-1', profile: 'clinical-verified', confidence: 0.9, reason: 'default', ruleVsModel: 'rule' })
+  state.pipelines.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'extract', profile: 'clinical', status: 'started' }] })
+  state.stages.set('pipeline', { stageId: 'pipeline', runId: 'run-1', name: 'pipeline', status: 'started', children: [] })
+  state.stages.set('clinical', {
+    stageId: 'clinical', runId: 'run-1', parentId: 'pipeline', name: 'clinical', status: 'started', detail: { step: 0 }, children: [],
+  })
+  let seq = 0
+  const stage = (name: string, parentId = 'clinical', status: 'started' | 'completed' = 'completed') => {
+    const stageId = `st-${seq++}`
+    state.stages.set(stageId, { stageId, runId: 'run-1', parentId, name, status, children: [] })
+    return stageId
+  }
+  state.stages.set('decision', {
+    stageId: 'decision', runId: 'run-1', parentId: 'clinical', name: 'route', status: 'completed',
+    detail: { shape: 'note', confidence: 0.92, task: 'shock-extraction', tasks: ['shock-extraction', 'shock', 'sepsis-extraction', 'sepsis'] },
+    children: [],
+  })
+  stage('llm-call', stage('shock-extraction'))
+  stage('gateway')
+  stage('llm-call', stage('shock-classification'))
+  stage('verify')
+  stage('llm-call', stage('sepsis-extraction'))
+  stage('gateway')
+  stage('llm-call', stage('sepsis-screening'), 'started')
+  return state
+}
+
+/** Cards may share a row, so containment is a rectangle question rather than a vertical one. */
+const assertNoCardsOverlap = (nodes: ReturnType<typeof buildCompactGraph>['nodes']) => {
+  const width = (node: (typeof nodes)[number]) => (node.data.kind === 'branch' ? CHIP_W : COMPACT_W)
+  const cards = nodes.filter((node) => node.data.kind === 'compact-pipeline' || node.data.kind === 'branch')
+  for (let i = 0; i < cards.length; i++) {
+    for (let j = i + 1; j < cards.length; j++) {
+      const a = cards[i]!
+      const b = cards[j]!
+      const apart =
+        a.position.x + width(a) <= b.position.x || b.position.x + width(b) <= a.position.x ||
+        a.position.y + layoutHeightOf(a) <= b.position.y || b.position.y + layoutHeightOf(b) <= a.position.y
+      assert.ok(apart, `${a.id} overlaps ${b.id}`)
+    }
+  }
+}
+
+/**
+ * Every branch of one decision shares one top edge.
+ *
+ * This is the assertion behind the layout, not a tidiness preference. An orthogonal edge
+ * turns at the midpoint between its two endpoints, so a target placed lower than its
+ * siblings makes its own edge turn INSIDE the row and run horizontally through the cards
+ * next to it — and an edge crossing a card is read as an edge leaving that card. A second
+ * row of branches produced exactly that: ghost edges to `transcript` and `summary` appeared
+ * to sprout from the bottom of `shock`.
+ */
+const assertOneRow = (nodes: ReturnType<typeof buildCompactGraph>['nodes']) => {
+  const branches = nodes.filter((node) => node.id.includes('-route-'))
+  const tops = new Set(branches.map((node) => node.position.y))
+  assert.equal(tops.size, 1, `every branch shares one top edge, got ${[...tops].join(', ')}`)
+}
+
+test('a routing profile draws its syndromes as cards inside the workflow that runs them', () => {
+  const graph = buildCompactGraph(bothSyndromesRun(), 'run-1', new Set())
+  const workflow = graph.nodes.find((node) => node.id === 'compact-run-1')!
+  const shock = graph.nodes.find((node) => node.id === 'compact-run-1-route-shock')!
+  const sepsis = graph.nodes.find((node) => node.id === 'compact-run-1-route-sepsis')!
+
+  assert.equal(shock.data.routeOf, 'clinical', 'the card names the profile whose decision produced it')
+  assert.equal(shock.data.terminals, false, 'the workflow above owns the document, so a route card has no terminals')
+  assert.deepEqual(shock.data.steps!.map((step) => step.name), ['shock-extraction', 'shock'], 'a feeder is drawn inside what it feeds, not beside it')
+  assert.deepEqual(sepsis.data.steps!.map((step) => step.name), ['sepsis-extraction', 'sepsis'])
+  assert.ok(shock.position.y > workflow.position.y, 'the syndromes sit under the workflow that contains them')
+  assert.equal(shock.position.y, sepsis.position.y, 'two answers to one question are peers, never a sequence')
+  assert.notEqual(shock.position.x, sepsis.position.x)
+  assertNoCardsOverlap(graph.nodes)
+  assertOneRow(graph.nodes)
+})
+
+test('the clinical decision reaches its branches as one plan, not one winner', () => {
+  const graph = buildCompactGraph(bothSyndromesRun(), 'run-1', new Set())
+  const step = graph.nodes.find((node) => node.id === 'compact-run-1')!.data.steps![0]!
+  const shock = graph.nodes.find((node) => node.id === 'compact-run-1-route-shock')!
+  const sepsis = graph.nodes.find((node) => node.id === 'compact-run-1-route-sepsis')!
+  const vitals = graph.nodes.find((node) => node.id === 'compact-run-1-route-vital-signs')!
+  const chosenEdges = graph.edges.filter((edge) => edge.source === 'compact-run-1' && edge.data?.kind === 'branch')
+
+  assert.deepEqual(step.tasks, ['shock-extraction', 'shock', 'sepsis-extraction', 'sepsis'])
+  assert.equal(step.chosenProfile, 'shock-extraction + shock + sepsis-extraction + sepsis', 'one decision reads as one chip')
+  assert.equal(shock.data.muted, undefined)
+  assert.equal(sepsis.data.muted, undefined)
+  assert.equal(vitals.data.muted, true, 'a route the note did not raise stays visible and de-emphasised')
+  assert.equal(vitals.data.detailText, 'not raised')
+  assert.deepEqual(chosenEdges.map((edge) => edge.target), ['compact-run-1-route-shock', 'compact-run-1-route-sepsis'])
+  assert.ok(
+    graph.edges.filter((edge) => edge.source === 'compact-run-1' && edge.data?.kind === 'ghost').length >= 1,
+    'the routes not taken stay connected as possible, not as data',
+  )
+})
+
+test('a multi-task route splits its flat stage stream back onto the branch that ran it', () => {
+  const graph = buildCompactGraph(bothSyndromesRun(), 'run-1', new Set())
+  const shock = graph.nodes.find((node) => node.id === 'compact-run-1-route-shock')!
+  const sepsis = graph.nodes.find((node) => node.id === 'compact-run-1-route-sepsis')!
+  const names = (node: typeof shock) => node.data.steps!.map((step) => step.stages.map((stage) => stage.name))
+
+  assert.deepEqual(names(shock), [
+    ['shock-extraction', 'llm-call', 'gateway'],
+    ['shock-classification', 'llm-call', 'verify'],
+  ], 'the shared `verify` and `llm-call` names land on the pass that emitted them')
+  assert.deepEqual(names(sepsis), [
+    ['sepsis-extraction', 'llm-call', 'gateway'],
+    ['sepsis-screening', 'llm-call'],
+  ])
+  assert.ok(
+    graph.nodes.every((node) => (node.data.steps ?? []).every((step) => node.id === 'compact-run-1' || step.stages.every((stage) => stage.name !== 'route'))),
+    'the decision itself belongs to the step that made it, never to a branch it chose',
+  )
+  assert.equal(shock.data.status, 'done', 'a finished branch reads as finished while its sibling is still running')
+  assert.equal(sepsis.data.status, 'active')
+  assert.equal(graph.nodes.find((node) => node.id === 'compact-run-1-route-vital-signs')!.data.status, 'idle')
+})
+
+test('at rest the routing step still shows every branch it could take', () => {
+  const graph = buildCompactGraph(routingWorkflowState(), undefined, new Set())
+  const shock = graph.nodes.find((node) => node.id === 'compact-configured-clinical-verified-route-shock')!
+  const summary = graph.nodes.find((node) => node.id === 'compact-configured-clinical-verified-route-summary')!
+
+  assert.deepEqual(
+    graph.nodes.filter((node) => node.id.includes('-route-')).map((node) => node.data.label),
+    ['shock', 'sepsis', 'vital-signs', 'summary'],
+    'the fan is the declared route groups, in declared order, with feeders folded in',
+  )
+  assert.deepEqual(shock.data.steps![0]!.stages.map((stage) => stage.name), ['shock-extraction', 'llm-call', 'gateway'], 'an unrun branch shows the passes it would make')
+  assert.equal(shock.data.steps![0]!.status, 'idle')
+  assert.equal(summary.data.status, 'idle', 'a route declared unavailable is not a failure')
+  assert.equal(summary.data.muted, true)
+  assert.equal(summary.data.detailText, 'declared, not runnable here')
+  assert.ok(graph.edges.every((edge) => edge.data?.kind === 'ghost'), 'nothing has been decided, so nothing is a taken branch')
+  assertNoCardsOverlap(graph.nodes)
+  assertOneRow(graph.nodes)
+})
+
+test('route cards model their own height and never open an unchosen workflow', () => {
+  const state = bothSyndromesRun()
+  state.topology.pipeline!.workflows = ['clinical-verified', 'other']
+  state.topology.pipelines.push({ name: 'other', steps: [{ name: 'extract', profile: 'clinical' }] })
+
+  const key = compactStepKey('compact-run-1-route-shock', 0)
+  const collapsed = buildCompactGraph(state, 'run-1', new Set())
+  const opened = buildCompactGraph(state, 'run-1', new Set([key]))
+  const card = (graph: typeof collapsed) => graph.nodes.find((node) => node.id === 'compact-run-1-route-shock')!
+
+  const routeBase = COMPACT_HEADER_H + COMPACT_PROGRESS_H
+  assert.equal(layoutHeightOf(card(collapsed)), routeBase + 2 * COMPACT_STEP_H, 'a route card drops both terminal rows')
+  assert.equal(
+    layoutHeightOf(card(opened)),
+    routeBase + 2 * COMPACT_STEP_H + COMPACT_STAGES_EXTRAS_H + 3 * COMPACT_STAGE_H,
+    'disclosing a branch pass adds exactly its stage rows',
+  )
+  const vitals = collapsed.nodes.find((node) => node.id === 'compact-run-1-route-vital-signs')!
+  assert.equal(vitals.data.kind, 'branch', 'a branch the note did not raise has no work to show, so it shrinks to a chip')
+  assert.equal(vitals.data.detailText, 'not raised')
+
+  // At rest nothing has been decided, so the same route is a full card again and its
+  // explanatory note is part of the modelled height.
+  const atRest = buildCompactGraph(routingWorkflowState(), undefined, new Set())
+  assert.equal(
+    layoutHeightOf(atRest.nodes.find((node) => node.id === 'compact-configured-clinical-verified-route-vital-signs')!),
+    routeBase + COMPACT_ROUTE_NOTE_H + COMPACT_STEP_H,
+  )
+  assert.equal(opened.expanded.has(key), true, 'a branch disclosure is a rendered disclosure')
+  assert.equal(
+    collapsed.nodes.some((node) => node.id.startsWith('compact-configured-other-route-')),
+    false,
+    'an unchosen workflow keeps its internals closed so the taken branch stays legible',
+  )
+  assertNoCardsOverlap(collapsed.nodes)
+  assertNoCardsOverlap(opened.nodes)
+  assertOneRow(collapsed.nodes)
+  assertOneRow(opened.nodes)
+})
+
+/**
+ * The picture and the runtime are one statement.
+ *
+ * The fixtures above describe a routing profile in the abstract; this asserts the real one
+ * draws the way the dashboard claims. `shock-extraction` exists to feed `shock` and
+ * `sepsis-extraction` to feed `sepsis`, so the clinical profile has two syndrome branches and
+ * not four peers — and if a pack ever adds a third, this says so by failing here rather than
+ * by quietly drawing a card nobody designed a place for.
+ */
+test('the real clinical profile draws as shock and sepsis, feeders folded inside them', async () => {
+  const { PROFILE } = await import('../src/profiles/clinical/profile.ts')
+  const state = routingWorkflowState()
+  state.topology.profiles = state.topology.profiles.map((profile) =>
+    profile.name === 'clinical' ? { ...profile, topology: PROFILE.topology } : profile,
+  )
+
+  const graph = buildCompactGraph(state, undefined, new Set())
+  const branches = graph.nodes.filter((node) => node.id.includes('-route-'))
+  const labels = branches.map((node) => node.data.label)
+
+  assert.deepEqual(labels.slice(0, 2), ['shock', 'sepsis'], 'the two syndromes lead the fan, in the order they run')
+  assert.equal(labels.includes('shock-extraction'), false, 'an extraction pass is a step of its syndrome, not a peer of it')
+  assert.equal(labels.includes('sepsis-extraction'), false)
+  assert.deepEqual(
+    branches.find((node) => node.data.label === 'shock')!.data.steps!.map((step) => step.name),
+    ['shock-extraction', 'shock'],
+  )
+  assert.deepEqual(
+    branches.find((node) => node.data.label === 'sepsis')!.data.steps!.map((step) => step.name),
+    ['sepsis-extraction', 'sepsis'],
+  )
+  assertNoCardsOverlap(graph.nodes)
 })
