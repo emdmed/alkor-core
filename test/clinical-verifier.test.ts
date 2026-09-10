@@ -187,3 +187,135 @@ test('a non-sepsis document is preserved for the generic verifier, unchanged', a
   const rr = result.report as Record<string, unknown>
   assert.deepEqual(rr, { document, extraction: { bones: ['break'] } })
 })
+
+// --- The PROSE sepsis arm: the payload is a model output, not the input ----------------------
+
+/**
+ * A septic-shock note: one document raising both clinical questions, which since the router
+ * learned to return a union is a single four-route plan rather than two runs.
+ *
+ * The note is prose, so neither payload is the document — `shock-extraction` produces one and
+ * `sepsis-extraction` the other. That is the case this adapter used to get wrong: it looked
+ * for the qSOFA payload in the INITIAL INPUT, found a note, and reported that a sepsis route
+ * had been claimed without one. Every prose note reaching the sepsis screen failed derived
+ * verification with an accusation about the router rather than about the model.
+ */
+const septicShockNote =
+  '68-year-old woman, 3 days of fever and productive cough, treated for pneumonia. ' +
+  'Hypotensive for 2 hours, BP 82/44. Heart rate 124 bpm. Respiratory rate 26. Confused, GCS 13. ' +
+  'Warm peripheries, brisk capillary refill, jugular venous pressure normal to low. Bounding pulse. ' +
+  'Lung examination not performed.'
+
+const bothArms = () => ({
+  routes: ['shock-extraction', 'shock', 'sepsis-extraction', 'sepsis'],
+  results: {
+    'shock-extraction': {
+      ok: true,
+      output: {
+        exam: {
+          hypotension: { systolic: 82, diastolic: 44, duration_minutes: 120 },
+          heart_rate: 124,
+          skin_temperature: 'warm',
+          jugular_venous_pressure: 'normal_or_low',
+          capillary_refill: 'brisk',
+          pulse_volume: 'bounding',
+          lung_exam: 'not_assessed',
+        },
+        confirmation: { confirmed: true, systolic: 82, shockIndex: 124 / 82 },
+      },
+    },
+    shock: {
+      ok: true,
+      output: {
+        skin_temperature: 'warm',
+        jugular_venous_pressure: 'normal_or_low',
+        shock_category: 'septic',
+        supporting_findings: ['capillary_refill', 'pulse_volume'],
+        discordant_findings: [],
+        indeterminate_reason: null,
+        assessment_confidence: 0.9,
+        notes: null,
+      },
+    },
+    'sepsis-extraction': {
+      ok: true,
+      output: {
+        exam: { respiratory_rate: 26, systolic_bp: 82, gcs: 13 },
+        screen: { positive: true, score: 3 },
+      },
+    },
+    sepsis: {
+      ok: true,
+      output: {
+        respiratory_rate: 26,
+        systolic_bp: 82,
+        gcs: 13,
+        qsofa_score: 3,
+        positive: true,
+        criteria_met: ['respiratory_rate', 'systolic_bp', 'altered_mental_status'],
+        screen_reason: null,
+        assessment_confidence: 0.95,
+        notes: null,
+      },
+    },
+  },
+})
+
+test('a prose note routed to both arms verifies against the EXTRACTED qSOFA payload, not the note', async () => {
+  const result = await reviewWith(septicShockNote, bothArms())
+  assert.equal(result.ok, true, result.text)
+  const report = result.report as Record<string, any>
+  // The three qSOFA numbers are assertions about the prose and go on to the model verifier;
+  // the screen beside them is arithmetic and is settled here — the same split the shock arm
+  // makes between its exam and its confirmation.
+  assert.deepEqual(report.extraction['sepsis-extraction'], {
+    exam: { respiratory_rate: 26, systolic_bp: 82, gcs: 13 },
+  })
+  assert.deepEqual(report.extraction.sepsis, {})
+  assert.equal(report.extraction.shock, undefined)
+})
+
+test('the extracted qSOFA screen is recomputed, not taken on trust', async () => {
+  const bent = bothArms()
+  bent.results['sepsis-extraction'].output.screen = { positive: false, score: 1 }
+  const result = await reviewWith(septicShockNote, bent)
+  assert.equal(result.ok, false)
+  assert.match(result.text, /sepsis-extraction.output.screen.*deterministic qSOFA screen/)
+})
+
+test('each arm of a both-arms plan is refused on its own axis', async () => {
+  const bends: Array<[string, (plan: ReturnType<typeof bothArms>) => void, RegExp]> = [
+    ['sepsis verdict', (p) => { p.results.sepsis.output.positive = false }, /verdict disagrees with medprotocol/],
+    ['sepsis score', (p) => { p.results.sepsis.output.qsofa_score = 2 }, /score disagrees with medprotocol/],
+    ['sepsis echo', (p) => { p.results.sepsis.output.respiratory_rate = 20 }, /incorrect qSOFA echo/],
+    ['shock category', (p) => { p.results.shock.output.shock_category = 'cardiogenic' }, /expected septic/],
+    ['shock confirmation', (p) => { p.results['shock-extraction'].output.confirmation.confirmed = false }, /deterministic confirmation/],
+  ]
+  for (const [axis, bend, expected] of bends) {
+    const plan = bothArms()
+    bend(plan)
+    const result = await reviewWith(septicShockNote, plan)
+    assert.equal(result.ok, false, axis)
+    assert.match(result.text, expected, axis)
+  }
+})
+
+/**
+ * Ordering must not be load-bearing. The router returns routes in TASK_ORDER, which happens to
+ * put `sepsis-extraction` before `sepsis`, and a verifier that captured the payload mid-loop
+ * would pass for that reason rather than because it is correct.
+ */
+test('a sepsis route verified before its extraction route still finds the payload', async () => {
+  const plan = bothArms()
+  plan.routes = ['sepsis', 'sepsis-extraction', 'shock', 'shock-extraction']
+  const result = await reviewWith(septicShockNote, plan)
+  assert.equal(result.ok, true, result.text)
+})
+
+test('a sepsis route with no payload anywhere is still refused', async () => {
+  const plan = bothArms()
+  plan.routes = ['sepsis']
+  const result = await reviewWith(septicShockNote, plan)
+  assert.equal(result.ok, false)
+  assert.match(result.text, /no qSOFA payload/)
+})

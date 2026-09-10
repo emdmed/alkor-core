@@ -14,6 +14,8 @@ import { runPipelineCaseEval } from '../src/profiles/clinical-verified/eval.ts'
 import { PROFILE as CLINICAL_PROFILE } from '../src/profiles/clinical/profile.ts'
 import { PROFILE as VERIFIER_PROFILE } from '../src/profiles/verifier/profile.ts'
 import { emptyTally, absorb, ratio } from '../src/profiles/clinical/scorer.ts'
+import { loadMedprotocolRule } from '../src/profiles/clinical/medprotocol.ts'
+import { CRITERIA, loadSepsisCases } from '../src/profiles/clinical/sepsis.ts'
 import { buildPipeline, runPipeline } from '../src/modes/pipeline.ts'
 import type { ProfileModule } from '../src/core/profile.ts'
 import type { ChatOptions, Provider } from '../src/core/client.ts'
@@ -163,6 +165,126 @@ test('full configured pipeline verifies shock derivations before source verifica
   assert.doesNotMatch(verifierPrompts[0]!, /"shock_category":\s*"cardiogenic"/)
   assert.doesNotMatch(note, /shockIndex|shock_category/)
   assert.match(verdict.summary, /3\/3 configured steps completed/)
+})
+
+/**
+ * The sepsis arm through the SAME configured chain, over the whole qSOFA corpus.
+ *
+ * This is the coverage the retired `sepsis-verified` workflow used to carry in its own test
+ * file, repointed at the workflow that now owns it. What it proves is the reason that
+ * workflow could be deleted without losing a check: a qSOFA payload routes to the sepsis
+ * screen inside `clinical`, and `clinical-verifier` — step 2 here — recomputes the echo,
+ * criteria, verdict and score through the same `scoreReply` the retired profile called.
+ *
+ * The corpus loop matters more than one case would. A single reply proves the wiring; five
+ * prove the recomputation tracks the payload, including the negative screens where a
+ * verifier that always agreed would still pass.
+ */
+test('full configured pipeline verifies every sepsis corpus reply and sends nothing derived onward', async () => {
+  const clinicalPack = loadPack(resolvePackRoot('clinical', { configured: 'packs/clinical', base: process.cwd() }))
+  const cases = loadSepsisCases(clinicalPack, loadMedprotocolRule(clinicalPack)).cases
+  assert.ok(cases.length >= 5, 'the qSOFA corpus should carry at least five cases')
+
+  for (const sepsisCase of cases) {
+    const { exam, screen, criteria } = sepsisCase.resolved
+    const reply = JSON.stringify({
+      ...exam,
+      qsofa_score: screen.score,
+      positive: screen.positive,
+      criteria_met: CRITERIA.filter((criterion) => criteria[criterion]),
+      screen_reason: null,
+      assessment_confidence: 1,
+      notes: null,
+    })
+    const verifierPrompts: string[] = []
+    const provider: Provider = {
+      async chat(o: ChatOptions): Promise<string> {
+        if (o.label === 'extraction') {
+          verifierPrompts.push(o.userPrompt)
+          return JSON.stringify({ verified: true, confidence: 1, issues: [] })
+        }
+        return reply
+      },
+      async toolChat() { return { content: '', toolCalls: [] } },
+      async streamChat() { return { content: '', toolCalls: [], chunks: 0 } },
+      async identify() { return { model: 'pipeline-test-stub', identified: true } },
+    }
+
+    const { verdict, pipeline } = await runPipelineCaseEval({
+      input: JSON.stringify(exam),
+      trace: nullTrace(),
+      provider,
+    })
+
+    assert.equal(verdict.pass, true, sepsisCase.name)
+    assert.deepEqual(
+      pipeline.steps.map((step) => [step.name, step.ok]),
+      [['extract', true], ['verify-derived', true], ['verify-source', true]],
+      sepsisCase.name,
+    )
+    // Every claim a qSOFA reply carries is derived from the closed payload, so the model
+    // verifier is handed an empty extraction: there is no source assertion left to check,
+    // and a score that reached it would be judged for not appearing verbatim in the input.
+    assert.equal(verifierPrompts.length, 1, sepsisCase.name)
+    assert.doesNotMatch(verifierPrompts[0]!, /qsofa_score/, sepsisCase.name)
+    assert.doesNotMatch(verifierPrompts[0]!, /criteria_met/, sepsisCase.name)
+  }
+})
+
+/**
+ * The same corpus with one axis broken per run. Without this the test above would pass
+ * against a verifier that returned `ok` unconditionally.
+ */
+test('a sepsis reply that disagrees with medprotocol stops the pipeline at the derived check', async () => {
+  const clinicalPack = loadPack(resolvePackRoot('clinical', { configured: 'packs/clinical', base: process.cwd() }))
+  const cases = loadSepsisCases(clinicalPack, loadMedprotocolRule(clinicalPack)).cases
+  const { exam, screen, criteria } = cases[0]!.resolved
+  const correct = {
+    ...exam,
+    qsofa_score: screen.score,
+    positive: screen.positive,
+    criteria_met: CRITERIA.filter((criterion) => criteria[criterion]),
+    screen_reason: null,
+    assessment_confidence: 1,
+    notes: null,
+  }
+  const mutations: Array<[string, Record<string, unknown>, RegExp]> = [
+    ['echo', { ...correct, respiratory_rate: exam.respiratory_rate + 1 }, /incorrect qSOFA echo/],
+    ['criteria', { ...correct, criteria_met: [] }, /criteria list does not match/],
+    ['verdict', { ...correct, positive: !screen.positive }, /verdict disagrees with medprotocol/],
+    // In range but wrong. A score OUTSIDE the schema's range would be refused by
+    // `parseSepsisReply` during extraction, and the pipeline would stop before the derived
+    // check this test is about — proving the parser works rather than the verifier.
+    ['score', { ...correct, qsofa_score: screen.score === 3 ? 2 : screen.score + 1 }, /score disagrees with medprotocol/],
+  ]
+
+  for (const [axis, reply, expected] of mutations) {
+    let verifierCalled = false
+    const provider: Provider = {
+      async chat(o: ChatOptions): Promise<string> {
+        if (o.label === 'extraction') {
+          verifierCalled = true
+          return JSON.stringify({ verified: true, confidence: 1, issues: [] })
+        }
+        return JSON.stringify(reply)
+      },
+      async toolChat() { return { content: '', toolCalls: [] } },
+      async streamChat() { return { content: '', toolCalls: [], chunks: 0 } },
+      async identify() { return { model: 'pipeline-test-stub', identified: true } },
+    }
+
+    const { pipeline } = await runPipelineCaseEval({
+      input: JSON.stringify(exam),
+      trace: nullTrace(),
+      provider,
+    })
+
+    const derived = pipeline.steps.find((step) => step.name === 'verify-derived')
+    assert.equal(derived?.ok, false, axis)
+    assert.match(String(derived?.text ?? ''), expected, axis)
+    // The model verifier is never asked to adjudicate a reply the rule already refused.
+    assert.equal(verifierCalled, false, axis)
+  }
 })
 
 test('smoke test fails when pipeline config has no steps', async () => {

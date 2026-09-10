@@ -21,6 +21,7 @@ import {
   scoreReply,
 } from '../clinical/shock.ts'
 import {
+  assess,
   loadSepsisRule,
   parseSepsis,
   parseSepsisReply,
@@ -118,6 +119,15 @@ const prepare = (ctx: ReviewContext, document: string | JsonObject, extraction: 
   const sourceExtraction: JsonObject = {}
   const issues: Array<{ field: string; issue: string }> = []
   let shockExam: ReturnType<typeof parseExam> | undefined
+  /**
+   * The qSOFA payload the sepsis screen was actually run on.
+   *
+   * `undefined` until a `sepsis-extraction` route supplies one, and the reason it must be
+   * tracked at all is the same reason `shockExam` is: on the PROSE arm the payload is a model
+   * output, not the input. Falling back to the document — which is what this adapter used to
+   * do unconditionally — only works for a `qsofa-json` input that already is the payload.
+   */
+  let sepsisExam: SepsisExam | undefined
 
   for (const route of routes) {
     const result = object(results[route])
@@ -149,25 +159,61 @@ const prepare = (ctx: ReviewContext, document: string | JsonObject, extraction: 
       }
       continue
     }
-    if (route === 'sepsis') {
+    if (route === 'sepsis-extraction') {
+      const examValue = object(output.exam)
+      if (!examValue) {
+        issues.push({ field: 'results.sepsis-extraction.output.exam', issue: 'missing exam' })
+        continue
+      }
       try {
-        const exam = sepsisExamOrUndefined(document)
-        if (!exam) {
-          issues.push({ field: 'results.sepsis.output', issue: 'initial input is not a qSOFA payload, but a sepsis route was claimed' })
-        } else {
-          const reply = parseReply(output)
-          for (const issue of sepsisDerivedIssues(ctx.pack!, exam, reply)) {
-            issues.push({ field: `results.${route}.output`, issue })
-          }
+        sepsisExam = parseSepsis(JSON.stringify(examValue), 'clinical verifier input')
+        // The three numbers ARE assertions about the prose, so they go on to the model
+        // verifier. The screen beside them is arithmetic and is checked here instead — the
+        // same split `shock-extraction` makes between its exam and its confirmation.
+        sourceExtraction[route] = { exam: sepsisExam }
+
+        const mp = loadMedprotocolRule(ctx.pack!)
+        checkMedprotocolVersion(mp, ctx.pack!.name)
+        const expected = assess(resolveSepsis(sepsisExam, loadSepsisRule(ctx.pack!), mp))
+        const actual = object(output.screen)
+        if (!actual || actual.positive !== expected.positive || actual.score !== expected.score) {
+          issues.push({ field: 'results.sepsis-extraction.output.screen', issue: 'does not match the deterministic qSOFA screen' })
         }
       } catch (error) {
-        issues.push({ field: `results.${route}.output`, issue: (error as Error).message })
+        issues.push({ field: 'results.sepsis-extraction.output.exam', issue: (error as Error).message })
       }
-      // Every claim a qSOFA reply can carry is derived; nothing source-shaped remains.
-      sourceExtraction[route] = {}
       continue
     }
+    // `sepsis` is verified after this loop, beside `shock`, because both read a payload an
+    // earlier route produced and neither may depend on the order routes arrive in.
+    if (route === 'sepsis') continue
     if (route !== 'shock') sourceExtraction[route] = output
+  }
+
+  if (routes.includes('sepsis')) {
+    const result = object(results.sepsis)
+    const output = object(result?.output)
+    // The extracted payload first, the document second. A prose note reaches the screen
+    // through `sepsis-extraction`; a qSOFA payload IS the document and arrives with no
+    // extraction route in front of it. Both are legitimate ways to reach this contract, and
+    // reading only the second accused every prose sepsis note of claiming a route it had.
+    const exam = sepsisExam ?? sepsisExamOrUndefined(document)
+    if (!output) {
+      issues.push({ field: 'results.sepsis.output', issue: 'missing structured output' })
+    } else if (!exam) {
+      issues.push({ field: 'results.sepsis.output', issue: 'no qSOFA payload: neither the initial input nor a sepsis-extraction route supplied one' })
+    } else {
+      try {
+        const reply = parseReply(output)
+        for (const issue of sepsisDerivedIssues(ctx.pack!, exam, reply)) {
+          issues.push({ field: 'results.sepsis.output', issue })
+        }
+      } catch (error) {
+        issues.push({ field: 'results.sepsis.output', issue: (error as Error).message })
+      }
+    }
+    // Every claim a qSOFA reply can carry is derived; nothing source-shaped remains.
+    sourceExtraction.sepsis = {}
   }
 
   if (routes.includes('shock')) {

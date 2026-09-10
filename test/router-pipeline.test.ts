@@ -120,11 +120,25 @@ const routeWorkflow = async (input: string) => WORKFLOW_ROUTER.review!({
   options: {},
 })
 
-test('front-door router chooses complete workflows, including its configured default', async () => {
-  const sepsis = await routeWorkflow('Calculate qSOFA for this synthetic input')
-  const general = await routeWorkflow('Extract the findings from this synthetic note')
-  assert.equal((sepsis.report as any).profile, 'sepsis-verified')
-  assert.equal((general.report as any).profile, 'clinical-verified')
+/**
+ * The front door names a PROCESSING SHAPE, never a clinical question.
+ *
+ * A syndrome phrasing reaching the clinical workflow is the assertion, not an absence of
+ * one: `sepsis-verified` used to be a second card here, matched on the word `sepsis` in the
+ * prompt. Which syndrome a document raises is decided by `routeClinicalShape`, which reads
+ * the document, and a rule that intercepted it here answered from the prompt instead — and
+ * then handed the note to a workflow that began by routing it properly anyway.
+ */
+test('front-door router sends clinical goals to the clinical workflow, syndrome phrasing included', async () => {
+  for (const goal of [
+    'Calculate qSOFA for this synthetic input',
+    'Is this septic shock?',
+    'Screen this patient for sepsis',
+    'Extract the findings from this synthetic note',
+  ]) {
+    const routed = await routeWorkflow(goal)
+    assert.equal((routed.report as any).profile, 'clinical-verified', goal)
+  }
 })
 
 // ---------------------------------------------------------------------------
