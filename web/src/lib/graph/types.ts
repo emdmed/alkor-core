@@ -26,6 +26,14 @@ export interface CompactStepData {
   ruleVsModel?: string
   reason?: string
   stages: CompactStageData[]
+  /** Stable disclosure key owned by this step (`<compact-node-id>/step-<n>`). */
+  expandKey?: string
+  /** Whether this step's stage rows are visible in this build. */
+  expanded?: boolean
+  /** Visible stage rows this build; what the modelled card height depends on. */
+  stageRowCount?: number
+  /** Injected by the view layer: toggles this step's stage disclosure. */
+  onToggle?: () => void
 }
 
 export interface CompactStageData {

@@ -6,7 +6,7 @@
  */
 import { stageTreeForRun } from '../../../../src/tui/state.ts'
 import type { PipelineDefinition, PipelineStepEntry, ProjectState, RunEntry, StageEntry } from '../../../../src/tui/state.ts'
-import { MAIN_X, MAIN_Y, ROW_GAP, detailTextOf, flowEdge, layoutHeightOf, llmOf, node, obj, operationFor, shortDigest, stageState, stepIndexOf } from './core.ts'
+import { MAIN_X, MAIN_Y, ROW_GAP, compactStepKey, detailTextOf, flowEdge, layoutHeightOf, llmOf, node, obj, operationFor, shortDigest, stageState, stepIndexOf } from './core.ts'
 import { inputReference, matchTopology, routeForRun } from './run.ts'
 import type { CompactStageData, CompactStepData, ExpandedGraphBuild, GraphEdge, GraphNode } from './types.ts'
 
@@ -52,7 +52,7 @@ const stageRouteDecision = (root?: StageEntry): { profile?: string; task?: strin
   return visit(root) ?? {}
 }
 
-const buildCompactSteps = (state: ProjectState, run: RunEntry, tree: StageEntry[], expanded: Set<string>): CompactStepData[] => {
+const buildCompactSteps = (nodeId: string, state: ProjectState, run: RunEntry, tree: StageEntry[], expanded: Set<string>): CompactStepData[] => {
   const entry = state.pipelines.get(run.runId)
   const def = matchTopology(state, entry, run.profile)
   const pipelineRoot = tree.find((n) => n.name === 'pipeline' && n.parentId === undefined)
@@ -83,6 +83,8 @@ const buildCompactSteps = (state: ProjectState, run: RunEntry, tree: StageEntry[
     const isRouter = Boolean(stepRoute.profile || stepRoute.task)
 
     const stages = stageEntries ? compactStages(stageEntries.children, state.llmRequests) : []
+    const expandKey = compactStepKey(nodeId, i)
+    const isExpanded = expanded.has(expandKey)
 
     steps.push({
       name,
@@ -97,6 +99,9 @@ const buildCompactSteps = (state: ProjectState, run: RunEntry, tree: StageEntry[
       ruleVsModel: isRouter ? undefined : undefined,
       reason: isRouter ? stepRoute.reason : undefined,
       stages,
+      expandKey,
+      expanded: isExpanded,
+      stageRowCount: isExpanded && stages.length > 0 ? stages.length : 0,
     })
   }
   return steps
@@ -110,7 +115,8 @@ const buildCompactPipelineNode = (
   tree: StageEntry[],
   expanded: Set<string>,
 ): GraphNode => {
-  const steps = buildCompactSteps(state, run, tree, expanded)
+  const nodeId = `compact-${run.runId}`
+  const steps = buildCompactSteps(nodeId, state, run, tree, expanded)
   const entry = state.pipelines.get(run.runId)
 
   const hasActive = steps.some((s) => s.status === 'active')
@@ -126,7 +132,7 @@ const buildCompactPipelineNode = (
     : allDone ? 'done'
     : 'idle'
 
-  return node(`compact-${run.runId}`, 'compact-pipeline', `${run.profile} workflow`, pipelineStatus, {
+  return node(nodeId, 'compact-pipeline', `${run.profile} workflow`, pipelineStatus, {
     profile: run.profile,
     wallMs: run.wallMs,
     runId: run.runId,
@@ -136,6 +142,7 @@ const buildCompactPipelineNode = (
 }
 
 const buildIdleCompactPipeline = (def: PipelineDefinition): GraphNode => {
+  const nodeId = `compact-configured-${def.name}`
   const steps: CompactStepData[] = def.steps.map((s, i) => ({
     name: s.name,
     profile: s.profile,
@@ -143,9 +150,12 @@ const buildIdleCompactPipeline = (def: PipelineDefinition): GraphNode => {
     stepNo: i,
     inputRef: inputReference(s.input) ?? (i === 0 ? 'initial' : `step-${i - 1}.output`),
     stages: [],
+    expandKey: compactStepKey(nodeId, i),
+    expanded: false,
+    stageRowCount: 0,
   }))
 
-  return node(`compact-configured-${def.name}`, 'compact-pipeline', `${def.name} workflow`, 'idle', {
+  return node(nodeId, 'compact-pipeline', `${def.name} workflow`, 'idle', {
     profile: def.name,
     steps,
     operation: 'orchestrator',
@@ -157,14 +167,14 @@ const buildIdleCompactPipeline = (def: PipelineDefinition): GraphNode => {
 export const buildCompactGraph = (
   state: ProjectState,
   runId: string | undefined,
-  _expanded: Set<string>,
+  expanded: Set<string>,
 ): ExpandedGraphBuild => {
   const selected = runId ? state.runs.get(runId) : undefined
   const gateway = state.topology.pipeline
 
   // Nothing to show: no product gateway, no configured workflows, and no running pipeline.
   if (!gateway && state.topology.pipelines.length === 0 && !selected) {
-    return { nodes: [], edges: [], title: '', expanded: _expanded }
+    return { nodes: [], edges: [], title: '', expanded }
   }
 
   const nodes: GraphNode[] = []
@@ -197,7 +207,7 @@ export const buildCompactGraph = (
       const def = state.topology.pipelines.find((p) => p.name === wfName)
       const isActiveRun = chosenWorkflowName === wfName && selected
       const compactNode = isActiveRun && def
-        ? buildCompactPipelineNode(state, selected, tree, _expanded)
+        ? buildCompactPipelineNode(state, selected, tree, expanded)
         : def
           ? buildIdleCompactPipeline(def)
           : buildMissingWorkflowNode(wfName)
@@ -219,7 +229,7 @@ export const buildCompactGraph = (
 
     // --- Unconfigured direct run: executed but absent from the catalogue ---
     if (selected && !gateway.workflows.includes(selected.profile) && !configuredNames.has(selected.profile)) {
-      const compactNode = buildCompactPipelineNode(state, selected, tree, _expanded)
+      const compactNode = buildCompactPipelineNode(state, selected, tree, expanded)
       compactNode.position = { x: MAIN_X, y: yOffset }
       nodes.push(compactNode)
       // Connects as a ghost branch: a direct run, not a declared route.
@@ -241,7 +251,7 @@ export const buildCompactGraph = (
     // --- No product gateway: standalone configured workflows render on their own,
     // and a selected direct run wins the top card ---
     if (selected) {
-      const compactNode = buildCompactPipelineNode(state, selected, tree, _expanded)
+      const compactNode = buildCompactPipelineNode(state, selected, tree, expanded)
       compactNode.position = { x: MAIN_X, y: MAIN_Y }
       nodes.push(compactNode)
       yOffset = MAIN_Y + layoutHeightOf(compactNode) + ROW_GAP
@@ -255,6 +265,15 @@ export const buildCompactGraph = (
     }
   }
 
+  // Only keys a rendered step actually holds open count: a key whose workflow node is
+  // no longer on the canvas (switched run, collapsed catalogue entry) drops out here.
+  const renderedExpanded = new Set<string>()
+  for (const n of nodes) {
+    for (const step of (n.data.steps as CompactStepData[] | undefined) ?? []) {
+      if (step.expandKey && step.expanded) renderedExpanded.add(step.expandKey)
+    }
+  }
+
   const title = gateway
     ? `1 product pipeline · ${gateway.workflows.length} workflow${gateway.workflows.length === 1 ? '' : 's'} · compact view${selected ? ` · run ${selected.profile} ${shortDigest(selected.runId)}` : ''}`
     : state.topology.pipelines.length > 0
@@ -263,7 +282,7 @@ export const buildCompactGraph = (
         ? `run ${selected.profile} · compact`
         : ''
 
-  return { nodes, edges, title, expanded: _expanded }
+  return { nodes, edges, title, expanded: renderedExpanded }
 }
 
 /** Render a workflow that the gateway names but no definition exists for. */

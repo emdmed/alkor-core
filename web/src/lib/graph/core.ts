@@ -162,6 +162,26 @@ const COLUMN_PITCH = STEP_W + GAP
 export const ROW_GAP = 82
 export const columnX = (rank: number): number => MAIN_X + rank * COLUMN_PITCH
 
+/* Compact-card geometry contract. A CompactPipelineNode card is rendered by the browser
+   with natural height, so these constants must stay aligned with the `.g-compact`/`.c-*`
+   CSS block in styles.css; the deterministic sibling layout advances by this model and
+   nothing measures the DOM first. */
+export const COMPACT_HEADER_H = 38 /* .c-header min-height, border-box */
+export const COMPACT_PROGRESS_H = 3 /* .c-progress height */
+export const COMPACT_TERMINAL_H = 28 /* .c-terminal min-height, border-box */
+export const COMPACT_STEP_H = 36 /* .c-step-main min-height, border-box */
+export const COMPACT_ROUTER_H = 27 /* .c-step-router-info min-height, border-box */
+export const COMPACT_STAGE_H = 20 /* one .c-stage row: 2px pad top/bottom + 16px nowrap line */
+export const COMPACT_STAGES_EXTRAS_H = 13 /* .c-stages pad-top 3 + pad-bottom 6 + margin-bottom 4 */
+const COMPACT_BASE_H = COMPACT_HEADER_H + COMPACT_PROGRESS_H + COMPACT_TERMINAL_H * 2
+
+/**
+ * Stable disclosure key for one compact step disclosure. Formed from the owning
+ * workflow node id and the step number so a different run of the same workflow never
+ * reuses the same key, and a step's key never depends on DOM or ordering.
+ */
+export const compactStepKey = (nodeId: string, stepNo: number): string => `${nodeId}/step-${stepNo}`
+
 /**
  * Reserved card heights, rather than a generic height per node type: a router or an
  * expanded stage has extra, always-visible rows, and the layout must step past them.
@@ -183,9 +203,17 @@ export const layoutHeightOf = (n: GraphNode): number => {
     case 'group': return 0
     case 'gateway': return 56
     case 'compact-pipeline': {
-      const stepCount = (n.data.steps as CompactStepData[] | undefined)?.length ?? 0
-      const routerCount = ((n.data.steps as CompactStepData[] | undefined) ?? []).filter((step) => step.router && step.chosenProfile).length
-      return 97 + stepCount * 36 + routerCount * 27
+      const steps = (n.data.steps as CompactStepData[] | undefined) ?? []
+      const routerCount = steps.filter((step) => step.router && step.chosenProfile).length
+      // Each expanded step paints its own `.c-stages` container, so its padding and
+      // margin land once per disclosed step, and each disclosed stage owns one row.
+      const disclosed = steps.filter((step) => (step.stageRowCount ?? (step.expanded ? step.stages.length : 0)) > 0)
+      const stageRows = disclosed.reduce((total, step) => total + (step.stageRowCount ?? step.stages.length), 0)
+      return COMPACT_BASE_H
+        + steps.length * COMPACT_STEP_H
+        + routerCount * COMPACT_ROUTER_H
+        + disclosed.length * COMPACT_STAGES_EXTRAS_H
+        + stageRows * COMPACT_STAGE_H
     }
   }
 }

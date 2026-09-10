@@ -3,8 +3,8 @@
  * steps listed inside it, dramatically reducing canvas size while keeping all
  * workflow steps visible at all times.
  */
-import { memo, useState } from 'react'
-import { Handle, Position, type NodeProps } from '@xyflow/react'
+import { memo, useLayoutEffect } from 'react'
+import { Handle, Position, useUpdateNodeInternals, type NodeProps } from '@xyflow/react'
 import type { GraphNode, GraphNodeData, CompactStepData, CompactStageData } from '../../lib/graph/index.ts'
 import { fmtSec } from '../../lib/format.ts'
 import { ArrowRight, Braces, Check, ChevronDown, ChevronRight, Cpu, FileInput, FileOutput, GitBranch, LoaderCircle, Orbit, X } from 'lucide-react'
@@ -108,19 +108,18 @@ const StepRow = ({ step, expanded, onToggle }: { step: CompactStepData; expanded
 }
 
 /** Compact pipeline node: one container card with all steps listed inside. */
-export const CompactPipelineNode = memo(({ data }: NodeProps<GraphNode>) => {
+export const CompactPipelineNode = memo(({ id, data }: NodeProps<GraphNode>) => {
   const d = data as GraphNodeData
   const steps = (d.steps as CompactStepData[] | undefined) ?? []
-  const [expandedSteps, setExpandedSteps] = useState<Set<number>>(new Set())
 
-  const toggleStep = (stepNo: number) => {
-    setExpandedSteps((previous) => {
-      const next = new Set(previous)
-      if (next.has(stepNo)) next.delete(stepNo)
-      else next.add(stepNo)
-      return next
-    })
-  }
+  // Stage expansion reflows the card, so the bottom source handle moves and the
+  // attached edge must follow the card's new boundary. React Flow re-measures node
+  // internals once the expanded content has committed.
+  const updateNodeInternals = useUpdateNodeInternals()
+  const expansionSignature = steps.map((step) => (step.expanded ? '1' : '0')).join('')
+  useLayoutEffect(() => {
+    updateNodeInternals(id)
+  }, [updateNodeInternals, id, expansionSignature])
 
   return (
     <div className={`g-compact ${statusClass(d.status)}${d.muted ? ' is-muted' : ''}`}>
@@ -157,8 +156,8 @@ export const CompactPipelineNode = memo(({ data }: NodeProps<GraphNode>) => {
           <StepRow
             key={step.stepNo}
             step={step}
-            expanded={expandedSteps.has(step.stepNo)}
-            onToggle={() => toggleStep(step.stepNo)}
+            expanded={Boolean(step.expanded)}
+            onToggle={step.onToggle ?? (() => {})}
           />
         ))}
         {steps.length === 0 && d.reason ? (

@@ -9,8 +9,8 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, Circle, ChevronsDownUp, ChevronsUpDown, Columns3, ListTree, LoaderCircle, Maximize2, Minimize2, Rows3, ScrollText, X } from 'lucide-react'
 import { Background, BackgroundVariant, Controls, ReactFlow, ReactFlowProvider, useReactFlow, useStore } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import type { GraphNode, GraphNodeData } from '../../lib/graph/index.ts'
-import { buildCompactGraph, buildExpandedPipelinesGraph } from '../../lib/graph/index.ts'
+import type { GraphNode, GraphNodeData, CompactStepData } from '../../lib/graph/index.ts'
+import { buildCompactGraph, buildExpandedPipelinesGraph, layoutHeightOf } from '../../lib/graph/index.ts'
 import { fmtSec } from '../../lib/format.ts'
 import { NODE_TYPES } from './nodes.tsx'
 import { Badge } from '../ui/badge'
@@ -47,7 +47,7 @@ const miniNodeSize = (node: GraphNode): { width: number; height: number } => {
     case 'route': return { width: 248, height: 74 }
     case 'branch': return { width: 168, height: 44 }
     case 'profile': return { width: 196, height: 62 }
-    case 'compact-pipeline': return { width: 360, height: 76 }
+    case 'compact-pipeline': return { width: 360, height: layoutHeightOf(node) }
     case 'gateway': return { width: 340, height: 56 }
     default: return { width: 240, height: 60 }
   }
@@ -131,6 +131,7 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
   const [selectedId, setSelectedId] = useState<string>()
   const [userExpanded, setUserExpanded] = useState<Set<string>>(new Set())
   const [userCollapsed, setUserCollapsed] = useState<Set<string>>(new Set())
+  const [compactExpanded, setCompactExpanded] = useState<Set<string>>(new Set())
   const [showLegend, setShowLegend] = useState(true)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [fullscreenFallback, setFullscreenFallback] = useState(false)
@@ -200,17 +201,38 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
     }
   }
 
+  // Compact view expands a step embedded in a workflow card, so its disclosure set is
+  // deliberately separate from Full view's node expansion set: neither mode mutates
+  // the other mode's state, and toggling between them preserves each mode's own state.
+  const toggleCompactStep = (key: string) => {
+    setCompactExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
   const graphView = useMemo(() => {
     if (graphMode === 'compact') {
-      const graph = buildCompactGraph(state, selected?.runId, new Set())
-      const nodes: GraphNode[] = graph.nodes.map((n) => ({
-        ...n,
-        data: {
-          ...n.data,
-          onInspect: () => onInspect(n.data),
-        },
-      }))
-      return { nodes, edges: graph.edges, title: graph.title, expanded: new Set<string>() }
+      const graph = buildCompactGraph(state, selected?.runId, compactExpanded)
+      const nodes: GraphNode[] = graph.nodes.map((n) => {
+        const steps = (n.data.steps as CompactStepData[] | undefined) ?? []
+        return {
+          ...n,
+          data: {
+            ...n.data,
+            steps: steps.map((step) => ({
+              ...step,
+              onToggle: step.stages.length > 0 && step.expandKey
+                ? () => toggleCompactStep(step.expandKey!)
+                : undefined,
+            })),
+            onInspect: () => onInspect(n.data),
+          },
+        }
+      })
+      return { nodes, edges: graph.edges, title: graph.title, expanded: graph.expanded }
     }
     const graph = buildExpandedPipelinesGraph(state, selected?.runId, userExpanded, userCollapsed)
     const expandedKeys = graph.expanded
@@ -232,13 +254,24 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
           },
     )
     return { nodes, edges: graph.edges, title: graph.title, expanded: expandedKeys }
-  }, [state, selected, userCollapsed, userExpanded, onInspect, graphMode])
+  }, [state, selected, userCollapsed, userExpanded, compactExpanded, onInspect, graphMode])
   const { nodes, edges, title, expanded } = graphView
+
+  // Compact disclosure keys embed the workflow node identity and step number; when a
+  // key's owning workflow is no longer rendered (switch of selected run, catalogue
+  // change), prune it so stale run ids never accumulate across the session.
+  useEffect(() => {
+    if (graphMode !== 'compact') return
+    setCompactExpanded((prev) => {
+      if ([...prev].every((key) => graphView.expanded.has(key))) return prev
+      return new Set([...prev].filter((key) => graphView.expanded.has(key)))
+    })
+  }, [graphMode, graphView.expanded])
 
   // Keep the current neighborhood readable. Fitting an arbitrarily long run into the
   // viewport recreates a minimap where the operator needs legible execution detail.
   const geometryKey = nodes
-    .map((n) => `${n.id}:${n.position.x}:${n.position.y}:${String(n.style?.width ?? '')}:${String(n.style?.height ?? '')}`)
+    .map((n) => `${n.id}:${n.position.x}:${n.position.y}:${String(n.style?.width ?? '')}:${String(n.style?.height ?? '')}${n.data.kind === 'compact-pipeline' ? `:h${layoutHeightOf(n)}` : ''}`)
     .join('|')
   useEffect(() => {
     if (nodes.length === 0) return

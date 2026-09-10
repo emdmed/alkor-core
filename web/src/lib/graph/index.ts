@@ -23,6 +23,19 @@ export type {
 
 export { detailTextOf, stageState } from './core.ts'
 
+export {
+  COMPACT_HEADER_H,
+  COMPACT_PROGRESS_H,
+  COMPACT_ROUTER_H,
+  COMPACT_STAGE_H,
+  COMPACT_STAGES_EXTRAS_H,
+  COMPACT_STEP_H,
+  COMPACT_TERMINAL_H,
+  ROW_GAP,
+  compactStepKey,
+  layoutHeightOf,
+} from './core.ts'
+
 export { buildGraph, buildProgressGraph } from './run.ts'
 
 export { buildExpandedPipelinesGraph, buildPipelinesGraph, buildProjectGraph } from './project.ts'

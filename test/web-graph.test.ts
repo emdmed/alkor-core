@@ -1,7 +1,23 @@
 /** The browser graph's model stays deterministic and testable without a renderer. */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildCompactGraph, buildExpandedPipelinesGraph, buildGraph, buildPipelinesGraph, buildProgressGraph, buildProjectGraph } from '../web/src/lib/graph/index.ts'
+import {
+  buildCompactGraph,
+  buildExpandedPipelinesGraph,
+  buildGraph,
+  buildPipelinesGraph,
+  buildProgressGraph,
+  buildProjectGraph,
+  compactStepKey,
+  layoutHeightOf,
+  ROW_GAP,
+  COMPACT_HEADER_H,
+  COMPACT_PROGRESS_H,
+  COMPACT_STAGE_H,
+  COMPACT_STAGES_EXTRAS_H,
+  COMPACT_STEP_H,
+  COMPACT_TERMINAL_H,
+} from '../web/src/lib/graph/index.ts'
 import { emptyState } from '../src/tui/state.ts'
 
 test('an active nested stage marks its step lineage and renders inline', () => {
@@ -1183,4 +1199,192 @@ test('compact graph keeps every workflow node id unique across sections', () => 
   ]
   assert.deepEqual(ids, expected)
   assert.equal(new Set(ids).size, ids.length)
+})
+
+/* ------------------------------------------------------------------ compact disclosure reflow */
+
+const COMPACT_BASE_H = COMPACT_HEADER_H + COMPACT_PROGRESS_H + COMPACT_TERMINAL_H * 2
+
+/** Gateway with a completed two-step run whose step 0 exposes nested stages. */
+const compactExpansionState = () => {
+  const state = emptyState()
+  state.topology = compactGateway()
+  state.runs.set('run-1', { runId: 'run-1', profile: 'clinical-verified', status: 'completed', wallMs: 12 })
+  state.routes.push({ runId: 'run-1', profile: 'clinical-verified', confidence: 0.87, reason: 'default workflow', ruleVsModel: 'rule' })
+  state.pipelines.set('run-1', {
+    runId: 'run-1',
+    steps: [
+      { step: 0, name: 'extract medications', profile: 'clinical', status: 'completed', ok: true },
+      { step: 1, name: 'verify', profile: 'coding', status: 'completed', ok: true },
+    ],
+  })
+  state.stages.set('pipeline', { stageId: 'pipeline', runId: 'run-1', name: 'pipeline', status: 'completed', children: [] })
+  state.stages.set('step0', {
+    stageId: 'step0', runId: 'run-1', parentId: 'pipeline', name: 'clinical', status: 'completed', detail: { step: 0 }, children: [],
+  })
+  state.stages.set('prepare', {
+    stageId: 'prepare', runId: 'run-1', parentId: 'step0', name: 'prompt-assembly', status: 'completed', children: [],
+  })
+  state.stages.set('model', {
+    stageId: 'model', runId: 'run-1', parentId: 'step0', name: 'llm-call', status: 'completed', wallMs: 830, children: [],
+  })
+  state.stages.set('tool', {
+    stageId: 'tool', runId: 'run-1', parentId: 'model', name: 'tool-call', status: 'completed', children: [],
+  })
+  state.stages.set('deep', {
+    stageId: 'deep', runId: 'run-1', parentId: 'tool', name: 'deep-call', status: 'completed', children: [],
+  })
+  state.stages.set('step1', {
+    stageId: 'step1', runId: 'run-1', parentId: 'pipeline', name: 'verify', status: 'completed', detail: { step: 1 }, children: [],
+  })
+  state.stages.set('walk', {
+    stageId: 'walk', runId: 'run-1', parentId: 'step1', name: 'verify-walk', status: 'completed', children: [],
+  })
+  return state
+}
+
+/** The user-visible invariant: every following card begins at least ROW_GAP below its predecessor. */
+const assertNoCompactOverlap = (nodes: ReturnType<typeof buildCompactGraph>['nodes']) => {
+  const cards = nodes
+    .filter((node) => node.data.kind === 'compact-pipeline')
+    .sort((a, b) => a.position.y - b.position.y)
+  for (let i = 1; i < cards.length; i++) {
+    const upper = cards[i - 1]!
+    const lower = cards[i]!
+    assert.ok(
+      upper.position.y + layoutHeightOf(upper) <= lower.position.y - ROW_GAP,
+      `card ${upper.id} must clear card ${lower.id} by the full ROW_GAP (${upper.position.y} + ${layoutHeightOf(upper)} > ${lower.position.y} - ${ROW_GAP})`,
+    )
+  }
+}
+
+test('compact graph keeps card positions stable with no disclosures open', () => {
+  const state = compactExpansionState()
+  const graph = buildCompactGraph(state, 'run-1', new Set())
+  const gateway = graph.nodes.find((node) => node.id === 'gateway')!
+  const run = graph.nodes.find((node) => node.id === 'compact-run-1')!
+  const coding = graph.nodes.find((node) => node.id === 'compact-configured-coding-verified')!
+
+  assert.equal(gateway.position.y, 40, 'the gateway never moves when a workflow below it grows')
+  assert.equal(layoutHeightOf(run), COMPACT_BASE_H + 2 * COMPACT_STEP_H, 'collapsed height counts header, terminals, and step rows only')
+  assert.equal(run.position.y, 40 + layoutHeightOf(gateway) + ROW_GAP)
+  assert.equal(coding.position.y, run.position.y + layoutHeightOf(run) + ROW_GAP, 'with nothing open the catalogue order advances as before')
+  assert.deepEqual(graph.nodes.map((node) => node.id), ['gateway', 'compact-run-1', 'compact-configured-coding-verified'])
+})
+
+test('expanding compact step 0 adds the complete stage block to the workflow height', () => {
+  const state = compactExpansionState()
+  const collapsed = buildCompactGraph(state, 'run-1', new Set())
+  const key = compactStepKey('compact-run-1', 0)
+  const expanded = buildCompactGraph(state, 'run-1', new Set([key]))
+
+  const collapsedNode = collapsed.nodes.find((node) => node.id === 'compact-run-1')!
+  const expandedNode = expanded.nodes.find((node) => node.id === 'compact-run-1')!
+  const step = expandedNode.data.steps![0]!
+  assert.equal(step.expanded, true)
+  assert.equal(step.stageRowCount, 4, 'every visible stage row inside the disclosed step counts')
+  assert.equal(layoutHeightOf(expandedNode) - layoutHeightOf(collapsedNode), COMPACT_STAGES_EXTRAS_H + 4 * COMPACT_STAGE_H)
+})
+
+test('expanding a compact step pushes the next workflow by exactly the added height', () => {
+  const state = compactExpansionState()
+  const graph = buildCompactGraph(state, 'run-1', new Set([compactStepKey('compact-run-1', 0)]))
+  const run = graph.nodes.find((node) => node.id === 'compact-run-1')!
+  const coding = graph.nodes.find((node) => node.id === 'compact-configured-coding-verified')!
+
+  assert.equal(coding.position.y, run.position.y + layoutHeightOf(run) + ROW_GAP, 'the following card steps over the full expanded height')
+  assert.ok(run.position.y + layoutHeightOf(run) <= coding.position.y - ROW_GAP)
+})
+
+test('expanding two compact steps is additive and each collapse removes exactly its contribution', () => {
+  const state = compactExpansionState()
+  const key0 = compactStepKey('compact-run-1', 0)
+  const key1 = compactStepKey('compact-run-1', 1)
+  const collapsedHeight = layoutHeightOf(buildCompactGraph(state, 'run-1', new Set()).nodes.find((node) => node.id === 'compact-run-1')!)
+
+  const step0Block = COMPACT_STAGES_EXTRAS_H + 4 * COMPACT_STAGE_H
+  const step1Block = COMPACT_STAGES_EXTRAS_H + 1 * COMPACT_STAGE_H
+
+  const only0 = buildCompactGraph(state, 'run-1', new Set([key0])).nodes.find((node) => node.id === 'compact-run-1')!
+  const only1 = buildCompactGraph(state, 'run-1', new Set([key1])).nodes.find((node) => node.id === 'compact-run-1')!
+  const both = buildCompactGraph(state, 'run-1', new Set([key0, key1])).nodes.find((node) => node.id === 'compact-run-1')!
+
+  assert.equal(layoutHeightOf(only0) - collapsedHeight, step0Block)
+  assert.equal(layoutHeightOf(only1) - collapsedHeight, step1Block)
+  assert.equal(layoutHeightOf(both) - collapsedHeight, step0Block + step1Block, 'each disclosure owns its own stage container and rows')
+})
+
+test('nested compact stage depth changes indentation, never height or order', () => {
+  const state = compactExpansionState()
+  const graph = buildCompactGraph(state, 'run-1', new Set([compactStepKey('compact-run-1', 0)]))
+  const stages = graph.nodes.find((node) => node.id === 'compact-run-1')!.data.steps![0]!.stages
+
+  assert.deepEqual(stages.map((stage) => stage.name), ['prompt-assembly', 'llm-call', 'tool-call', 'deep-call'], 'pre-order stage sequence is preserved')
+  assert.deepEqual(stages.map((stage) => stage.depth), [0, 0, 1, 2], 'nesting is encoded per row')
+  assert.equal(layoutHeightOf(graph.nodes.find((node) => node.id === 'compact-run-1')!) - (COMPACT_BASE_H + 2 * COMPACT_STEP_H), COMPACT_STAGES_EXTRAS_H + 4 * COMPACT_STAGE_H)
+})
+
+test('compact expansion reflows gateway, standalone, direct-run, and missing-definition layouts', () => {
+  const asserts = [] as { title: string; graph: ReturnType<typeof buildCompactGraph> }[]
+
+  const gateway = compactExpansionState()
+  asserts.push({ title: 'gateway', graph: buildCompactGraph(gateway, 'run-1', new Set([compactStepKey('compact-run-1', 0)])) })
+
+  const standalone = emptyState()
+  standalone.topology = {
+    profiles: [{ name: 'a', mode: 'extract' }, { name: 'b', mode: 'extract' }],
+    pipelines: [
+      { name: 'aflow', steps: [{ name: 'work', profile: 'a' }] },
+      { name: 'bflow', steps: [{ name: 'work', profile: 'b' }] },
+    ],
+  }
+  asserts.push({ title: 'standalone', graph: buildCompactGraph(standalone, undefined, new Set()) })
+
+  const direct = emptyState()
+  direct.runs.set('run-1', { runId: 'run-1', profile: 'direct', status: 'completed', wallMs: 5 })
+  direct.pipelines.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'work', profile: 'worker', status: 'completed', ok: true }] })
+  direct.stages.set('pipeline', { stageId: 'pipeline', runId: 'run-1', name: 'pipeline', status: 'completed', children: [] })
+  direct.stages.set('worker', {
+    stageId: 'worker', runId: 'run-1', parentId: 'pipeline', name: 'worker', status: 'completed', detail: { step: 0 }, children: [],
+  })
+  direct.stages.set('leaf', { stageId: 'leaf', runId: 'run-1', parentId: 'worker', name: 'llm-call', status: 'completed', children: [] })
+  asserts.push({ title: 'direct-run', graph: buildCompactGraph(direct, 'run-1', new Set([compactStepKey('compact-run-1', 0)])) })
+
+  const missing = emptyState()
+  missing.topology = {
+    profiles: [{ name: 'workflow-router', mode: 'router' }],
+    pipeline: { router: 'workflow-router', workflows: ['present', 'absent'], defaultWorkflow: 'present' },
+    pipelines: [{ name: 'present', steps: [{ name: 'work', profile: 'worker' }] }],
+  }
+  asserts.push({ title: 'missing-definition', graph: buildCompactGraph(missing, undefined, new Set()) })
+
+  for (const { title, graph } of asserts) {
+    const keys = graph.nodes.flatMap((node) => (node.data.steps ?? []).map((step) => step.expandKey).filter(Boolean))
+    assert.equal(new Set(keys).size, keys.length, `${title}: every disclosure key is unique per rendered workflow`)
+    assertNoCompactOverlap(graph.nodes)
+  }
+
+  for (const { title, graph } of asserts) {
+    assert.equal(graph.nodes.filter((node) => node.data.kind !== 'gateway' && node.data.kind !== 'compact-pipeline').length, 0, `${title}: only gateway and workflow cards exist`)
+  }
+  const directGraph = asserts.find((a) => a.title === 'direct-run')!.graph
+  assert.equal(layoutHeightOf(directGraph.nodes[0]!), COMPACT_BASE_H + 1 * COMPACT_STEP_H + COMPACT_STAGES_EXTRAS_H + 1 * COMPACT_STAGE_H, 'a direct run expands exactly like a catalogued workflow')
+})
+
+test('compact graph returns the same expanded set the steps paint', () => {
+  const state = compactExpansionState()
+  const key0 = compactStepKey('compact-run-1', 0)
+  const key1 = compactStepKey('compact-run-1', 1)
+  const graph = buildCompactGraph(state, 'run-1', new Set([key0]))
+
+  const painted = new Set<string>()
+  for (const node of graph.nodes) {
+    for (const step of node.data.steps ?? []) {
+      if (step.expandKey && step.expanded) painted.add(step.expandKey)
+    }
+  }
+  assert.deepEqual([...graph.expanded].sort(), [...painted].sort(), 'the view-level set is the union of the steps held open')
+  assert.equal(graph.expanded.has(key0), true)
+  assert.equal(graph.expanded.has(key1), false, 'a closed step never leaks into the view-level set')
+  assert.equal(compactStepKey('compact-run-1', 3), 'compact-run-1/step-3')
 })
