@@ -15,7 +15,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parse as parseToml } from 'smol-toml'
-import { loadPack, specGap, SPEC_VERSION } from '../src/core/pack.ts'
+import { loadPack, SPEC_CHANGES, specGap, SPEC_VERSION } from '../src/core/pack.ts'
 import { loadSampling, loadSettings } from '../src/profiles/clinical/settings.ts'
 import { gradedExpectations, loadVitalCases, parseDifficultyRange } from '../src/profiles/clinical/cases.ts'
 import { gradedFields, vitalPrompt, vitalSchema, vitalSchemaGolden } from '../src/profiles/clinical/contracts.ts'
@@ -46,6 +46,28 @@ test('the pack declares the spec version this harness reads', () => {
  * written the day before got a message about an incomplete TOML table with nothing anywhere
  * saying the format had moved.
  */
+/**
+ * The version the harness reads must be a version the harness can EXPLAIN.
+ *
+ * `specGap(SPEC_VERSION).length === 0` below proves the changelog holds nothing from the
+ * future. It cannot prove the changelog holds anything at all about the present, and that is
+ * the gap this test closes: spec went to 3 with the table form of `documents`, and both the
+ * `SPEC_CHANGES` entry and the changelog section in `spec/pack.md` are what a pack author
+ * reads when their pack is refused. A bump that lands without them reproduces the exact
+ * failure the comment on SPEC_CHANGES was written to record, one version later.
+ */
+test('the current spec version is described in both places a pack author reads', () => {
+  const changes = SPEC_CHANGES[SPEC_VERSION]
+  assert.ok(
+    Array.isArray(changes) && changes.length > 0,
+    `SPEC_CHANGES has no entry for spec ${SPEC_VERSION} — a reader told their pack is older is told nothing else`,
+  )
+
+  const doc = readFileSync(join(import.meta.dirname, '..', 'spec', 'pack.md'), 'utf8')
+  assert.match(doc, new RegExp(`^# Contract pack format — spec ${SPEC_VERSION}$`, 'm'), 'the format doc names the current version')
+  assert.match(doc, new RegExp(`^\\*\\*spec ${SPEC_VERSION}\\.\\*\\*`, 'm'), 'the format doc has a changelog section for it')
+})
+
 test('a pack older than the harness is refused by version, not only by key', () => {
   assert.ok(specGap(1).some((c) => c.includes('accentSensitive')), 'the changelog must name the key')
   assert.equal(specGap(SPEC_VERSION).length, 0)

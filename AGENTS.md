@@ -127,8 +127,11 @@ These are taken from `CONTRIBUTING.md` and are enforced by design, not by policy
   metadata-only by construction: no `content`/`prompt`/`completion`/`text`/`messages`/`note`/
   `document` field exists on the union, and `emit()` throws if a banned key appears anywhere.
   Because there is nothing to redact, the feed needs no redactor hook.
-- `spec = 2` in `pack.toml` is the current pack format. Absent means 1. A pack declaring a
-  version this harness does not read is refused rather than read under the old rules.
+- `spec = 3` in `pack.toml` is the current pack format. Absent means 1. A pack declaring a
+  version this harness does not read is refused rather than read under the old rules. The
+  version lives in `SPEC_VERSION` in `src/core/pack.ts`; bumping it means adding the entry to
+  `SPEC_CHANGES` beside it and to the changelog in `spec/pack.md`, which is what a loader
+  quotes when a pack is older than the harness.
 
 ## When you change a contract
 

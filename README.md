@@ -167,7 +167,7 @@ harness reads files by manifest **key** — never by path.
 
 ```toml
 # your-project/contracts/pack.toml
-spec = 2
+spec = 3
 name = "vitals"
 documents = "notes/{case}.note.txt"
 
@@ -729,7 +729,7 @@ longer exists, so an entry there gets a new date rather than an edit.
 |---|---|
 | harness core, modes, tracing | done, tested |
 | `extract` — one note in, JSON out, provenance checked | done, tested |
-| pack format (`spec = 2`) | done — with a changelog the loader quotes when a pack is older |
+| pack format (`spec = 3`) | done — with a changelog the loader quotes when a pack is older |
 | out-of-tree profiles and packs | done |
 | public API (`medextract` entry point) | done |
 | agentic worked example (`coding`) | done |

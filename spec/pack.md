@@ -312,10 +312,22 @@ notes, which are the measured input.
 `SPEC_VERSION` in `src/core/pack.ts` is what the harness reads today, and `SPEC_CHANGES`
 beside it is what each version added, in the words a pack author needs. A loader that finds
 a required key absent quotes that table rather than reporting only the key: "your pack
-declares spec 1, this harness reads spec 2, and here is everything that happened in
+declares spec 1, this harness reads spec 3, and here is everything that happened in
 between" is a fix, where "a table is incomplete" is a second way to be stuck.
 
 ### Changelog
+
+**spec 3.** `documents` may be a **table of kind → template** as well as a single template.
+
+- A pack whose tasks read genuinely different kinds of source document — a written note and
+  a dictated transcript, a note and a fixed JSON exam payload — used to have to file all of
+  them under one filename convention, which meant naming speech as though it were prose.
+- A string still means exactly what it did: the `default` kind, which is what
+  `document(case)` reads. Every spec 1 and spec 2 pack keeps loading unchanged, so this is
+  an addition rather than a break — it bumps `spec` because the RESOLUTION RULE for
+  `documents` changed, and a pack that declares a kind cannot be read by a harness that only
+  knows the string form.
+- See `documents` above for when the table is worth reaching for, and when it is not.
 
 **spec 2.** Two keys the reference profile now requires became load-bearing:
 
