@@ -66,15 +66,15 @@ export const App = () => {
     if (el instanceof HTMLElement) lastFocus.current = el
   }
 
-  const openInspector = (data: GraphNodeData) => {
+  const openInspector = useCallback((data: GraphNodeData) => {
     if (isNarrow && chatOpen) setChatOpen(false)
     rememberFocus()
     setInspected(data)
     setRightTab('inspector')
     setRightOpen(true)
-  }
+  }, [isNarrow, chatOpen])
 
-  const toggleActivity = () => {
+  const toggleActivity = useCallback(() => {
     if (!rightOpen || rightTab !== 'activity') {
       if (isNarrow && chatOpen) setChatOpen(false)
       rememberFocus()
@@ -83,9 +83,9 @@ export const App = () => {
     } else {
       setRightOpen(false)
     }
-  }
+  }, [rightOpen, rightTab, isNarrow, chatOpen])
 
-  const toggleInspector = () => {
+  const toggleInspector = useCallback(() => {
     if (!rightOpen || rightTab !== 'inspector') {
       if (isNarrow && chatOpen) setChatOpen(false)
       rememberFocus()
@@ -94,9 +94,9 @@ export const App = () => {
     } else {
       setRightOpen(false)
     }
-  }
+  }, [rightOpen, rightTab, isNarrow, chatOpen])
 
-  const toggleChat = () => {
+  const toggleChat = useCallback(() => {
     if (!chatOpen) {
       if (isNarrow && rightOpen) setRightOpen(false)
       rememberFocus()
@@ -104,7 +104,13 @@ export const App = () => {
     } else {
       setChatOpen(false)
     }
-  }
+  }, [chatOpen, isNarrow, rightOpen])
+
+  const onTogglePause = useCallback(() => setPaused(!paused), [paused])
+
+  const onToggleLog = useCallback(() => setLogOpen((v) => !v), [])
+
+  const onClose = useCallback(() => setRightOpen(false), [])
 
   // Escape closes the topmost overlay and returns focus to whoever opened it.
   const closePanel = useCallback((close: 'top' | 'chat') => {
@@ -134,7 +140,7 @@ export const App = () => {
         onServerUrlChange={setServerUrl}
         onConnect={connect}
         paused={paused}
-        onTogglePause={() => setPaused(!paused)}
+        onTogglePause={onTogglePause}
         onClear={clear}
         models={models}
       />
@@ -154,12 +160,12 @@ export const App = () => {
             onSelectedPipelineChange={setSelectedPipeline}
             onInspect={openInspector}
             onToggleActivity={toggleActivity}
-            onToggleLog={() => setLogOpen((v) => !v)}
+            onToggleLog={onToggleLog}
             activityOpen={rightOpen && rightTab === 'activity'}
             logOpen={logOpen}
           />
         </div>
-        <Drawer open={rightOpen} onClose={() => setRightOpen(false)} title={rightTab === 'activity' ? 'LIVE ACTIVITY' : 'INSPECTOR'}>
+        <Drawer open={rightOpen} onClose={onClose} title={rightTab === 'activity' ? 'LIVE ACTIVITY' : 'INSPECTOR'}>
           {rightTab === 'activity' ? (
             <ActivityPanel state={state} />
           ) : (

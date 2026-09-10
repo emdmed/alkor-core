@@ -5,12 +5,12 @@
  * configured pipeline. Selection paints runtime state over the full map without
  * hiding any pipeline or route.
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Circle, ChevronsDownUp, ChevronsUpDown, ListTree, LoaderCircle, Maximize2, Minimize2, Rows3, ScrollText, X } from 'lucide-react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { Check, Circle, ChevronsDownUp, ChevronsUpDown, Columns3, ListTree, LoaderCircle, Maximize2, Minimize2, Rows3, ScrollText, X } from 'lucide-react'
 import { Background, BackgroundVariant, Controls, ReactFlow, ReactFlowProvider, useReactFlow, useStore } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import type { GraphNode, GraphNodeData } from '../../lib/graph/index.ts'
-import { buildExpandedPipelinesGraph } from '../../lib/graph/index.ts'
+import { buildCompactGraph, buildExpandedPipelinesGraph } from '../../lib/graph/index.ts'
 import { fmtSec } from '../../lib/format.ts'
 import { NODE_TYPES } from './nodes.tsx'
 import { Badge } from '../ui/badge'
@@ -130,6 +130,7 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
   const [showLegend, setShowLegend] = useState(true)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [fullscreenFallback, setFullscreenFallback] = useState(false)
+  const [graphMode, setGraphMode] = useState<'full' | 'compact'>('full')
 
   const selected = runs.find((r) => r.runId === selectedId)
     ?? [...runs].reverse().find((r) => r.profile === selectedPipeline)
@@ -196,6 +197,17 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
   }
 
   const graphView = useMemo(() => {
+    if (graphMode === 'compact') {
+      const graph = buildCompactGraph(state, selected?.runId, new Set())
+      const nodes: GraphNode[] = graph.nodes.map((n) => ({
+        ...n,
+        data: {
+          ...n.data,
+          onInspect: () => onInspect(n.data),
+        },
+      }))
+      return { nodes, edges: graph.edges, title: graph.title, expanded: new Set<string>() }
+    }
     const graph = buildExpandedPipelinesGraph(state, selected?.runId, userExpanded, userCollapsed)
     const expandedKeys = graph.expanded
     // The model keeps the complete active lineage for navigation while identifying one
@@ -216,9 +228,8 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
           },
     )
     return { nodes, edges: graph.edges, title: graph.title, expanded: expandedKeys }
-  }, [state, selected, userCollapsed, userExpanded, onInspect])
+  }, [state, selected, userCollapsed, userExpanded, onInspect, graphMode])
   const { nodes, edges, title, expanded } = graphView
-  // onInspect is stable? It's recreated on each App render. Keep memo deps honest.
 
   // Keep the current neighborhood readable. Fitting an arbitrarily long run into the
   // viewport recreates a minimap where the operator needs legible execution detail.
@@ -281,7 +292,15 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
           </div>
 
           <div className="graph-tools" aria-label="Graph controls">
-            {nodes.some((n) => (n.data.childCount ?? 0) > 0) && (
+            <div className="graph-mode-toggle control-group">
+              <Button variant={graphMode === 'full' ? 'secondary' : 'ghost'} size="sm" onClick={() => setGraphMode('full')} title="Full topology view">
+                <Columns3 />Full
+              </Button>
+              <Button variant={graphMode === 'compact' ? 'secondary' : 'ghost'} size="sm" onClick={() => setGraphMode('compact')} title="Compact single-node view">
+                <Rows3 />Compact
+              </Button>
+            </div>
+            {graphMode === 'full' && nodes.some((n) => (n.data.childCount ?? 0) > 0) && (
               <div className="control-group">
                 <Button variant="ghost" size="sm" onClick={expandAll} title="Expand every step"><ChevronsUpDown />Expand</Button>
                 <Button variant="ghost" size="sm" onClick={collapseAll} title="Collapse every step"><ChevronsDownUp />Collapse</Button>
@@ -333,7 +352,7 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
         >
           <Background variant={BackgroundVariant.Dots} gap={24} size={1.2} color="#d4e4e2" />
           <Controls showInteractive={false} />
-          {nodes.filter((node) => node.data.kind !== 'group').length > 6 && <GraphMiniMap nodes={nodes} />}
+          {graphMode === 'full' && nodes.filter((node) => node.data.kind !== 'group').length > 6 && <GraphMiniMap nodes={nodes} />}
         </ReactFlow>
       </div>
 
@@ -407,8 +426,8 @@ const Legend = () => (
 )
 
 /** Wrapper: the provider must wrap the canvas and its providers (controls, minimap). */
-export const PipelineGraph = (props: PipelineGraphProps) => (
+export const PipelineGraph = memo((props: PipelineGraphProps) => (
   <ReactFlowProvider>
     <GraphView {...props} />
   </ReactFlowProvider>
-)
+))

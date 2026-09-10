@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { ActivityEvent } from '../../../src/core/activity-types.ts'
 import type { ProjectState } from '../../../src/tui/state.ts'
 import { eventClass, KIND_GROUPS, kindMatches, type KindGroup } from '../lib/format.ts'
@@ -13,7 +13,7 @@ const kindBadgeVariant = (kind: string): 'default' | 'secondary' | 'destructive'
   return 'default'
 }
 
-export const EventLog = ({ state, onToggle }: { state: ProjectState; onToggle: () => void }) => {
+export const EventLog = memo(({ state, onToggle }: { state: ProjectState; onToggle: () => void }) => {
   const [group, setGroup] = useState<KindGroup>('all')
   const [pinned, setPinned] = useState<ActivityEvent | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
@@ -126,4 +126,4 @@ export const EventLog = ({ state, onToggle }: { state: ProjectState; onToggle: (
       )}
     </section>
   )
-}
+})

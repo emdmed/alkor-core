@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { ProjectState } from '../../../src/tui/state.ts'
 import { inFlightCount, tokPerSec } from '../../../src/tui/state.ts'
 import { runState, fmtSec } from '../lib/format.ts'
@@ -11,7 +12,7 @@ const statusVariant = (status: 'active' | 'done' | 'failed' | 'idle'): 'default'
 const StatusGlyph = ({ status }: { status: 'active' | 'done' | 'failed' | 'idle' }) =>
   status === 'active' ? <LoaderCircle className="status-spin" /> : status === 'done' ? <Check /> : status === 'failed' ? <X /> : <Circle />
 
-export const ActivityPanel = ({ state }: { state: ProjectState }) => {
+export const ActivityPanel = memo(({ state }: { state: ProjectState }) => {
   const active = inFlightCount(state.llmRequests)
   const runs = [...state.runs.values()].slice(-6).reverse()
   const requests = [...state.llmRequests.values()].slice(-6).reverse()
@@ -73,4 +74,4 @@ export const ActivityPanel = ({ state }: { state: ProjectState }) => {
       })}
     </div>
   )
-}
+})

@@ -9,6 +9,8 @@
 export type {
   BuildCtx,
   ChainItem,
+  CompactStageData,
+  CompactStepData,
   ExpandedGraphBuild,
   GraphBuild,
   GraphEdge,
@@ -24,3 +26,5 @@ export { detailTextOf, stageState } from './core.ts'
 export { buildGraph, buildProgressGraph } from './run.ts'
 
 export { buildExpandedPipelinesGraph, buildPipelinesGraph, buildProjectGraph } from './project.ts'
+
+export { buildCompactGraph } from './compact.ts'

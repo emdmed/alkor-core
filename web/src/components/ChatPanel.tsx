@@ -10,7 +10,7 @@
  * The graph is the primary view; this panel is a command surface that feeds
  * work into it.
  */
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { List, Send, Sparkles, X } from 'lucide-react'
 import {
   type PipelineDefinition,
@@ -44,7 +44,7 @@ const PRESETS = [
   'Extract allergies and prior surgeries',
 ]
 
-export const ChatPanel = ({ open, onToggle, state, run, onOpenActivity }: ChatPanelProps) => {
+export const ChatPanel = memo(({ open, onToggle, state, run, onOpenActivity }: ChatPanelProps) => {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [pending, setPending] = useState(false)
@@ -243,7 +243,7 @@ export const ChatPanel = ({ open, onToggle, state, run, onOpenActivity }: ChatPa
       </div>
     </aside>
   )
-}
+})
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -253,27 +253,35 @@ const formatResult = (r: unknown): string => {
   if (typeof r === 'number' || typeof r === 'boolean') return String(r)
   if (Array.isArray(r)) return r.map(formatResult).join('\n\n')
   try {
-    // Pretty-print the final step if it has one.
     const obj = r as Record<string, unknown>
-    const output = obj['output']
-    const final = obj['final']
     const stoppedEarly = obj['stoppedEarly']
     const totalMs = obj['totalMs']
     const parts: string[] = []
     if (stoppedEarly) parts.push('[stopped early]')
     if (totalMs != null) parts.push(`total ${(Number(totalMs) / 1000).toFixed(1)}s`)
-    const produced = output ?? final
-    if (produced != null) {
-      parts.push(typeof produced === 'string' ? produced : JSON.stringify(produced, null, 2))
-    } else if (Array.isArray(obj['steps'])) {
+
+    // Pipeline result: show each step and its output.
+    if (Array.isArray(obj['steps'])) {
       const steps = obj['steps'] as Array<Record<string, unknown>>
       for (const step of steps) {
         const name = String(step['name'] ?? step['profile'] ?? '?')
+        const profile = String(step['profile'] ?? '?')
         const ok = step['ok'] !== false
-        const t = step['wallMs'] != null ? ` ${((Number(step['wallMs'])) / 1000).toFixed(1)}s` : ''
+        const t = step['wallMs'] != null ? ` ${(Number(step['wallMs']) / 1000).toFixed(1)}s` : ''
         const err = ok ? '' : ` — ${String(step['error'] ?? 'step failed')}`
-        parts.push(`${ok ? '✓' : '×'} ${name}${t}${err}`)
+        parts.push(`--- ${name} (${profile})${t}${err} ---`)
+        const stepOutput = step['output']
+        if (stepOutput != null) {
+          parts.push(typeof stepOutput === 'string' ? stepOutput : JSON.stringify(stepOutput, null, 2))
+        }
       }
+      return parts.join('\n') || JSON.stringify(r, null, 2)
+    }
+
+    // Single-profile result: show output directly.
+    const output = obj['output'] ?? obj['final']
+    if (output != null) {
+      parts.push(typeof output === 'string' ? output : JSON.stringify(output, null, 2))
     }
     return parts.join('\n') || JSON.stringify(r, null, 2)
   } catch {

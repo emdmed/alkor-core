@@ -8,7 +8,7 @@
  */
 import type { StageEntry, LlmRequestEntry } from '../../../../src/tui/state.ts'
 import type { NodeState } from '../format.ts'
-import type { GraphBuild, GraphEdge, GraphNode, GraphNodeData, GraphNodeKind, GraphOperation } from './types.ts'
+import type { GraphBuild, GraphEdge, GraphNode, GraphNodeData, GraphNodeKind, GraphOperation, CompactStepData } from './types.ts'
 
 /* ------------------------------------------------------------------ leaf predicates */
 
@@ -181,6 +181,11 @@ export const layoutHeightOf = (n: GraphNode): number => {
         + (d.inputRef ? 18 : 0)
         + ((d.childCount ?? 0) > 0 ? 24 : 0)
     case 'group': return 0
+    case 'compact-pipeline': {
+      const stepCount = (n.data.steps as CompactStepData[] | undefined)?.length ?? 0
+      const routerCount = ((n.data.steps as CompactStepData[] | undefined) ?? []).filter((step) => step.router && step.chosenProfile).length
+      return 97 + stepCount * 36 + routerCount * 27
+    }
   }
 }
 
@@ -194,6 +199,7 @@ export const layoutWidthOf = (n: GraphNode): number => {
     case 'branch': return CHIP_W
     case 'profile': return 196
     case 'group': return 0
+    case 'compact-pipeline': return 420
   }
 }
 
@@ -206,7 +212,7 @@ export const graphBounds = (nodes: GraphNode[], includeGroups = false): { left: 
   for (const n of nodes) {
     if (n.data.kind === 'group' && !includeGroups) continue
     const width = typeof n.style?.width === 'number' ? n.style.width : n.measured?.width ?? (
-      n.data.kind === 'step' ? STEP_W : n.data.kind === 'stage' || n.data.kind === 'route' ? STAGE_W : n.data.kind === 'profile' ? 196 : n.data.kind === 'branch' ? CHIP_W : 240
+      n.data.kind === 'step' ? STEP_W : n.data.kind === 'stage' || n.data.kind === 'route' ? STAGE_W : n.data.kind === 'profile' ? 196 : n.data.kind === 'branch' ? CHIP_W : n.data.kind === 'compact-pipeline' ? 420 : 240
     )
     const height = typeof n.style?.height === 'number' ? n.style.height : layoutHeightOf(n)
     left = Math.min(left, n.position.x)

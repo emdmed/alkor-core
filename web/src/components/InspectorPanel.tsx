@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { ProjectState, StageEntry } from '../../../src/tui/state.ts'
 import { stageTreeForRun } from '../../../src/tui/state.ts'
 import { fmtSec, type NodeState } from '../lib/format.ts'
@@ -10,7 +11,7 @@ const nodeVariant = (s: NodeState): 'default' | 'secondary' | 'destructive' =>
 const StatusGlyph = ({ status }: { status: NodeState }) =>
   status === 'active' ? <LoaderCircle className="status-spin" /> : status === 'done' ? <Check /> : status === 'failed' ? <X /> : <Circle />
 
-export const InspectorPanel = ({ state }: { state: ProjectState }) => {
+export const InspectorPanel = memo(({ state }: { state: ProjectState }) => {
   const sessions = [...state.sessions.values()].slice(-6).reverse()
   const latestRunId = [...state.runs.values()].reverse()[0]?.runId
   const stages = latestRunId ? stageTreeForRun(state.stages, latestRunId) : []
@@ -80,7 +81,7 @@ export const InspectorPanel = ({ state }: { state: ProjectState }) => {
       ))}
     </div>
   )
-}
+})
 
 const StageNode = ({ stage }: { stage: StageEntry }) => {
   const status: NodeState = stage.status === 'started' ? 'active' : 'done'

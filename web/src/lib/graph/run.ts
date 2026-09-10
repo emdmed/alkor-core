@@ -226,7 +226,7 @@ const routerCandidates = (state: ProjectState, routerProfile: string, chosen?: s
 }
 
 /** Route decision for this run: reducer-captured route.decided, else the router stage detail. */
-const routeForRun = (state: ProjectState, runId: string, tree: StageEntry[] = []): NonNullable<BuildCtx['route']> => {
+export const routeForRun = (state: ProjectState, runId: string, tree: StageEntry[] = []): NonNullable<BuildCtx['route']> => {
   const re = [...state.routes].reverse().find((r) => r.runId === runId)
   if (re) return { profile: re.profile, confidence: re.confidence, reason: re.reason, ruleVsModel: re.ruleVsModel }
   // Older activity buffers may predate run-scoped route.decided events. The stage tree is

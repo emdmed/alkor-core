@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { ProjectState } from '../../../src/tui/state.ts'
 import type { ModelHealth } from '../hooks/useMedextract.ts'
 import { connMeta, modelName } from '../lib/format.ts'
@@ -22,7 +23,7 @@ const hostOf = (url: string): string => url.replace(/^https?:\/\//, '').replace(
 const toneCls = (tone: 'ok' | 'warn' | 'err'): string =>
   tone === 'ok' ? 'tone-ok' : tone === 'warn' ? 'tone-warn' : 'tone-err'
 
-export const Header = ({ state, serverUrl, onServerUrlChange, onConnect, paused, onTogglePause, onClear, models }: HeaderProps) => {
+export const Header = memo(({ state, serverUrl, onServerUrlChange, onConnect, paused, onTogglePause, onClear, models }: HeaderProps) => {
   const meta = connMeta(state.connection)
   const model = modelName(state.models)
   const refusedReason = state.connection.kind === 'refused' ? state.connection.reason : ''
@@ -105,4 +106,4 @@ export const Header = ({ state, serverUrl, onServerUrlChange, onConnect, paused,
       </div>
     </header>
   )
-}
+})

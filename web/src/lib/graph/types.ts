@@ -11,7 +11,31 @@ import type { Edge, Node } from '@xyflow/react'
 import type { LlmRequestEntry, ProjectState, RunEntry } from '../../../../src/tui/state.ts'
 import type { NodeState } from '../format.ts'
 
-export type GraphNodeKind = 'input' | 'route' | 'step' | 'stage' | 'branch' | 'profile' | 'output' | 'group'
+export type GraphNodeKind = 'input' | 'route' | 'step' | 'stage' | 'branch' | 'profile' | 'output' | 'group' | 'compact-pipeline'
+
+export interface CompactStepData {
+  name: string
+  profile: string
+  status: NodeState
+  stepNo: number
+  wallMs?: number
+  inputRef?: string
+  router?: boolean
+  chosenProfile?: string
+  confidence?: number
+  ruleVsModel?: string
+  reason?: string
+  stages: CompactStageData[]
+}
+
+export interface CompactStageData {
+  name: string
+  status: NodeState
+  wallMs?: number
+  operation?: GraphOperation
+  llm?: GraphLlm
+  detailText?: string
+}
 export type GraphOperation = 'model' | 'code' | 'orchestrator' | 'decision'
 
 export interface GraphLlm {

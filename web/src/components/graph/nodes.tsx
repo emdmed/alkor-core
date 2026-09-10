@@ -9,6 +9,7 @@ import { Handle, Position, type NodeProps } from '@xyflow/react'
 import type { GraphNode, GraphNodeData } from '../../lib/graph/index.ts'
 import { fmtSec } from '../../lib/format.ts'
 import { Braces, Check, ChevronDown, ChevronRight, Circle, Cpu, FileInput, FileOutput, GitBranch, LoaderCircle, Orbit, X } from 'lucide-react'
+import { CompactPipelineNode } from './CompactPipelineNode.tsx'
 
 const statusClass = (status: GraphNodeData['status']): string =>
   status === 'active' ? 'g-active' : status === 'failed' ? 'g-failed' : status === 'done' ? 'g-done' : 'g-idle'
@@ -266,4 +267,5 @@ export const NODE_TYPES = {
   branch: BranchNode,
   profile: ProfileNode,
   group: GroupNode,
+  'compact-pipeline': CompactPipelineNode,
 } as const

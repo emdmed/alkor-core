@@ -1,9 +1,10 @@
+import { memo } from 'react'
 import type { ProjectState } from '../../../src/tui/state.ts'
 import { cacheHitRatio, failureRate, inFlightCount } from '../../../src/tui/state.ts'
 import { Activity, CircleCheck, Gauge, Network, Radio, TimerReset } from 'lucide-react'
 import type { ReactNode } from 'react'
 
-export const StatusStrip = ({ state }: { state: ProjectState }) => {
+export const StatusStrip = memo(({ state }: { state: ProjectState }) => {
   const active = inFlightCount(state.llmRequests)
   const finished = [...state.runs.values()].filter((r) => r.status !== 'started').length
   const failures = failureRate(state.runs)
@@ -22,7 +23,7 @@ export const StatusStrip = ({ state }: { state: ProjectState }) => {
       <Metric icon={<Activity />} value={http} label="http" detail={`${events} events`} />
     </dl>
   )
-}
+})
 
 const Metric = ({ icon, value, label, detail, live, danger }: {
   icon: ReactNode
