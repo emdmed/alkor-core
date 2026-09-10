@@ -124,7 +124,7 @@ const GraphMiniMap = ({ nodes }: { nodes: GraphNode[] }) => {
 }
 
 const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspect, onToggleActivity, onToggleLog, activityOpen, logOpen }: PipelineGraphProps) => {
-  const { fitView } = useReactFlow()
+  const { fitView, getNodes, getViewport, setViewport } = useReactFlow()
   const canvasWidth = useStore((store) => store.width)
   const graphShellRef = useRef<HTMLDivElement>(null)
   const runs = useMemo(() => [...state.runs.values()], [state.runs])
@@ -136,6 +136,11 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [fullscreenFallback, setFullscreenFallback] = useState(false)
   const [graphMode, setGraphMode] = useState<'full' | 'compact'>('full')
+  // Once the operator pans or zooms, the viewport is theirs. A run changes the board's
+  // geometry on every event, and refitting through that is the view yanking itself out
+  // from under someone who deliberately went to look at one card. Auto-fit resumes when
+  // they ask for it — the fit control, a mode switch, or picking a different run.
+  const [viewportPinned, setViewportPinned] = useState(false)
 
   const selected = runs.find((r) => r.runId === selectedId)
     ?? [...runs].reverse().find((r) => r.profile === selectedPipeline)
@@ -172,6 +177,9 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
   const toggleFullscreen = async () => {
     const shell = graphShellRef.current
     if (!shell) return
+    // The canvas changes size wholesale here, so a viewport aimed at the old one is not
+    // worth preserving: this is a request to be shown the board afresh.
+    setViewportPinned(false)
     if (document.fullscreenElement === shell) {
       await document.exitFullscreen()
       return
@@ -274,18 +282,33 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
     .map((n) => `${n.id}:${n.position.x}:${n.position.y}:${String(n.style?.width ?? '')}:${String(n.style?.height ?? '')}${n.data.kind === 'compact-pipeline' ? `:h${layoutHeightOf(n)}` : ''}`)
     .join('|')
   useEffect(() => {
-    if (nodes.length === 0) return
+    if (nodes.length === 0 || viewportPinned) return
     const frame = requestAnimationFrame(() => {
       const trail = nodes.filter((node) => node.data.kind !== 'group')
       const currentIndex = trail.findIndex((node) => node.data.current)
       const windowSize = canvasWidth < 620 ? 1 : 5
       const center = currentIndex >= 0 ? currentIndex : 0
       const start = Math.max(0, Math.min(center - Math.floor(windowSize / 2), trail.length - windowSize))
-      const focus = trail.slice(start, start + windowSize)
-      void fitView({ nodes: focus.length > 0 ? focus : trail, padding: canvasWidth < 620 ? 0.22 : 0.1, minZoom: 0.45, maxZoom: 1 })
+      // Fit only what the flow store actually holds. A run replaces every node id at
+      // once (the catalogue card becomes the run's card), and this frame can land before
+      // the store has them: fitting a set it cannot match measures an empty box and
+      // writes a viewport of NaN, which paints nothing at all — no cards, no edges, not
+      // even the dot grid, since the background pattern rides the same transform. The
+      // whole board is the honest fallback while the new ids land.
+      const known = new Set(getNodes().map((node) => node.id))
+      const focus = trail.slice(start, start + windowSize).filter((node) => known.has(node.id))
+      void (async () => {
+        await fitView({ nodes: focus.length > 0 ? focus : undefined, padding: canvasWidth < 620 ? 0.22 : 0.1, minZoom: 0.45, maxZoom: 1 })
+        // Belt and braces: an unusable viewport is silent and unrecoverable without a
+        // pan, so never keep one.
+        const { x, y, zoom } = getViewport()
+        if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(zoom) && zoom > 0) return
+        const recovered = await fitView({ padding: 0.1, minZoom: 0.45, maxZoom: 1 })
+        if (!recovered) setViewport({ x: 0, y: 0, zoom: 1 })
+      })()
     })
     return () => cancelAnimationFrame(frame)
-  }, [fitView, geometryKey, nodes.length, isFullscreen, canvasWidth])
+  }, [fitView, getNodes, getViewport, setViewport, geometryKey, nodes.length, isFullscreen, canvasWidth, viewportPinned])
 
   const expandAll = () => {
     const all = new Set<string>()
@@ -319,6 +342,7 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
                 <button key={run.runId} className={`run-chip${on ? ' run-chip-on' : ''}`} onClick={() => {
                   setSelectedId(run.runId)
                   onSelectedPipelineChange(run.profile)
+                  setViewportPinned(false)
                 }} title={run.runId}>
                   <span className={on ? 'text-primary' : 'text-muted-foreground'}><RunStatusIcon status={run.status === 'started' ? 'active' : run.status === 'failed' ? 'failed' : 'done'} /></span>
                   <span>{run.profile}</span>
@@ -330,10 +354,10 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
 
           <div className="graph-tools" aria-label="Graph controls">
             <div className="graph-mode-toggle control-group">
-              <Button variant={graphMode === 'full' ? 'secondary' : 'ghost'} size="sm" onClick={() => setGraphMode('full')} title="Full topology view" aria-pressed={graphMode === 'full'}>
+              <Button variant={graphMode === 'full' ? 'secondary' : 'ghost'} size="sm" onClick={() => { setGraphMode('full'); setViewportPinned(false) }} title="Full topology view" aria-pressed={graphMode === 'full'}>
                 <Columns3 />Full
               </Button>
-              <Button variant={graphMode === 'compact' ? 'secondary' : 'ghost'} size="sm" onClick={() => setGraphMode('compact')} title="Compact single-node view" aria-pressed={graphMode === 'compact'}>
+              <Button variant={graphMode === 'compact' ? 'secondary' : 'ghost'} size="sm" onClick={() => { setGraphMode('compact'); setViewportPinned(false) }} title="Compact single-node view" aria-pressed={graphMode === 'compact'}>
                 <Rows3 />Compact
               </Button>
             </div>
@@ -378,6 +402,7 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
           maxZoom={1.35}
           nodesConnectable={false}
           elementsSelectable={false}
+          onMove={(event) => { if (event) setViewportPinned(true) }}
           onNodeClick={(_e, node) => {
             const d = node.data as GraphNodeData
             if (d.kind !== 'group') onInspect(d)
@@ -388,7 +413,13 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
           }}
         >
           <Background variant={BackgroundVariant.Dots} gap={24} size={1.2} color="var(--graph-grid)" />
-          <Controls showInteractive={false} />
+          <Controls
+            showInteractive={false}
+            onFitView={() => {
+              setViewportPinned(false)
+              void fitView({ padding: canvasWidth < 620 ? 0.22 : 0.1, minZoom: 0.45, maxZoom: 1 })
+            }}
+          />
           {graphMode === 'full' && nodes.filter((node) => node.data.kind !== 'group').length > 6 && <GraphMiniMap nodes={nodes} />}
         </ReactFlow>
       </div>
