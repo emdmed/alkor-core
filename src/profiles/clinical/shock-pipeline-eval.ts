@@ -11,23 +11,29 @@
  * The two calls share the same transport, trace and bench infrastructure as the standalone
  * evals. Each call builds its own request from the shock and shock-extraction contracts
  * respectively, so the measured path is the same as the standalone paths chained together.
+ *
+ * THE CORPUS IS THE PROSE CORPUS. This task iterates the notes, not the payloads: a payload
+ * with no note beside it is not a pipeline case, because there is no prose to start from. The
+ * standalone `shock` task grades all twenty payloads and this one grades the notes that exist,
+ * and conflating the two would report a denominator of twenty for a measurement that ran on
+ * three. Each note's expected category is stated in the case file and cross-checked against
+ * the rule at load — see `loadShockExtractionCases`.
  */
 import type { Pack } from '../../core/pack.ts'
 import type { Trace } from '../../core/trace.ts'
 import type { Provider } from '../../core/client.ts'
 import { identifyServer, UNIDENTIFIED, type ServerIdentity } from '../../core/client.ts'
-import { formatBench, summarizeBench, type BenchSample, type BenchSummary } from '../../core/bench.ts'
+import { formatBench, summarizeBench, type BenchSample, type Timings } from '../../core/bench.ts'
 import { HARNESS_VERSION } from '../../core/version.ts'
 import { extract } from '../../modes/extract.ts'
 import { ProfileError } from '../../core/profile.ts'
 import { buildRequest, CONTRACTS } from './contracts.ts'
-import { parseJson } from './extraction.ts'
 import { DIFFICULTY_MAX, DIFFICULTY_MIN, parseDifficultyRange } from './cases.ts'
+import { examEqual, loadShockExtractionCases, parseShockExam } from './shock-extraction-eval.ts'
 import {
   classify,
   loadShockCases,
   loadShockRule,
-  parseExam,
   parseShockReply,
   renderExam,
   resolveExam,
@@ -37,7 +43,7 @@ import {
   type ShockScore,
 } from './shock.ts'
 import { checkMedprotocolVersion, loadMedprotocolRule } from './medprotocol.ts'
-import type { Gate, TaskResult } from './set-eval.ts'
+import { gatePasses, type Gate, type TaskResult } from './set-eval.ts'
 
 export interface ShockPipelineEvalOptions {
   pack: Pack
@@ -55,46 +61,54 @@ export interface ShockPipelineEvalOptions {
 const pct = (n: number, d: number): string => (d ? `${((n / d) * 100).toFixed(0)}% (${n}/${d})` : `n/a (0/0)`)
 
 /**
- * Parse the extraction contract's output. Strict: the grammar enforces this shape on a
- * constrained run, and an unconstrained run that produces anything else is measured as a
- * pipeline failure at the extraction step.
+ * The floors this task gates on, from the pack.
+ *
+ * SEPARATE from the standalone shock floors and not derived from them. `shock-cases.json`
+ * gates twenty payloads and can afford a floor stated to a hundredth; this corpus is three
+ * notes and moves in steps of a third, so a floor borrowed from the other file would be a
+ * precision this corpus cannot express. They are stated where the corpus they describe lives.
  */
-const parseShockExam = (raw: string): ShockExam => {
-  const obj = parseJson(raw, 'shock-pipeline')
-  const h = obj.hypotension as Record<string, unknown> | undefined
-  if (!h || typeof h.systolic !== 'number' || typeof h.diastolic !== 'number' || typeof h.duration_minutes !== 'number') {
-    throw new Error('hypotension must be an object with systolic, diastolic and duration_minutes as numbers')
-  }
-  if (typeof obj.heart_rate !== 'number') {
-    throw new Error('heart_rate must be a number')
-  }
-  const enums: Record<string, readonly string[]> = {
-    skin_temperature: ['warm', 'cool', 'not_assessed'],
-    jugular_venous_pressure: ['elevated', 'normal_or_low', 'not_assessed'],
-    capillary_refill: ['brisk', 'delayed', 'not_assessed'],
-    pulse_volume: ['bounding', 'normal', 'thready', 'not_assessed'],
-    lung_exam: ['clear', 'bilateral_crackles', 'not_assessed'],
-  }
-  for (const [name, allowed] of Object.entries(enums)) {
-    const v = obj[name]
-    if (typeof v !== 'string' || !(allowed as readonly string[]).includes(v)) {
-      throw new Error(`${name} was ${JSON.stringify(v)}, expected one of ${allowed.join(', ')}`)
-    }
-  }
-  return obj as unknown as ShockExam
+interface PipelineFloors {
+  categoryAgreementFloor: number
+  extractionExactFloor: number
+  completionFloor: number
 }
 
-/** Exact-match comparison for ShockExam payloads. */
-const examEqual = (a: ShockExam, b: ShockExam): boolean =>
-  a.hypotension.systolic === b.hypotension.systolic &&
-  a.hypotension.diastolic === b.hypotension.diastolic &&
-  a.hypotension.duration_minutes === b.hypotension.duration_minutes &&
-  a.heart_rate === b.heart_rate &&
-  a.skin_temperature === b.skin_temperature &&
-  a.jugular_venous_pressure === b.jugular_venous_pressure &&
-  a.capillary_refill === b.capillary_refill &&
-  a.pulse_volume === b.pulse_volume &&
-  a.lung_exam === b.lung_exam
+const loadPipelineFloors = (pack: Pack): PipelineFloors => {
+  const raw = JSON.parse(pack.read('shockExtractionCases')) as { pipeline?: Record<string, unknown> }
+  const p = raw.pipeline
+  if (!p || typeof p !== 'object') {
+    throw new ProfileError(
+      `pack '${pack.name}': shockExtractionCases must state a [pipeline] floor block — ` +
+        'an absent floor is a gate that passes whatever it is handed, and it passes silently',
+    )
+  }
+  const keys = ['categoryAgreementFloor', 'extractionExactFloor', 'completionFloor'] as const
+  for (const k of keys) {
+    const v = p[k]
+    if (typeof v !== 'number' || v < 0 || v > 1) {
+      throw new ProfileError(
+        `pack '${pack.name}': shockExtractionCases.pipeline.${k} must be a number in 0..1, got ${JSON.stringify(v)}`,
+      )
+    }
+  }
+  return {
+    categoryAgreementFloor: p.categoryAgreementFloor as number,
+    extractionExactFloor: p.extractionExactFloor as number,
+    completionFloor: p.completionFloor as number,
+  }
+}
+
+/** One stage's cost, folded into the shape `summarizeBench` reads. */
+const costOf = (outcome: { cost: Array<{ wallMs: number; timings?: Timings }>; lostMs: number; attempts: number }): Omit<BenchSample, 'case'> => ({
+  wallMs: outcome.cost.reduce((n, a) => n + a.wallMs, 0) + outcome.lostMs,
+  attempts: outcome.attempts,
+  promptTokens: outcome.cost.reduce((n, a) => n + (a.timings?.promptTokens ?? 0), 0),
+  promptMs: outcome.cost.reduce((n, a) => n + (a.timings?.promptMs ?? 0), 0),
+  predictedTokens: outcome.cost.reduce((n, a) => n + (a.timings?.predictedTokens ?? 0), 0),
+  predictedMs: outcome.cost.reduce((n, a) => n + (a.timings?.predictedMs ?? 0), 0),
+  cachedTokens: outcome.cost.reduce((n, a) => n + (a.timings?.cachedTokens ?? 0), 0),
+})
 
 export const runShockPipelineEval = async (o: ShockPipelineEvalOptions): Promise<TaskResult> => {
   const extractionReq = buildRequest(CONTRACTS['shock-extraction'], o.pack, o.constrain)
@@ -102,26 +116,17 @@ export const runShockPipelineEval = async (o: ShockPipelineEvalOptions): Promise
   const rule = loadShockRule(o.pack)
   const mp = loadMedprotocolRule(o.pack)
   const medprotocolVersion = checkMedprotocolVersion(mp, o.pack.name)
-  const { cases: allCases, ...shockFloors } = loadShockCases(o.pack, mp)
+  const floors = loadPipelineFloors(o.pack)
+  // Loaded WITH medprotocol, so each note's stated category is cross-checked against the rule
+  // before a single token is spent. The shock floors come along for the echo and invention
+  // sub-gates, which are properties of the classification contract and not of this corpus.
+  const { cases: allCases } = loadShockExtractionCases(o.pack, mp)
+  const { cases: _payloadCases, ...shockFloors } = loadShockCases(o.pack, mp)
 
-  // Load the extraction cases (prose notes), cross-referenced against the shock cases
-  // (which carry the classification expectation in shock-cases.json). The two share case
-  // names by design: each extraction note restates the findings of one exam payload.
-  const extractionRaw = JSON.parse(o.pack.read('shockExtractionCases')) as {
-    cases?: Array<{ name: string; difficulty: number }>
-  }
-  if (!Array.isArray(extractionRaw.cases) || !extractionRaw.cases.length) {
-    throw new ProfileError(`pack '${o.pack.name}': shockExtractionCases has no cases`)
-  }
-  const extractionCases = new Map(
-    extractionRaw.cases.map((c) => [c.name, c]),
-  )
-
-  // Filter by difficulty
   const inScope = o.difficulty ? parseDifficultyRange(o.difficulty) : () => true
-  const shockCases = allCases.filter((c) => inScope(c.difficulty))
-  if (!shockCases.length) {
-    throw new Error(`no cases at difficulty '${o.difficulty}' in pack '${o.pack.name}'`)
+  const cases = allCases.filter((c) => inScope(c.difficulty))
+  if (!cases.length) {
+    throw new ProfileError(`no cases at difficulty '${o.difficulty}' in pack '${o.pack.name}'`)
   }
 
   const runs = Math.max(1, o.runs ?? 1)
@@ -129,15 +134,19 @@ export const runShockPipelineEval = async (o: ShockPipelineEvalOptions): Promise
   const identity = o.identity ?? (await identifyServer(o.baseUrl))
   const served = identity.model ?? UNIDENTIFIED
 
+  /** Every note × every run: the denominator the completion and extraction gates are shares of. */
+  let attempts = 0
   let exactMatches = 0
   let failedExtractions = 0
   let failedClassifications = 0
+  /** Completed runs that reached the category the NOTE describes. See the note at `agrees`. */
+  let pipelineAgreed = 0
   const scores: ShockScore[] = []
   const samples: BenchSample[] = []
   const misses: string[] = []
 
   console.log(
-    `\n=== Shock pipeline — ${shockCases.length} notes, difficulty ${o.difficulty ?? `${DIFFICULTY_MIN}-${DIFFICULTY_MAX}`} ===`,
+    `\n=== Shock pipeline — ${cases.length} notes, difficulty ${o.difficulty ?? `${DIFFICULTY_MIN}-${DIFFICULTY_MAX}`} ===`,
   )
   console.log(
     `model '${served}' · pack '${o.pack.name}' spec ${o.pack.spec} · ` +
@@ -146,17 +155,12 @@ export const runShockPipelineEval = async (o: ShockPipelineEvalOptions): Promise
   )
   console.log(`\nend-to-end: prose note → extraction → shock classification\n`)
 
-  for (const c of shockCases) {
-    const ec = extractionCases.get(c.name)
-    if (!ec) {
-      misses.push(`case ${c.name} has no extraction entry in shockExtractionCases`)
-      continue
-    }
-
+  for (const c of cases) {
     const note = o.pack.document(c.name)
-    const truth = classify(c.resolved)
 
     for (let run = 0; run < runs; run++) {
+      attempts++
+
       // --- Step 1: extract ShockExam from prose ---
       const extractionOutcome = await extract({
         systemPrompt: extractionReq.prompt,
@@ -172,19 +176,27 @@ export const runShockPipelineEval = async (o: ShockPipelineEvalOptions): Promise
         label: 'shock-extraction',
         provider: o.provider,
       })
+      const extractionCost = extractionOutcome.cost.length ? costOf(extractionOutcome) : undefined
 
       if (!extractionOutcome.parsed) {
         failedExtractions++
+        // The cost of a failed stage still counts. A pipeline that spends thirty seconds
+        // producing nothing has spent thirty seconds, and a bench that dropped those samples
+        // would report a faster pipeline the worse the model got.
+        if (extractionCost) samples.push({ case: `${c.name}/extraction`, ...extractionCost })
         misses.push(`extraction    ${c.name} — ${extractionOutcome.error?.slice(0, 90) ?? 'unknown'}`)
         console.log(`${c.name.padEnd(30)} d${c.difficulty}  EXTRACTION FAILED: ${extractionOutcome.error?.slice(0, 60)}`)
         continue
       }
 
       const extractedExam = extractionOutcome.parsed as ShockExam
-      const extractedExact = examEqual(extractedExam, c.exam)
+      const extractedExact = examEqual(extractedExam, c.expect)
       if (extractedExact) exactMatches++
 
       // --- Step 2: classify the extracted exam ---
+      // The EXTRACTED payload is resolved and rendered, not the gold one. That is the whole
+      // point of the task: the classifier sees what the extractor produced, so a misread
+      // systolic reaches the rule the way it would in the product.
       const resolved = resolveExam(extractedExam, rule, mp)
       const payload = renderExam(resolved)
 
@@ -202,6 +214,24 @@ export const runShockPipelineEval = async (o: ShockPipelineEvalOptions): Promise
         label: 'shock',
         provider: o.provider,
       })
+      const classificationCost = classificationOutcome.cost.length ? costOf(classificationOutcome) : undefined
+
+      // One sample per ATTEMPT, both stages summed. The pipeline is the thing being measured
+      // and its latency is what a caller waits for; two half-samples would halve the median.
+      if (extractionCost || classificationCost) {
+        const a = extractionCost ?? { wallMs: 0, attempts: 0, promptTokens: 0, promptMs: 0, predictedTokens: 0, predictedMs: 0, cachedTokens: 0 }
+        const b = classificationCost ?? { wallMs: 0, attempts: 0, promptTokens: 0, promptMs: 0, predictedTokens: 0, predictedMs: 0, cachedTokens: 0 }
+        samples.push({
+          case: c.name,
+          wallMs: a.wallMs + b.wallMs,
+          attempts: a.attempts + b.attempts,
+          promptTokens: a.promptTokens + b.promptTokens,
+          promptMs: a.promptMs + b.promptMs,
+          predictedTokens: a.predictedTokens + b.predictedTokens,
+          predictedMs: a.predictedMs + b.predictedMs,
+          cachedTokens: a.cachedTokens + b.cachedTokens,
+        })
+      }
 
       if (!classificationOutcome.parsed) {
         failedClassifications++
@@ -214,38 +244,60 @@ export const runShockPipelineEval = async (o: ShockPipelineEvalOptions): Promise
       const score = scoreReply(reply, resolved)
       scores.push(score)
 
-      if (!score.categoryAgrees) {
+      // AGREEMENT IS AGAINST THE NOTE'S EXPECTED CATEGORY, not against the rule's reading of
+      // whatever the extractor happened to produce. `scoreReply` compares the reply to the
+      // extracted payload, which is the right comparison for the echo and invention sub-gates
+      // — they ask whether the model read the payload in front of it. It is the WRONG
+      // comparison for the pipeline gate: a model that misextracts and then classifies its own
+      // mistake faithfully would score a perfect agreement on a patient nobody described.
+      const agrees = reply.shock_category === c.expectCategory
+      if (agrees) pipelineAgreed++
+      if (!agrees) {
         misses.push(
-          `category      ${c.name} — rule says ${truth.category}` +
-            `${truth.reason ? ` (${truth.reason})` : ''}, model said ${reply.shock_category}`,
+          `category      ${c.name} — the note describes ${c.expectCategory}, model said ${reply.shock_category}` +
+            (extractedExact ? '' : ' (extraction differed, so the classifier may have been reasoning correctly about the wrong payload)'),
         )
       }
       if (!extractedExact) {
-        for (const f of score.echoErrors) {
-          const shown = f === 'skin_temperature' ? c.exam.skin_temperature : c.resolved.jvp
-          misses.push(`echo          ${c.name} — payload shows ${f} ${shown}, model echoed ${reply[f]}`)
-        }
+        misses.push(`extraction    ${c.name} — payload differs from the note's expectation`)
       }
 
-      const mark = score.categoryAgrees ? ' ' : '✗'
+      const mark = agrees ? ' ' : '✗'
       console.log(
         `${c.name.padEnd(30)} d${c.difficulty} ${mark} ` +
           `extract ${extractedExact ? 'exact' : 'differs'} ` +
-          `rule ${truth.category.padEnd(13)} model ${reply.shock_category.padEnd(13)}`,
+          `expected ${c.expectCategory.padEnd(13)} model ${reply.shock_category.padEnd(13)}`,
       )
     }
   }
 
   const t = totals(scores)
-  const measured = scores.length > 0
-  const extractedMeasured = scores.length > 0 || exactMatches > 0
+  const completed = scores.length
+  const measured = completed > 0
 
+  /**
+   * Every gate's denominator is stated here rather than inferred, because the three differ.
+   *
+   * Completion and extraction are shares of ATTEMPTS: a run that never produced a payload is
+   * exactly the failure they exist to catch, and dropping it from their denominator would let a
+   * pipeline that failed nineteen times out of twenty report on the one that worked. Agreement
+   * and the two classification sub-gates are shares of COMPLETED runs, because a completion
+   * that was never read is not a wrong answer and scoring it as one would read as a model that
+   * cannot reason when it is a model whose output never arrived. The completion gate is what
+   * stops that distinction from becoming a hiding place.
+   */
   const gates: Gate[] = [
     {
+      name: 'pipelineCompletion',
+      score: attempts ? completed / attempts : 0,
+      floor: floors.completionFloor,
+      measured: attempts > 0,
+    },
+    {
       name: 'extractionExact',
-      score: extractedMeasured ? exactMatches / (exactMatches + (scores.length - exactMatches) + failedExtractions) : 0,
-      floor: 0.67,
-      measured: extractedMeasured,
+      score: attempts ? exactMatches / attempts : 0,
+      floor: floors.extractionExactFloor,
+      measured: attempts > 0,
     },
     { name: 'echoFidelity', score: t.echoFidelity, floor: shockFloors.echoFidelityFloor, measured },
     { name: 'notInvented', score: t.notInvented, floor: shockFloors.notInventedFloor, measured },
@@ -255,24 +307,38 @@ export const runShockPipelineEval = async (o: ShockPipelineEvalOptions): Promise
 
   console.log(`\n${'—'.repeat(78)}`)
   console.log(
-    `agreement    ${pct(scores.filter((s) => s.categoryAgrees).length, scores.length)}  <- pipeline gate`,
+    `agreement    ${pct(pipelineAgreed, completed)}  <- the gate, floor ${(floors.categoryAgreementFloor * 100).toFixed(0)}% — the category the NOTE describes`,
   )
   console.log(
-    `extraction   ${exactMatches}/${scores.length + failedExtractions} exact  <- sub-gate, floor 67%`,
+    `completion   ${pct(completed, attempts)}  <- sub-gate, floor ${(floors.completionFloor * 100).toFixed(0)}% — attempts that reached a scored classification`,
   )
   console.log(
-    `echo         ${pct(scores.filter((s) => s.echoCorrect).length, scores.length)}  <- sub-gate`,
+    `extraction   ${pct(exactMatches, attempts)}  <- sub-gate, floor ${(floors.extractionExactFloor * 100).toFixed(0)}% — payload matches the note's expectation exactly`,
   )
   console.log(
-    `not invented ${pct(scores.filter((s) => !s.inventedFindings.length).length, scores.length)}  <- sub-gate`,
+    `echo         ${pct(scores.filter((s) => s.echoCorrect).length, completed)}  <- sub-gate, floor ${(shockFloors.echoFidelityFloor * 100).toFixed(0)}% — as the EXTRACTED payload states them`,
   )
-  console.log(`failed extractions ${failedExtractions}`)
-  console.log(`failed classifications ${failedClassifications}`)
+  console.log(
+    `not invented ${pct(scores.filter((s) => !s.inventedFindings.length).length, completed)}  <- sub-gate, floor ${(shockFloors.notInventedFloor * 100).toFixed(0)}%`,
+  )
+  console.log(`failed extractions ${failedExtractions} · failed classifications ${failedClassifications}`)
+
+  if (bench) {
+    console.log(`\ncost, both stages summed per note:`)
+    for (const line of formatBench(bench, identity.props)) console.log(`  ${line}`)
+  }
 
   if (misses.length) {
     console.log(`\nwhat went wrong (${misses.length}):`)
     for (const m of misses) console.log(`  ${m}`)
   }
+
+  const score = completed ? pipelineAgreed / completed : 0
+  const primary = { score, floor: floors.categoryAgreementFloor, measured }
+  // ONE definition of passing, shared with the TaskResult below. The trace previously demanded
+  // a clean sweep while the summary gated on the floor, so a run could be a pass in the
+  // console and a fail in the record it was supposed to be evidence for.
+  const pass = gatePasses(primary) && gates.every(gatePasses)
 
   o.trace.write({
     event: 'record',
@@ -285,32 +351,32 @@ export const runShockPipelineEval = async (o: ShockPipelineEvalOptions): Promise
     rule,
     medprotocol: { version: medprotocolVersion, command: mp.command },
     totals: t,
+    attempts,
+    completed,
     exactMatches,
+    agreed: pipelineAgreed,
     failedExtractions,
     failedClassifications,
     bench,
     benchSamples: samples,
     cachePrompt,
-    floors: { ...shockFloors, extractionExactFloor: 0.67 },
+    floors: { ...shockFloors, ...floors },
     gates,
     measured,
-    pass:
-      measured &&
-      scores.length > 0 &&
-      scores.every((s) => s.categoryAgrees) &&
-      gates.every((g) => g.measured && g.score >= g.floor),
+    pass,
   })
 
   return {
     task: 'shock-pipeline',
-    score: scores.length ? scores.filter((s) => s.categoryAgrees).length / scores.length : 0,
-    floor: shockFloors.categoryAgreementFloor,
+    score,
+    floor: floors.categoryAgreementFloor,
     measured,
     gates,
     summary:
-      `agreement ${pct(scores.filter((s) => s.categoryAgrees).length, scores.length)} ` +
-      `(floor ${(shockFloors.categoryAgreementFloor * 100).toFixed(0)}%) · ` +
-      `extraction ${exactMatches}/${scores.length + failedExtractions} exact · ` +
+      `agreement ${pct(pipelineAgreed, completed)} ` +
+      `(floor ${(floors.categoryAgreementFloor * 100).toFixed(0)}%) · ` +
+      `completion ${pct(completed, attempts)} · ` +
+      `extraction ${pct(exactMatches, attempts)} exact · ` +
       `echo ${(t.echoFidelity * 100).toFixed(0)}% · not invented ${(t.notInvented * 100).toFixed(0)}%` +
       (failedExtractions ? ` · ${failedExtractions} failed extractions` : '') +
       (failedClassifications ? ` · ${failedClassifications} failed classifications` : ''),
@@ -319,7 +385,5 @@ export const runShockPipelineEval = async (o: ShockPipelineEvalOptions): Promise
 }
 
 /** The corpus, for `--case` and for anything that wants to name a note. */
-export const shockPipelineDocumentNames = (pack: Pack): string[] => {
-  const raw = JSON.parse(pack.read('shockExtractionCases')) as { cases?: Array<{ name: string }> }
-  return (raw.cases ?? []).map((c) => c.name)
-}
+export const shockPipelineDocumentNames = (pack: Pack): string[] =>
+  loadShockExtractionCases(pack).cases.map((c) => c.name)

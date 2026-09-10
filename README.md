@@ -487,7 +487,7 @@ node src/cli.ts eval --profile clinical --constrain --task all          # the ei
 | `note-format` | one note | four sections; every item carries a `quote` and a derived `text` | item recall ≥ 75%, **plus** provenance ≥ 90%, derivation ≥ 90% and *nothing invented* (100%) |
 | `transcript` | one **dictated transcript** — speech, out of order, correcting itself | the same four sections, same `quote` and `text` | item recall ≥ 65%, same three sub-gates at 85 / 85 / 100% — **provisional, unmeasured** |
 | `shock` | one **JSON exam payload** — vital signs, capillary refill, mental status | category + `indeterminate_reason` + agreement with rule-based reference | agreement ≥ 70%, concordance ≥ 80%, coverage ≥ 90%, format valid 100%, schema valid 100% |
-| `shock-pipeline` | one **prose shock case** — notes describing vitals, exam, history | category, chaining extraction → classification | extraction exact ≥ 67%, category agreement ≥ 70%, echo fidelity 100%, not invented 100% — **provisional, unmeasured** |
+| `shock-pipeline` | one **prose shock case** — notes describing vitals, exam, history | category, chaining extraction → classification | category agreement ≥ 67%, **plus** pipeline completion 100%, extraction exact ≥ 67%, echo fidelity 100%, not invented 100% — **provisional, unmeasured** |
 | `sepsis` | one **qSOFA payload** — respiratory rate, systolic BP, GCS | positive/negative screen + `criteria_met` + agreement with the medprotocol CLI | screen agreement ≥ 84%, echo 100%, criteria fidelity 100%, score fidelity 100% — **provisional, unmeasured** |
 
 Three things about this arrangement are the reason it is worth having, and none of them are

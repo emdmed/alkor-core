@@ -18,7 +18,8 @@ import { ProfileError } from '../../core/profile.ts'
 import { buildRequest, CONTRACTS } from './contracts.ts'
 import { parseJson } from './extraction.ts'
 import { DIFFICULTY_MAX, DIFFICULTY_MIN, parseDifficultyRange } from './cases.ts'
-import type { ShockExam } from './shock.ts'
+import { classify, loadShockRule, resolveExam, SHOCK_CATEGORIES, type ShockCategory, type ShockExam } from './shock.ts'
+import type { MedprotocolRule } from './medprotocol.ts'
 import type { TaskResult } from './set-eval.ts'
 
 export interface ShockExtractionEvalOptions {
@@ -33,25 +34,43 @@ export interface ShockExtractionEvalOptions {
   provider?: Provider
 }
 
-interface ShockExtractionCase {
+export interface ShockExtractionCase {
   name: string
   difficulty: number
   /** The expected payload, loaded from the existing exam file. */
   expect: ShockExam
+  /**
+   * The category the shock rule computes from that payload, as the case file states it.
+   *
+   * Read by `shock-pipeline`, which grades the category this note's extraction ends at. The
+   * extraction task itself ignores it: what it measures is the payload, and the payload is the
+   * expectation above. See `loadShockExtractionCases` for why the file states it at all.
+   */
+  expectCategory: ShockCategory
 }
 
-interface ShockExtractionCases {
+export interface ShockExtractionCases {
   cases: ShockExtractionCase[]
   /** Exact-match floor: share of cases whose every field matches the expectation. */
   exactMatchFloor: number
 }
 
 export const shockExtractionDocumentNames = (pack: Pack): string[] => {
-  const raw = loadCases(pack)
+  const raw = loadShockExtractionCases(pack)
   return raw.cases.map((c) => c.name)
 }
 
-const loadCases = (pack: Pack): ShockExtractionCases => {
+/**
+ * The prose corpus, its payload expectations and the category each payload classifies to.
+ *
+ * `expect` in this file is a SECOND statement of what `classify` computes from the payload,
+ * and it is checked against the rule at load for the reason `shock-cases.json` gives at
+ * length: an expectation derived only from the harness cannot disagree with the harness, so a
+ * bug in the twelve-line rule would silently redefine truth and every number would stay green.
+ * The cross-check lives here, at load, because that is the only place a disagreement can be
+ * reported as a pack error naming the case rather than charged to the weights.
+ */
+export const loadShockExtractionCases = (pack: Pack, mp?: MedprotocolRule): ShockExtractionCases => {
   const raw = JSON.parse(pack.read('shockExtractionCases')) as {
     cases?: unknown[]
     exactMatchFloor?: number
@@ -65,23 +84,50 @@ const loadCases = (pack: Pack): ShockExtractionCases => {
     )
   }
   const cases: ShockExtractionCase[] = []
+  const seen = new Set<string>()
+  const rule = mp ? loadShockRule(pack) : undefined
   for (const c of raw.cases) {
     const o = c as Record<string, unknown>
     if (typeof o.name !== 'string' || !o.name) {
       throw new ProfileError(`pack '${pack.name}': shockExtractionCases has a case with no name`)
     }
+    // A name listed twice would read the same note and the same payload twice and be counted
+    // twice, weighting one route through the rule double — the argument loadShockCases makes.
+    if (seen.has(o.name)) throw new ProfileError(`pack '${pack.name}': shockExtractionCases names case '${o.name}' twice`)
+    seen.add(o.name)
     if (typeof o.difficulty !== 'number' || o.difficulty < DIFFICULTY_MIN || o.difficulty > DIFFICULTY_MAX) {
       throw new ProfileError(
         `pack '${pack.name}': case '${o.name}' has difficulty ${o.difficulty}, expected ${DIFFICULTY_MIN}-${DIFFICULTY_MAX}`,
       )
     }
+    if (!SHOCK_CATEGORIES.includes(o.expect as ShockCategory)) {
+      throw new ProfileError(
+        `pack '${pack.name}': case '${o.name}' expects ${JSON.stringify(o.expect)}, ` +
+          `which is not one of ${SHOCK_CATEGORIES.join(', ')} — shock-pipeline grades the category ` +
+          'this note ends at, and a case that does not name one is a case it cannot grade',
+      )
+    }
+    const expectCategory = o.expect as ShockCategory
     const exam = JSON.parse(pack.document(o.name, 'exam')) as ShockExam
-    cases.push({ name: o.name, difficulty: o.difficulty, expect: exam })
+    // Only when a caller supplied medprotocol. The cross-check needs a resolved payload and
+    // resolving one is a subprocess, so the extraction task — which never asks about the
+    // category — is not made to spawn one to load its own corpus.
+    if (mp && rule) {
+      const truth = classify(resolveExam(exam, rule, mp))
+      if (truth.category !== expectCategory) {
+        throw new ProfileError(
+          `pack '${pack.name}': case '${o.name}' expects ${expectCategory} but the rule computes ` +
+            `${truth.category} from its payload — the answer key and the reference rule disagree, and ` +
+            'until they are reconciled every number shock-pipeline reports is about whichever is wrong',
+        )
+      }
+    }
+    cases.push({ name: o.name, difficulty: o.difficulty, expect: exam, expectCategory })
   }
   return { cases, exactMatchFloor: raw.exactMatchFloor }
 }
 
-const parseShockExam = (raw: string): ShockExam => {
+export const parseShockExam = (raw: string): ShockExam => {
   const obj = parseJson(raw, 'shock-extraction')
   const h = obj.hypotension as Record<string, unknown> | undefined
   if (!h || typeof h.systolic !== 'number' || typeof h.diastolic !== 'number' || typeof h.duration_minutes !== 'number') {
@@ -106,7 +152,7 @@ const parseShockExam = (raw: string): ShockExam => {
   return obj as unknown as ShockExam
 }
 
-const examEqual = (a: ShockExam, b: ShockExam): boolean => {
+export const examEqual = (a: ShockExam, b: ShockExam): boolean => {
   if (a.hypotension.systolic !== b.hypotension.systolic) return false
   if (a.hypotension.diastolic !== b.hypotension.diastolic) return false
   if (a.hypotension.duration_minutes !== b.hypotension.duration_minutes) return false
@@ -121,7 +167,7 @@ const examEqual = (a: ShockExam, b: ShockExam): boolean => {
 
 export const runShockExtractionEval = async (o: ShockExtractionEvalOptions): Promise<TaskResult> => {
   const req = buildRequest(CONTRACTS['shock-extraction'], o.pack, o.constrain)
-  const { cases: allCases, exactMatchFloor } = loadCases(o.pack)
+  const { cases: allCases, exactMatchFloor } = loadShockExtractionCases(o.pack)
 
   const inScope = o.difficulty ? parseDifficultyRange(o.difficulty) : () => true
   const cases = allCases.filter((c) => inScope(c.difficulty))

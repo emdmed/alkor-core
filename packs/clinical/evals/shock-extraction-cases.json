@@ -1,7 +1,18 @@
 {
   "_comment": "Shock-extraction eval cases: synthetic prose notes that restate the findings of the existing shock exam payloads. The expectation for each case is the SAME exam.json the downstream reasoning task already grades against, so the two tasks share a truth source even though their inputs differ.",
-  "_expectNote": "The `expect` field on each case carries the classification the shock rule computes from that case's exam payload. It is here so shock-pipeline can score end-to-end agreement without cross-referencing shock-cases.json. The field is backward-compatible: the extraction eval ignores it.",
+  "_expectNote": "The `expect` field on each case carries the classification the shock rule computes from that case's exam payload. It is here so shock-pipeline can score end-to-end agreement without cross-referencing shock-cases.json — it is what that task grades against, and `loadShockExtractionCases` refuses the pack when it disagrees with what `classify` computes from the same payload, for the reason shock-cases.json gives under `_expectIsCrossChecked`. The extraction eval itself ignores it: what that task measures is the payload.",
+  "_pipelineNote": "The `pipeline` block gates shock-pipeline, the prose→extraction→classification pass. Its floors are stated HERE, beside the corpus they describe, and are deliberately not borrowed from shock-cases.json: that file gates twenty payloads and can afford floors stated to a hundredth, while this corpus is three notes and moves in steps of a third. A floor of 0.7 over three cases is a floor of 1.0 wearing a decimal — it cannot distinguish 2/3 from 0/3 — and stating it that way would claim a resolution the corpus does not have.",
+  "_pipelineFloors": {
+    "categoryAgreementFloor": "The gate: did the pipeline reach the category the NOTE describes, end to end. 0.67 over three notes tolerates one, which is the finest distinction three cases can draw. It is a provisional floor on a provisional corpus and it should rise as notes are added, not stay where a three-case corpus put it.",
+    "extractionExactFloor": "Share of ATTEMPTS whose extracted payload matches the note's expectation in every field. A share of attempts rather than of completions on purpose: an attempt that produced no payload is exactly the failure this number exists to catch. 0.67, matching exactMatchFloor above — the same measurement the standalone extraction task makes, on the same notes.",
+    "completionFloor": "Share of attempts that reached a scored classification — both calls returned and both parsed. 1.0, and it is the gate that stops the other numbers from becoming a hiding place: agreement and echo are shares of COMPLETED runs, so without this a pipeline that failed nineteen attempts out of twenty could report 100% agreement on the one that worked. Under constrained decoding a completion is the grammar's job and anything less is a harness or server fault, not a model one."
+  },
   "exactMatchFloor": 0.67,
+  "pipeline": {
+    "categoryAgreementFloor": 0.67,
+    "extractionExactFloor": 0.67,
+    "completionFloor": 1.0
+  },
   "cases": [
     {
       "name": "sh-01-septic-classic",
