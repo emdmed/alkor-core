@@ -13,6 +13,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer as createMedextractServer } from '../src/server.ts'
 
+process.env.MEDPROTOCOL_BIN = join(import.meta.dirname, 'fixtures', 'medprotocol.js')
+
 const startServer = async (configPath?: string): Promise<{ server: Server; url: string; close: () => Promise<void> }> => {
   const server = await createMedextractServer(configPath)
   server.listen(0, '127.0.0.1')

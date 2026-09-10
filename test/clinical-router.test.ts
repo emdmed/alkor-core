@@ -17,6 +17,8 @@ import { type ClinicalShape, DEFAULT_TASK_FOR_SHAPE, type Task } from '../src/pr
 import { loadPack } from '../src/core/pack.ts'
 import { createActivity } from '../src/core/activity.ts'
 
+process.env.MEDPROTOCOL_BIN = join(import.meta.dirname, 'fixtures', 'medprotocol.js')
+
 // --- Shape detection -----------------------------------------------------------------------
 
 test('exam-json shape: JSON with shock keys routes to shock', () => {
