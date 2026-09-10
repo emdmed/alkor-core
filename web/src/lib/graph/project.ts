@@ -420,8 +420,8 @@ const paintTrailOverlay = (nodes: GraphNode[], edges: GraphEdge[], selected: Run
   }
   for (const edge of edges) {
     if (!traversed.has(edge.source) || !traversed.has(edge.target)) continue
-    edge.style = { ...edge.style, stroke: 'var(--success)', strokeWidth: 2.6, strokeDasharray: undefined, opacity: 1 }
-    edge.markerEnd = { type: 'arrowclosed', width: 14, height: 14, color: 'var(--success)' }
+    edge.style = { ...edge.style, stroke: 'var(--route-selected)', strokeWidth: 2.6, strokeDasharray: undefined, opacity: 1 }
+    edge.markerEnd = { type: 'arrowclosed', width: 14, height: 14, color: 'var(--route-selected)' }
     edge.animated = nodes.find((candidate) => candidate.id === edge.target)?.data.status === 'active'
     edge.data = { ...edge.data, traversed: true }
   }

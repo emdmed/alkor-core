@@ -258,6 +258,29 @@ export const GroupNode = ({ data }: NodeProps<GraphNode>) => (
   </div>
 )
 
+/* ------------------------------------------------------------------ product gateway */
+
+export const GatewayNode = (props: NodeProps<GraphNode>) => {
+  const { data } = props
+  return (
+    <div className="g-gateway">
+      <Handle id="t" type="target" position={Position.Top} />
+      <Handle id="s" type="source" position={Position.Bottom} />
+      <Card data={data}>
+        <Title data={data} />
+        {data.chosenProfile && (
+          <div className="g-decide">
+            <span className="g-route-line">Selected: {data.chosenProfile}</span>
+            {data.confidence != null && <span className="g-conf">{(data.confidence * 100).toFixed(0)}%</span>}
+            {data.ruleVsModel && <span className="g-rule-vs">{data.ruleVsModel}</span>}
+          </div>
+        )}
+        {data.detailText && <Meta>{data.detailText}</Meta>}
+      </Card>
+    </div>
+  )
+}
+
 export const NODE_TYPES = {
   input: InputNode,
   output: OutputNode,
@@ -268,4 +291,5 @@ export const NODE_TYPES = {
   profile: ProfileNode,
   group: GroupNode,
   'compact-pipeline': CompactPipelineNode,
+  gateway: GatewayNode,
 } as const

@@ -47,6 +47,8 @@ const miniNodeSize = (node: GraphNode): { width: number; height: number } => {
     case 'route': return { width: 248, height: 74 }
     case 'branch': return { width: 168, height: 44 }
     case 'profile': return { width: 196, height: 62 }
+    case 'compact-pipeline': return { width: 360, height: 76 }
+    case 'gateway': return { width: 340, height: 56 }
     default: return { width: 240, height: 60 }
   }
 }
@@ -56,8 +58,9 @@ const GraphMiniMap = ({ nodes }: { nodes: GraphNode[] }) => {
   const transform = useStore((store) => store.transform)
   const flowWidth = useStore((store) => store.width)
   const flowHeight = useStore((store) => store.height)
-  const visible = nodes.filter((node) => node.data.kind !== 'group')
+  // Memoize bounds from the stable node input, not from the fresh `filter()` array.
   const bounds = useMemo(() => {
+    const visible = nodes.filter((node) => node.data.kind !== 'group')
     if (visible.length === 0) return undefined
     const padding = 80
     const left = Math.min(...visible.map((node) => node.position.x)) - padding
@@ -65,9 +68,10 @@ const GraphMiniMap = ({ nodes }: { nodes: GraphNode[] }) => {
     const right = Math.max(...visible.map((node) => node.position.x + miniNodeSize(node).width)) + padding
     const bottom = Math.max(...visible.map((node) => node.position.y + miniNodeSize(node).height)) + padding
     return { left, top, width: right - left, height: bottom - top }
-  }, [visible])
+  }, [nodes])
   if (!bounds) return null
 
+  const visible = nodes.filter((node) => node.data.kind !== 'group')
   const [translateX, translateY, zoom] = transform
   const viewport = {
     x: -translateX / zoom,
@@ -293,10 +297,10 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
 
           <div className="graph-tools" aria-label="Graph controls">
             <div className="graph-mode-toggle control-group">
-              <Button variant={graphMode === 'full' ? 'secondary' : 'ghost'} size="sm" onClick={() => setGraphMode('full')} title="Full topology view">
+              <Button variant={graphMode === 'full' ? 'secondary' : 'ghost'} size="sm" onClick={() => setGraphMode('full')} title="Full topology view" aria-pressed={graphMode === 'full'}>
                 <Columns3 />Full
               </Button>
-              <Button variant={graphMode === 'compact' ? 'secondary' : 'ghost'} size="sm" onClick={() => setGraphMode('compact')} title="Compact single-node view">
+              <Button variant={graphMode === 'compact' ? 'secondary' : 'ghost'} size="sm" onClick={() => setGraphMode('compact')} title="Compact single-node view" aria-pressed={graphMode === 'compact'}>
                 <Rows3 />Compact
               </Button>
             </div>
@@ -307,13 +311,13 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
               </div>
             )}
             <div className="control-group">
-              <Button variant={showLegend ? 'secondary' : 'ghost'} size="sm" onClick={() => setShowLegend((v) => !v)}>
+              <Button variant={showLegend ? 'secondary' : 'ghost'} size="sm" onClick={() => setShowLegend((v) => !v)} aria-pressed={showLegend} title={showLegend ? 'Hide legend' : 'Show legend'}>
                 <ListTree />Legend
               </Button>
-              <Button variant={activityOpen ? 'secondary' : 'ghost'} size="sm" onClick={onToggleActivity}>
+              <Button variant={activityOpen ? 'secondary' : 'ghost'} size="sm" onClick={onToggleActivity} aria-pressed={activityOpen}>
                 <Rows3 />Activity
               </Button>
-              <Button variant={logOpen ? 'secondary' : 'ghost'} size="sm" onClick={onToggleLog}>
+              <Button variant={logOpen ? 'secondary' : 'ghost'} size="sm" onClick={onToggleLog} aria-pressed={logOpen}>
                 <ScrollText />Events
               </Button>
               <Button
@@ -350,7 +354,7 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
             if ((d.childCount ?? 0) > 0) toggleNode(d.expandKey ?? node.id, expanded.has(d.expandKey ?? node.id))
           }}
         >
-          <Background variant={BackgroundVariant.Dots} gap={24} size={1.2} color="#d4e4e2" />
+          <Background variant={BackgroundVariant.Dots} gap={24} size={1.2} color="var(--graph-grid)" />
           <Controls showInteractive={false} />
           {graphMode === 'full' && nodes.filter((node) => node.data.kind !== 'group').length > 6 && <GraphMiniMap nodes={nodes} />}
         </ReactFlow>

@@ -572,3 +572,21 @@ export const setConnection = (state: ProjectState, connection: ConnectionStatus)
   ...state,
   connection,
 })
+
+/**
+ * "Clear" removes run/activity history but keeps everything that describes the active
+ * backend: configured topology, loaded profiles, model health, connection state, and
+ * the SSE sequence watermark (dedup must keep counting on the same source).
+ */
+export const clearExecutionHistory = (state: ProjectState): ProjectState => ({
+  ...state,
+  runs: new Map(),
+  llmRequests: new Map(),
+  pipelines: new Map(),
+  sessions: new Map(),
+  stages: new Map(),
+  httpLog: [],
+  routes: [],
+  tools: [],
+  eventLog: [],
+})

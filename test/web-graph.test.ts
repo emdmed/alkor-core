@@ -1,7 +1,7 @@
 /** The browser graph's model stays deterministic and testable without a renderer. */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildExpandedPipelinesGraph, buildGraph, buildPipelinesGraph, buildProgressGraph, buildProjectGraph } from '../web/src/lib/graph/index.ts'
+import { buildCompactGraph, buildExpandedPipelinesGraph, buildGraph, buildPipelinesGraph, buildProgressGraph, buildProjectGraph } from '../web/src/lib/graph/index.ts'
 import { emptyState } from '../src/tui/state.ts'
 
 test('an active nested stage marks its step lineage and renders inline', () => {
@@ -454,7 +454,10 @@ test('project graph renders every configured pipeline and profile before any run
     profiles: [
       { name: 'alpha-flow', mode: 'pipeline' },
       { name: 'beta-flow', mode: 'pipeline' },
-      { name: 'router', mode: 'router' },
+      { name: 'router', mode: 'router', topology: { stages: [{ name: 'route', kind: 'decision', routes: [
+        { name: 'alpha', targetProfile: 'alpha' },
+        { name: 'beta', targetProfile: 'beta' },
+      ] }] } },
       { name: 'alpha', mode: 'extract' },
       { name: 'beta', mode: 'agentic' },
     ],
@@ -480,7 +483,12 @@ test('project graph renders every configured pipeline and profile before any run
     graph.nodes.filter((n) => n.data.kind === 'profile').map((n) => n.data.profile),
     ['alpha-flow', 'beta-flow', 'router', 'alpha', 'beta'],
   )
-  assert.equal(graph.edges.filter((edge) => edge.data?.kind === 'ghost').length, 2, 'router shows every specialist route')
+  const stepGhosts = graph.edges.filter((edge) => edge.source === 'pipeline-alpha-flow/step-0' && edge.data?.kind === 'ghost')
+  assert.deepEqual(
+    stepGhosts.map((edge) => edge.target).sort(),
+    ['profile-alpha', 'profile-beta'],
+    'the router step fans only to its declared specialist routes',
+  )
 })
 
 test('project graph stacks profile paths while preserving shared step columns', () => {
@@ -561,7 +569,7 @@ test('project graph keeps unchosen routes visible at reduced opacity', () => {
   assert.equal(routeEdges.length, 2, 'no route disappears after selection')
   assert.equal(routeEdges.find((edge) => edge.target === 'profile-clinical')?.data?.kind, 'branch')
   assert.equal(routeEdges.find((edge) => edge.target === 'profile-clinical')?.data?.traversed, true)
-  assert.equal(routeEdges.find((edge) => edge.target === 'profile-clinical')?.style?.stroke, 'var(--success)')
+  assert.equal(routeEdges.find((edge) => edge.target === 'profile-clinical')?.style?.stroke, 'var(--route-selected)')
   assert.equal(routeEdges.find((edge) => edge.target === 'profile-verifier')?.data?.muted, true)
   assert.equal(routeEdges.find((edge) => edge.target === 'profile-verifier')?.style?.opacity, 0.52)
 })
@@ -603,7 +611,7 @@ test('project graph paints observed workflow stages and their connections as the
   assert.equal(model.data.status, 'active')
   assert.equal(model.data.current, true)
   assert.equal(connection?.data?.traversed, true)
-  assert.equal(connection?.style?.stroke, 'var(--success)')
+  assert.equal(connection?.style?.stroke, 'var(--route-selected)')
 })
 
 test('declared topology renders exact routes, internal stages, and missing targets', () => {
@@ -796,4 +804,383 @@ test('a route that feeds a sibling is laid out upstream and selects the shared c
   assert.equal(classify.data.chosen, true, 'selecting the producer also selects its continuation')
   assert.equal(feed?.data?.kind, 'branch', 'the selected dependency is visibly connected')
   assert.equal(other.data.muted, true, 'unrelated sibling routes remain de-emphasised')
+})
+
+/* ------------------------------------------------------------------ compact graph */
+
+const compactGateway = () => ({
+  profiles: [
+    { name: 'workflow-router', mode: 'router' },
+    { name: 'clinical', mode: 'extract' },
+    { name: 'coding', mode: 'extract' },
+  ],
+  pipeline: {
+    router: 'workflow-router',
+    workflows: ['clinical-verified', 'coding-verified'],
+    defaultWorkflow: 'clinical-verified',
+  },
+  pipelines: [
+    {
+      name: 'clinical-verified',
+      steps: [
+        { name: 'extract medications', profile: 'clinical', input: 'initial' },
+        { name: 'verify', profile: 'coding' },
+      ],
+    },
+    {
+      name: 'coding-verified',
+      steps: [{ name: 'extract codes', profile: 'coding', input: 'initial' }],
+    },
+  ],
+})
+
+test('compact graph renders the exact gateway catalogue with ordered steps', () => {
+  const state = emptyState()
+  state.topology = compactGateway()
+
+  const graph = buildCompactGraph(state, undefined, new Set())
+  const gateway = graph.nodes.find((node) => node.id === 'gateway')!
+  const clinical = graph.nodes.find((node) => node.id === 'compact-configured-clinical-verified')!
+  const coding = graph.nodes.find((node) => node.id === 'compact-configured-coding-verified')!
+
+  assert.equal(gateway.data.kind, 'gateway')
+  assert.equal(gateway.data.entryPoint, true)
+  assert.equal(gateway.data.status, 'idle')
+  assert.match(gateway.data.detailText ?? '', /2 workflows · default: clinical-verified/)
+  assert.deepEqual(clinical.data.steps!.map((step) => [step.name, step.profile]), [
+    ['extract medications', 'clinical'],
+    ['verify', 'coding'],
+  ])
+  assert.equal(clinical.data.steps![0]!.inputRef, 'initial')
+  assert.equal(clinical.data.steps![1]!.inputRef, 'step-0.output')
+  assert.equal(clinical.data.status, 'idle')
+  assert.deepEqual(coding.data.steps!.map((step) => step.name), ['extract codes'])
+  assert.equal(graph.title, '1 product pipeline · 2 workflows · compact view')
+})
+
+test('compact graph branches the gateway into two independent workflows', () => {
+  const state = emptyState()
+  state.topology = compactGateway()
+
+  const graph = buildCompactGraph(state, undefined, new Set())
+  const targets = graph.edges
+    .filter((edge) => edge.source === 'gateway')
+    .map((edge) => edge.target)
+
+  assert.deepEqual(targets, ['compact-configured-clinical-verified', 'compact-configured-coding-verified'])
+})
+
+test('compact graph never connects one workflow to another', () => {
+  const state = emptyState()
+  state.topology = compactGateway()
+
+  const graph = buildCompactGraph(state, undefined, new Set())
+  assert.ok(graph.edges.every((edge) => edge.source === 'gateway'), 'every edge leaves the gateway')
+  assert.equal(graph.edges.length, 2)
+  assert.ok(graph.edges.every((edge) => edge.data?.kind === 'ghost'), 'uncommitted workflows connect as possible, not data, edges')
+  assert.ok(graph.edges.every((edge) => edge.data?.kind !== 'data'), 'no edge may imply one workflow feeds another')
+})
+
+test('compact graph paints the selected workflow branch and mutes the rest', () => {
+  const state = emptyState()
+  state.topology = compactGateway()
+  state.runs.set('run-1', { runId: 'run-1', profile: 'clinical-verified', status: 'started' })
+  state.routes.push({ runId: 'run-1', profile: 'clinical-verified', confidence: 0.87, reason: 'default workflow', ruleVsModel: 'rule' })
+  state.pipelines.set('run-1', {
+    runId: 'run-1',
+    steps: [{ step: 0, name: 'extract medications', profile: 'clinical', status: 'started' }],
+  })
+
+  const graph = buildCompactGraph(state, 'run-1', new Set())
+  const gateway = graph.nodes.find((node) => node.id === 'gateway')!
+  const chosen = graph.nodes.find((node) => node.id === 'compact-run-1')!
+  const alternate = graph.nodes.find((node) => node.id === 'compact-configured-coding-verified')!
+  const branch = graph.edges.find((edge) => edge.source === 'gateway' && edge.target === 'compact-run-1')!
+  const ghost = graph.edges.find((edge) => edge.source === 'gateway' && edge.target === alternate.id)!
+
+  assert.equal(gateway.data.chosenProfile, 'clinical-verified')
+  assert.equal(gateway.data.confidence, 0.87)
+  assert.equal(gateway.data.ruleVsModel, 'rule')
+  assert.equal(gateway.data.reason, 'default workflow')
+  assert.equal(gateway.data.status, 'done')
+  assert.equal(chosen.data.status, 'active')
+  assert.equal(chosen.data.muted, undefined)
+  assert.equal(alternate.data.status, 'idle')
+  assert.equal(alternate.data.muted, true)
+  assert.equal(branch.data?.kind, 'branch')
+  assert.equal(branch.data?.label, 'selected')
+  assert.equal(branch.style?.stroke, 'var(--route-selected)')
+  assert.equal(ghost.data?.kind, 'ghost')
+  assert.equal(graph.edges.filter((edge) => edge.data?.kind === 'branch').length, 1, 'exactly one workflow is highlighted')
+})
+
+test('compact graph keeps composed input references human-readable', () => {
+  const state = emptyState()
+  state.topology = {
+    profiles: [{ name: 'verifier', mode: 'extract' }],
+    pipeline: { router: 'workflow-router', workflows: ['verified'], defaultWorkflow: 'verified' },
+    pipelines: [{
+      name: 'verified',
+      steps: [{
+        name: 'verify',
+        profile: 'verifier',
+        input: [
+          { name: 'document', ref: 'initial' },
+          { name: 'extraction', ref: 'step-0.output' },
+        ],
+      }],
+    }],
+  }
+
+  const graph = buildCompactGraph(state, undefined, new Set())
+  const card = graph.nodes.find((node) => node.id === 'compact-configured-verified')!
+  assert.equal(card.data.steps![0]!.inputRef, 'document ← initial · extraction ← step-0.output')
+})
+
+test('compact graph does not annotate clinical-verifier with the product route', () => {
+  const state = emptyState()
+  state.topology = {
+    profiles: [
+      { name: 'workflow-router', mode: 'router' },
+      { name: 'verifier', mode: 'extract' },
+    ],
+    pipeline: { router: 'workflow-router', workflows: ['clinical-verified'], defaultWorkflow: 'clinical-verified' },
+    pipelines: [{ name: 'clinical-verified', steps: [{ name: 'verify', profile: 'verifier', input: 'initial' }] }],
+  }
+  state.runs.set('run-1', { runId: 'run-1', profile: 'clinical-verified', status: 'started' })
+  state.routes.push({ runId: 'run-1', profile: 'clinical-verified', confidence: 0.9, reason: 'default', ruleVsModel: 'rule' })
+  state.pipelines.set('run-1', {
+    runId: 'run-1',
+    steps: [{ step: 0, name: 'verify', profile: 'verifier', status: 'started' }],
+  })
+  state.stages.set('pipeline', {
+    stageId: 'pipeline', runId: 'run-1', name: 'pipeline', status: 'started', children: [],
+  })
+  state.stages.set('flow', {
+    stageId: 'flow', runId: 'run-1', parentId: 'pipeline', name: 'flow', status: 'started', detail: { step: 0 }, children: [],
+  })
+  state.stages.set('parse', {
+    stageId: 'parse', runId: 'run-1', parentId: 'flow', name: 'parse', status: 'completed', children: [],
+  })
+
+  const graph = buildCompactGraph(state, 'run-1', new Set())
+  const gateway = graph.nodes.find((node) => node.id === 'gateway')!
+  const card = graph.nodes.find((node) => node.id === 'compact-run-1')!
+  const verify = card.data.steps![0]!
+
+  assert.equal(gateway.data.chosenProfile, 'clinical-verified')
+  assert.equal(verify.router, false)
+  assert.equal(verify.chosenProfile, undefined)
+  assert.equal(verify.reason, undefined)
+  assert.ok(verify.stages.every((stage) => stage.operation !== 'decision'), 'a verifier profile is not a routing step')
+})
+
+test('compact graph surfaces a genuine router step with its own decision', () => {
+  const state = emptyState()
+  state.topology = {
+    profiles: [
+      { name: 'workflow-router', mode: 'router' },
+      { name: 'clinical', mode: 'extract' },
+    ],
+    pipeline: { router: 'workflow-router', workflows: ['router-flow'], defaultWorkflow: 'router-flow' },
+    pipelines: [{
+      name: 'router-flow',
+      steps: [
+        { name: 'route', profile: 'workflow-router' },
+        { name: 'extract', profile: 'clinical' },
+      ],
+    }],
+  }
+  state.runs.set('run-1', { runId: 'run-1', profile: 'router-flow', status: 'started' })
+  state.pipelines.set('run-1', {
+    runId: 'run-1',
+    steps: [
+      { step: 0, name: 'route', profile: 'workflow-router', status: 'completed' },
+      { step: 1, name: 'extract', profile: 'clinical', status: 'started' },
+    ],
+  })
+  state.stages.set('pipeline', {
+    stageId: 'pipeline', runId: 'run-1', name: 'pipeline', status: 'started', children: [],
+  })
+  state.stages.set('router-step', {
+    stageId: 'router-step', runId: 'run-1', parentId: 'pipeline', name: 'router', status: 'completed', detail: { step: 0 }, children: [],
+  })
+  state.stages.set('decision', {
+    stageId: 'decision', runId: 'run-1', parentId: 'router-step', name: 'route', status: 'completed', detail: { profile: 'clinical', confidence: 0.95 }, children: [],
+  })
+
+  const graph = buildCompactGraph(state, 'run-1', new Set())
+  const card = graph.nodes.find((node) => node.id === 'compact-run-1')!
+  const route = card.data.steps!.find((step) => step.stepNo === 0)!
+
+  assert.equal(route.router, true, 'this step owns a routing decision')
+  assert.equal(route.chosenProfile, 'clinical')
+  assert.equal(route.confidence, 0.95)
+  assert.ok(route.stages.some((stage) => stage.name === 'route' && stage.operation === 'decision'))
+})
+
+test('compact graph derives active, done, failed, and stopped workflow status', () => {
+  const defs = {
+    profiles: [{ name: 'worker', mode: 'extract' }],
+    pipeline: { router: 'workflow-router', workflows: ['wf'], defaultWorkflow: 'wf' },
+    pipelines: [{ name: 'wf', steps: [{ name: 'work', profile: 'worker' }] }],
+  }
+
+  const active = emptyState()
+  active.topology = defs
+  active.runs.set('run-1', { runId: 'run-1', profile: 'wf', status: 'started' })
+  active.pipelines.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'work', profile: 'worker', status: 'started' }] })
+  assert.equal(buildCompactGraph(active, 'run-1', new Set()).nodes.find((node) => node.id === 'compact-run-1')!.data.status, 'active')
+
+  const done = emptyState()
+  done.topology = defs
+  done.runs.set('run-1', { runId: 'run-1', profile: 'wf', status: 'completed', wallMs: 1200 })
+  done.pipelines.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'work', profile: 'worker', status: 'completed', ok: true }] })
+  assert.equal(buildCompactGraph(done, 'run-1', new Set()).nodes.find((node) => node.id === 'compact-run-1')!.data.status, 'done')
+
+  const failed = emptyState()
+  failed.topology = defs
+  failed.runs.set('run-1', { runId: 'run-1', profile: 'wf', status: 'failed' })
+  failed.pipelines.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'work', profile: 'worker', status: 'completed', ok: true }] })
+  assert.equal(buildCompactGraph(failed, 'run-1', new Set()).nodes.find((node) => node.id === 'compact-run-1')!.data.status, 'failed')
+
+  const stopped = emptyState()
+  stopped.topology = defs
+  stopped.runs.set('run-1', { runId: 'run-1', profile: 'wf', status: 'completed' })
+  stopped.pipelines.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'work', profile: 'worker', status: 'completed', ok: true }], stoppedEarly: true })
+  assert.equal(buildCompactGraph(stopped, 'run-1', new Set()).nodes.find((node) => node.id === 'compact-run-1')!.data.status, 'failed')
+
+  const emptyCompleted = emptyState()
+  emptyCompleted.topology = defs
+  emptyCompleted.runs.set('run-1', { runId: 'run-1', profile: 'wf', status: 'completed' })
+  emptyCompleted.pipelines.set('run-1', { runId: 'run-1', steps: [] })
+  assert.equal(
+    buildCompactGraph(emptyCompleted, 'run-1', new Set()).nodes.find((node) => node.id === 'compact-run-1')!.data.status,
+    'idle',
+    'a workflow that produced no step row never reads as done',
+  )
+})
+
+test('compact graph preserves nested stage hierarchy in pre-order', () => {
+  const state = emptyState()
+  state.topology = {
+    profiles: [{ name: 'worker', mode: 'extract' }],
+    pipeline: { router: 'workflow-router', workflows: ['wf'], defaultWorkflow: 'wf' },
+    pipelines: [{ name: 'wf', steps: [{ name: 'work', profile: 'worker' }] }],
+  }
+  state.runs.set('run-1', { runId: 'run-1', profile: 'wf', status: 'started' })
+  state.pipelines.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'work', profile: 'worker', status: 'started' }] })
+  state.stages.set('pipeline', {
+    stageId: 'pipeline', runId: 'run-1', name: 'pipeline', status: 'started', children: [],
+  })
+  state.stages.set('worker', {
+    stageId: 'worker', runId: 'run-1', parentId: 'pipeline', name: 'worker', status: 'started', detail: { step: 0 }, children: [],
+  })
+  state.stages.set('prepare', {
+    stageId: 'prepare', runId: 'run-1', parentId: 'worker', name: 'prompt-assembly', status: 'completed', detail: { note: 'len 240' }, children: [],
+  })
+  state.stages.set('model', {
+    stageId: 'model', runId: 'run-1', parentId: 'worker', name: 'llm-call', status: 'completed', wallMs: 830, children: [],
+  })
+  state.stages.set('tool', {
+    stageId: 'tool', runId: 'run-1', parentId: 'model', name: 'tool-call', status: 'completed', children: [],
+  })
+
+  const graph = buildCompactGraph(state, 'run-1', new Set())
+  const card = graph.nodes.find((node) => node.id === 'compact-run-1')!
+  const stages = card.data.steps![0]!.stages
+
+  assert.deepEqual(stages.map((stage) => stage.name), ['prompt-assembly', 'llm-call', 'tool-call'])
+  assert.deepEqual(stages.map((stage) => stage.depth), [0, 0, 1])
+  assert.deepEqual(stages.map((stage) => stage.operation), ['code', 'model', 'decision'])
+  assert.equal(stages[0]!.detailText, 'note len 240', 'safe detail summaries survive into the compact card')
+  assert.equal(stages[1]!.wallMs, 830)
+})
+
+test('compact graph renders a catalogued but missing workflow definition as failed', () => {
+  const state = emptyState()
+  state.topology = {
+    profiles: [{ name: 'worker', mode: 'extract' }],
+    pipeline: { router: 'workflow-router', workflows: ['present', 'missing'], defaultWorkflow: 'present' },
+    pipelines: [{ name: 'present', steps: [{ name: 'work', profile: 'worker' }] }],
+  }
+
+  const graph = buildCompactGraph(state, undefined, new Set())
+  const missing = graph.nodes.find((node) => node.id === 'compact-missing-missing')!
+
+  assert.equal(missing.data.status, 'failed')
+  assert.equal(missing.data.label, 'missing', 'the name is preserved, not dropped')
+  assert.equal(missing.data.detailText, 'not configured')
+  assert.match(missing.data.reason ?? '', /no definition exists/)
+  assert.deepEqual(missing.data.steps!, [])
+  assert.equal(graph.edges.find((edge) => edge.target === missing.id)?.data?.kind, 'ghost')
+})
+
+test('compact graph lists standalone workflows when no product gateway exists', () => {
+  const state = emptyState()
+  state.topology = {
+    profiles: [{ name: 'alpha', mode: 'extract' }, { name: 'beta', mode: 'extract' }],
+    pipelines: [
+      { name: 'alpha-flow', steps: [{ name: 'work', profile: 'alpha' }] },
+      { name: 'beta-flow', steps: [{ name: 'work', profile: 'beta' }] },
+    ],
+  }
+
+  const graph = buildCompactGraph(state, undefined, new Set())
+  assert.deepEqual(graph.nodes.map((node) => node.id).sort(), ['compact-configured-alpha-flow', 'compact-configured-beta-flow'])
+  assert.equal(graph.edges.length, 0, 'standalone workflows are disconnected, not chained')
+  assert.ok(graph.nodes.every((node) => node.data.detailText === 'standalone configured workflow'))
+  assert.ok(graph.nodes.every((node) => node.data.status === 'idle'))
+  assert.equal(graph.title, '2 standalone workflows · compact')
+})
+
+test('compact graph renders a direct run with no configured topology', () => {
+  const state = emptyState()
+  state.runs.set('run-1', { runId: 'run-1', profile: 'direct', status: 'started' })
+  state.pipelines.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'step', profile: 'worker', status: 'started' }] })
+
+  const graph = buildCompactGraph(state, 'run-1', new Set())
+  assert.equal(graph.nodes.length, 1)
+  assert.equal(graph.nodes[0]!.data.kind, 'compact-pipeline')
+  assert.equal(graph.nodes[0]!.data.status, 'active')
+  assert.equal(graph.nodes[0]!.data.steps![0]!.name, 'step')
+  assert.equal(graph.edges.length, 0)
+  assert.equal(graph.title, 'run direct · compact')
+})
+
+test('compact graph keeps every workflow node id unique across sections', () => {
+  const state = emptyState()
+  state.topology = {
+    profiles: [
+      { name: 'workflow-router', mode: 'router' },
+      { name: 'clinical', mode: 'extract' },
+      { name: 'coding', mode: 'extract' },
+      { name: 'worker', mode: 'extract' },
+    ],
+    pipeline: {
+      router: 'workflow-router',
+      workflows: ['clinical-verified', 'coding-verified', 'missing'],
+      defaultWorkflow: 'clinical-verified',
+    },
+    pipelines: [
+      { name: 'clinical-verified', steps: [{ name: 'extract', profile: 'clinical' }] },
+      { name: 'coding-verified', steps: [{ name: 'extract', profile: 'coding' }] },
+      { name: 'standalone', steps: [{ name: 'work', profile: 'worker' }] },
+    ],
+  }
+  state.runs.set('run-1', { runId: 'run-1', profile: 'clinical-verified', status: 'started' })
+  state.routes.push({ runId: 'run-1', profile: 'clinical-verified', confidence: 0.9, reason: 'default', ruleVsModel: 'rule' })
+  state.pipelines.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'extract', profile: 'clinical', status: 'started' }] })
+
+  const graph = buildCompactGraph(state, 'run-1', new Set())
+  const ids = graph.nodes.map((node) => node.id)
+  const expected = [
+    'gateway',
+    'compact-run-1',
+    'compact-configured-coding-verified',
+    'compact-missing-missing',
+    'compact-configured-standalone',
+  ]
+  assert.deepEqual(ids, expected)
+  assert.equal(new Set(ids).size, ids.length)
 })

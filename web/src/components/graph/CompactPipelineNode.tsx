@@ -46,7 +46,11 @@ const Progress = ({ steps }: { steps: CompactStepData[] }) => {
 }
 
 const StageRow = ({ stage }: { stage: CompactStageData }) => (
-  <div className={`c-stage ${statusClass(stage.status)}`} aria-label={`${stage.name}: ${statusLabel(stage.status)}`}>
+  <div
+    className={`c-stage ${statusClass(stage.status)}`}
+    aria-label={`${stage.name}: ${statusLabel(stage.status)}`}
+    style={stage.depth > 0 ? { paddingLeft: stage.depth * 14, marginLeft: 0 } : undefined}
+  >
     <span className="c-stage-dot" title={statusLabel(stage.status)} />
     <OperationIcon operation={stage.operation} />
     <span className="c-stage-name">{stage.name}</span>
@@ -78,7 +82,7 @@ const StepRow = ({ step, expanded, onToggle }: { step: CompactStepData; expanded
           <button
             className="c-step-toggle"
             onClick={(event) => { event.stopPropagation(); onToggle() }}
-            aria-label={expanded ? 'Hide stages' : 'Show stages'}
+            aria-label={expanded ? `Hide stages for step ${step.name}` : `Show stages for step ${step.name}`}
             aria-expanded={expanded}
           >
             {expanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
@@ -96,7 +100,7 @@ const StepRow = ({ step, expanded, onToggle }: { step: CompactStepData; expanded
       )}
       {expanded && hasStages && (
         <div className="c-stages">
-          {step.stages.map((stage, index) => <StageRow key={index} stage={stage} />)}
+          {step.stages.map((stage) => <StageRow key={stage.stageId} stage={stage} />)}
         </div>
       )}
     </div>
@@ -119,7 +123,7 @@ export const CompactPipelineNode = memo(({ data }: NodeProps<GraphNode>) => {
   }
 
   return (
-    <div className={`g-compact ${statusClass(d.status)}`}>
+    <div className={`g-compact ${statusClass(d.status)}${d.muted ? ' is-muted' : ''}`}>
       <Handle id="t" type="target" position={Position.Top} />
       <Handle id="s" type="source" position={Position.Bottom} />
 
@@ -128,6 +132,16 @@ export const CompactPipelineNode = memo(({ data }: NodeProps<GraphNode>) => {
         <span className="c-header-label">{d.label}</span>
         <span className="c-header-status">{statusLabel(d.status)}</span>
         {d.wallMs != null && <span className="c-header-time">{fmtSec(d.wallMs)}</span>}
+        {d.onInspect && (
+          <button
+            className="c-header-inspect"
+            type="button"
+            title="Inspect this workflow"
+            onClick={(event) => { event.stopPropagation(); d.onInspect?.() }}
+          >
+            Inspect
+          </button>
+        )}
       </div>
 
       <Progress steps={steps} />
@@ -147,7 +161,11 @@ export const CompactPipelineNode = memo(({ data }: NodeProps<GraphNode>) => {
             onToggle={() => toggleStep(step.stepNo)}
           />
         ))}
-        {steps.length === 0 && <div className="c-empty">No steps yet</div>}
+        {steps.length === 0 && d.reason ? (
+          <div className="c-empty c-empty-reason">{d.reason}</div>
+        ) : steps.length === 0 && (
+          <div className="c-empty">No steps yet</div>
+        )}
       </div>
 
       <div className="c-terminal">

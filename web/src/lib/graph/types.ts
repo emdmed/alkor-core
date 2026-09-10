@@ -11,7 +11,7 @@ import type { Edge, Node } from '@xyflow/react'
 import type { LlmRequestEntry, ProjectState, RunEntry } from '../../../../src/tui/state.ts'
 import type { NodeState } from '../format.ts'
 
-export type GraphNodeKind = 'input' | 'route' | 'step' | 'stage' | 'branch' | 'profile' | 'output' | 'group' | 'compact-pipeline'
+export type GraphNodeKind = 'input' | 'route' | 'step' | 'stage' | 'branch' | 'profile' | 'output' | 'group' | 'compact-pipeline' | 'gateway'
 
 export interface CompactStepData {
   name: string
@@ -29,8 +29,12 @@ export interface CompactStepData {
 }
 
 export interface CompactStageData {
+  /** Stable stage id, for stable React keys and stage identity. */
+  stageId: string
   name: string
   status: NodeState
+  /** Nesting depth within the step's stage subtree (0 = direct child). */
+  depth: number
   wallMs?: number
   operation?: GraphOperation
   llm?: GraphLlm
@@ -57,6 +61,8 @@ export interface GraphNodeData {
   profile?: string
   stepNo?: number
   inputRef?: string
+  /** Compact-view card: the workflow's steps, in execution order. */
+  steps?: CompactStepData[]
   router?: boolean
   shape?: string
   task?: string

@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, lazy, Suspense } from 'react'
 import { ChevronUp } from 'lucide-react'
 import { Header } from './components/Header.tsx'
 import { StatusStrip } from './components/StatusStrip.tsx'
-import { PipelineGraph } from './components/graph/PipelineGraph.tsx'
 import { ActivityPanel } from './components/ActivityPanel.tsx'
 import { InspectorPanel } from './components/InspectorPanel.tsx'
 import { Drawer } from './components/Drawer.tsx'
@@ -10,6 +9,13 @@ import { EventLog } from './components/EventLog.tsx'
 import { ChatPanel } from './components/ChatPanel.tsx'
 import { useMedextract } from './hooks/useMedextract.ts'
 import type { GraphNodeData } from './lib/graph/index.ts'
+
+// The ReactFlow graph is the heavy part of the shell. Lazy-load it into its own chunk
+// so the shell paints fast and the graph chunk arrives behind it (preloaded below).
+const PipelineGraph = lazy(async () => {
+  const mod = await import('./components/graph/PipelineGraph.tsx')
+  return { default: mod.PipelineGraph }
+})
 
 const DEFAULT_URL = (import.meta.env.VITE_MEDEXTRACT_URL as string | undefined) ?? 'http://127.0.0.1:3000'
 
@@ -50,6 +56,14 @@ export const App = () => {
   const [selectedPipeline, setSelectedPipeline] = useState('')
   const lastFocus = useRef<HTMLElement | null>(null)
 
+  // Live values of panel/drawer/width state kept behind stable callbacks so the graph
+  // rebuild does not re-run (and regenerate every node's onInspect) just because an
+  // unrelated panel toggled.
+  const chatOpenRef = useRef(chatOpen)
+  chatOpenRef.current = chatOpen
+  const isNarrowRef = useRef(isNarrow)
+  isNarrowRef.current = isNarrow
+
   useEffect(() => {
     const pipelines = state.topology.pipelines
     if (pipelines.some((pipeline) => pipeline.name === selectedPipeline)) return
@@ -67,50 +81,56 @@ export const App = () => {
   }
 
   const openInspector = useCallback((data: GraphNodeData) => {
-    if (isNarrow && chatOpen) setChatOpen(false)
+    if (isNarrowRef.current && chatOpenRef.current) setChatOpen(false)
     rememberFocus()
     setInspected(data)
     setRightTab('inspector')
     setRightOpen(true)
-  }, [isNarrow, chatOpen])
+  }, [])
 
   const toggleActivity = useCallback(() => {
     if (!rightOpen || rightTab !== 'activity') {
-      if (isNarrow && chatOpen) setChatOpen(false)
+      if (isNarrowRef.current && chatOpenRef.current) setChatOpen(false)
       rememberFocus()
       setRightTab('activity')
       setRightOpen(true)
     } else {
       setRightOpen(false)
     }
-  }, [rightOpen, rightTab, isNarrow, chatOpen])
+  }, [rightOpen, rightTab])
 
   const toggleInspector = useCallback(() => {
     if (!rightOpen || rightTab !== 'inspector') {
-      if (isNarrow && chatOpen) setChatOpen(false)
+      if (isNarrowRef.current && chatOpenRef.current) setChatOpen(false)
       rememberFocus()
       setRightTab('inspector')
       setRightOpen(true)
     } else {
       setRightOpen(false)
     }
-  }, [rightOpen, rightTab, isNarrow, chatOpen])
+  }, [rightOpen, rightTab])
 
   const toggleChat = useCallback(() => {
     if (!chatOpen) {
-      if (isNarrow && rightOpen) setRightOpen(false)
+      if (isNarrowRef.current && rightOpen) setRightOpen(false)
       rememberFocus()
       setChatOpen(true)
     } else {
       setChatOpen(false)
     }
-  }, [chatOpen, isNarrow, rightOpen])
+  }, [chatOpen, rightOpen])
 
   const onTogglePause = useCallback(() => setPaused(!paused), [paused])
 
   const onToggleLog = useCallback(() => setLogOpen((v) => !v), [])
 
   const onClose = useCallback(() => setRightOpen(false), [])
+
+  // The graph is primary: warm its chunk as soon as the shell mounts so the first
+  // topology frame is always rendered by the real component, never a long spinner.
+  useEffect(() => {
+    void import('./components/graph/PipelineGraph.tsx')
+  }, [])
 
   // Escape closes the topmost overlay and returns focus to whoever opened it.
   const closePanel = useCallback((close: 'top' | 'chat') => {
@@ -154,16 +174,18 @@ export const App = () => {
           onOpenActivity={isNarrow ? toggleActivity : undefined}
         />
         <div className="graph-area">
-          <PipelineGraph
-            state={state}
-            selectedPipeline={selectedPipeline}
-            onSelectedPipelineChange={setSelectedPipeline}
-            onInspect={openInspector}
-            onToggleActivity={toggleActivity}
-            onToggleLog={onToggleLog}
-            activityOpen={rightOpen && rightTab === 'activity'}
-            logOpen={logOpen}
-          />
+          <Suspense fallback={<GraphLoadingSurface />}>
+            <PipelineGraph
+              state={state}
+              selectedPipeline={selectedPipeline}
+              onSelectedPipelineChange={setSelectedPipeline}
+              onInspect={openInspector}
+              onToggleActivity={toggleActivity}
+              onToggleLog={onToggleLog}
+              activityOpen={rightOpen && rightTab === 'activity'}
+              logOpen={logOpen}
+            />
+          </Suspense>
         </div>
         <Drawer open={rightOpen} onClose={onClose} title={rightTab === 'activity' ? 'LIVE ACTIVITY' : 'INSPECTOR'}>
           {rightTab === 'activity' ? (
@@ -188,6 +210,16 @@ export const App = () => {
     </div>
   )
 }
+
+/** Labelled surface shown while the graph chunk loads. */
+const GraphLoadingSurface = () => (
+  <div className="graph-loading-surface" role="status" aria-live="polite" aria-label="Loading graph">
+    <div className="graph-loading-copy">
+      <span className="graph-loading-title">Loading workflow graph</span>
+      <span className="graph-loading-note">rendering topology…</span>
+    </div>
+  </div>
+)
 
 const InspectedHeader = ({ data }: { data: GraphNodeData }) => (
   <div className="inspected">

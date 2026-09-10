@@ -125,11 +125,23 @@ function ifRouterProfile(d: Record<string, unknown>): string | undefined {
 
 /* ------------------------------------------------------------------ pipeline topology */
 
-/** Match an executed pipeline entry to the static definition that produced it. */
-export const matchTopology = (state: ProjectState, entry?: { steps?: PipelineStepEntry[] }): PipelineDefinition | undefined => {
+/** Match an executed pipeline entry to the static definition that produced it.
+ *
+ * Matching order:
+ *  1. Exact workflow definition name when available (from the run's profile).
+ *  2. Observed pipeline step signature (profile sequence).
+ *  3. Configured prefix of an in-progress run (executed steps are a prefix of a definition).
+ *  4. Explicit fallback to the first configured definition (an unmatched direct run).
+ */
+export const matchTopology = (state: ProjectState, entry?: { steps?: PipelineStepEntry[] }, runProfile?: string): PipelineDefinition | undefined => {
   const defs = state.topology.pipelines
   if (defs.length === 0) return undefined
   const profiles = (entry?.steps ?? []).map((s) => s.profile).filter(Boolean)
+  if (runProfile) {
+    for (const d of defs) {
+      if (d.name === runProfile) return d
+    }
+  }
   if (profiles.length === 0) return defs[0]
   for (const d of defs) {
     const dp = d.steps.map((s) => s.profile)
@@ -154,7 +166,7 @@ interface StepRow {
 
 /** Activity keeps composed inputs as structured mappings. Never coerce that array: its
  * default string form leaks `[object Object]` into an operator-facing graph. */
-const inputReference = (input: PipelineStepEntry['input'] | PipelineDefinition['steps'][number]['input']): string | undefined => {
+export const inputReference = (input: PipelineStepEntry['input'] | PipelineDefinition['steps'][number]['input']): string | undefined => {
   if (!input) return undefined
   if (typeof input === 'string') return input
   if (Array.isArray(input)) return input.map(({ name, ref }) => `${name} ← ${ref}`).join(' · ')
@@ -182,9 +194,6 @@ const mergeSteps = (executed: PipelineStepEntry[], def?: PipelineDefinition): St
   }
   return rows
 }
-
-const profileMode = (state: ProjectState, profile: string): string | undefined =>
-  state.topology.profiles.find((p) => p.name === profile)?.mode
 
 export const declaredRouteTargets = (state: ProjectState, profileName: string): string[] => {
   const profile = state.topology.profiles.find((candidate) => candidate.name === profileName)
@@ -225,12 +234,13 @@ const routerCandidates = (state: ProjectState, routerProfile: string, chosen?: s
   return list.slice(0, 6)
 }
 
-/** Route decision for this run: reducer-captured route.decided, else the router stage detail. */
+/** Route decision for this run: reducer-captured route.decided, else a router stage outside any step subtree. */
 export const routeForRun = (state: ProjectState, runId: string, tree: StageEntry[] = []): NonNullable<BuildCtx['route']> => {
   const re = [...state.routes].reverse().find((r) => r.runId === runId)
   if (re) return { profile: re.profile, confidence: re.confidence, reason: re.reason, ruleVsModel: re.ruleVsModel }
-  // Older activity buffers may predate run-scoped route.decided events. The stage tree is
-  // already scoped to this run, so its router result is an equally precise fallback.
+  // Older activity buffers may predate run-scoped route.decided events. The tree is
+  // already scoped to this run; walk only product-level router stages so a decision
+  // a workflow step made for itself never gets lifted to the workflow's route.
   const visit = (stages: StageEntry[]): NonNullable<BuildCtx['route']> | undefined => {
     for (const stage of stages) {
       if (stage.name === 'route') {
@@ -245,6 +255,10 @@ export const routeForRun = (state: ProjectState, runId: string, tree: StageEntry
           }
         }
       }
+      // A step wrapper owns its subtree: a routing stage nested inside an observed
+      // step is that step's own decision, never the run- or workflow-level route.
+      const stepOwned = typeof obj(stage.detail)?.['step'] === 'number'
+      if (stepOwned) continue
       const nested = visit(stage.children)
       if (nested) return nested
     }
@@ -468,10 +482,31 @@ function layout(chain: ChainItem[], ctx: BuildCtx): { nodes: GraphNode[]; edges:
 
 /* ------------------------------------------------------------------ builders */
 
+/** Destination decided by a step-local route stage, if the step's subtree has one. */
+const stepTreeRouteDecision = (root?: StageEntry): { profile?: string; confidence?: number; reason?: string } => {
+  if (!root) return {}
+  const visit = (s: StageEntry): { profile?: string; confidence?: number; reason?: string } | undefined => {
+    if (s.name === 'route') {
+      const d = obj(s.detail) ?? {}
+      const profile = asStr(d, 'profile') ?? asStr(d, 'task')
+      if (profile) {
+        const confidence = asNum(d, 'confidence')
+        return { profile, confidence: confidence != null && confidence > 1 ? confidence / 100 : confidence, reason: asStr(d, 'reason') }
+      }
+    }
+    for (const child of s.children) {
+      const found = visit(child)
+      if (found) return found
+    }
+    return undefined
+  }
+  return visit(root) ?? {}
+}
+
 const buildPipeline = (state: ProjectState, run: RunEntry, tree: StageEntry[], userExpanded: Set<string>): GraphBuild => {
   const pipelineRoot = tree.find((n) => n.name === 'pipeline' && n.parentId === undefined)
   const entry = state.pipelines.get(run.runId)
-  const def = matchTopology(state, entry)
+  const def = matchTopology(state, entry, run.profile)
   const rows = mergeSteps(entry?.steps ?? [], def)
   const ctx: BuildCtx = {
     state,
@@ -485,9 +520,23 @@ const buildPipeline = (state: ProjectState, run: RunEntry, tree: StageEntry[], u
 
   rows.forEach((row, i) => {
     const stage = pipelineRoot?.children.find((c) => stepIndexOf(c) === i)
-    const isRouter = profileMode(state, row.profile) === 'router'
+    // A step is a router only when ITS OWN stage subtree observed a routing decision
+    // that named a destination, or when the step's profile itself publishes routing
+    // topology (a declared router). A profile merely implemented with router mode is
+    // not the product workflow decision.
+    const stepRoute = stepTreeRouteDecision(stage)
+    const declaresRoutes = declaredRouteTargets(state, row.profile).length > 0
+    const isRouter = Boolean(stepRoute.profile) || declaresRoutes
     if (isRouter) {
-      const chosenProfile = ctx.route.profile
+      let chosenProfile = stepRoute.profile
+      let confidence = stepRoute.confidence
+      let reason = stepRoute.reason
+      // A declared router with no step-local evidence reports the run-scoped route.
+      if (!chosenProfile && declaresRoutes && ctx.route.profile) {
+        chosenProfile = ctx.route.profile
+        confidence = ctx.route.confidence
+        reason = ctx.route.reason
+      }
       const fan = routerCandidates(state, row.profile, chosenProfile)
         .filter((p) => p !== chosenProfile)
         .map((p) => {
@@ -505,9 +554,8 @@ const buildPipeline = (state: ProjectState, run: RunEntry, tree: StageEntry[], u
           router: true,
           wallMs: row.wallMs,
           inputRef: row.inputIsInitial ? 'initial' : undefined,
-          confidence: ctx.route.confidence,
-          ruleVsModel: ctx.route.ruleVsModel,
-          reason: ctx.route.reason,
+          confidence,
+          reason,
           chosen: Boolean(chosenProfile),
           chosenProfile,
           expanded: false,
@@ -587,7 +635,10 @@ export const buildConfiguredPipeline = (state: ProjectState, def: PipelineDefini
     { node: node('input', 'input', 'Prompt input', 'idle', { profile: def.name, operation: 'orchestrator', detailText: 'raw user input' }), children: [] },
   ]
   for (const [index, step] of def.steps.entries()) {
-    const isRouter = profileMode(state, step.profile) === 'router'
+    // Before activity no step-local decision exists, but a step whose profile
+    // publishes routing topology is a declared router: its declared targets
+    // stay visible in the configured view instead of vanishing.
+    const isRouter = declaredRouteTargets(state, step.profile).length > 0
     chain.push({
       node: node(`step-${index}`, 'step', step.name, 'idle', {
         stepNo: index,

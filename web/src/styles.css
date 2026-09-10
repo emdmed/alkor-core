@@ -81,6 +81,14 @@
   --caution: #dfbd78;
   --success: #46957e;
 
+  /* graph surface tokens (Phase 6: all graph colors flow through the token system) */
+  --graph-grid: oklch(90% 0.012 190);
+  --route-possible: oklch(86% 0.018 210);
+  --route-selected: var(--success);
+  --queued-surface: color-mix(in oklab, var(--muted) 32%, var(--card));
+  --failed-surface: color-mix(in oklab, var(--destructive) 3%, var(--card));
+  --minimap-viewport: color-mix(in oklab, var(--primary) 7%, transparent);
+
   /* event kind colours — same hues as `eventColor` in the terminal renderer */
   --ev-llm: #3b78a8;
   --ev-run: #32856e;
@@ -170,9 +178,9 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 }
 .health-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .health-state.tone-ok { color: var(--success); }
-.health-state.tone-ok .health-dot { background: #46957e; }
+.health-state.tone-ok .health-dot { background: var(--success); }
 .health-state.tone-warn { color: var(--ev-pipeline); }
-.health-state.tone-warn .health-dot { background: #dfbd78; }
+.health-state.tone-warn .health-dot { background: var(--caution); }
 .health-state.tone-err { color: var(--destructive); }
 .health-state.tone-err .health-dot { background: var(--destructive); }
 .header-health .health-chip { flex: none; font-size: 0.7rem; line-height: 1.2; }
@@ -212,7 +220,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 .status-icon svg { width: 13px; height: 13px; stroke-width: 1.8; }
 .status-metric dd { order: 1; margin: 0; color: var(--foreground); font-weight: 700; font-variant-numeric: tabular-nums; }
 .status-metric dt { order: 2; }
-.status-metric.is-live .status-icon, .status-metric.is-live dd { color: #46957e; }
+.status-metric.is-live .status-icon, .status-metric.is-live dd { color: var(--success); }
 .status-metric.is-danger .status-icon, .status-metric.is-danger dd { color: var(--destructive); }
 .status-detail { order: 3; margin-left: 2px; color: color-mix(in oklab, var(--muted-foreground) 72%, transparent); }
 
@@ -726,6 +734,28 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   z-index: 5;
 }
 
+/* Suspense fallback for the lazy-loaded graph chunk: a stable, labelled surface. */
+.graph-loading-surface {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in oklab, var(--background) 84%, var(--card));
+  margin: 10px 12px 12px;
+}
+.graph-loading-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.graph-loading-title { color: var(--foreground); font-weight: 700; font-size: 0.85rem; }
+.graph-loading-note { color: var(--muted-foreground); font-size: 0.7rem; }
+
 /* --- compact legend; kept outside the canvas so it never obscures the graph */
 .graph-legend {
   flex: none;
@@ -766,9 +796,9 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   border-radius: 0;
 }
 .legend-edge-data { border-top-color: var(--muted-foreground); }
-.legend-edge-branch { border-top-color: var(--success); }
-.legend-edge-ghost { border-top-color: var(--border); border-top-style: dashed; }
-.legend-edge-muted { border-top-color: var(--border); border-top-style: dashed; opacity: 0.3; }
+.legend-edge-branch { border-top-color: var(--route-selected); }
+.legend-edge-ghost { border-top-color: var(--route-possible); border-top-style: dashed; }
+.legend-edge-muted { border-top-color: var(--route-possible); border-top-style: dashed; opacity: 0.3; }
 .legend-work {
   display: inline-block;
   width: 8px;
@@ -867,6 +897,9 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   .drawer, .chat-panel, .log-reopen, .chat-tab { transition: none; }
   .status-spin { animation: none; }
   .g-profile .g-card { transition: none; }
+  /* ReactFlow animates "live" edges with a marching-steps dash; the running state
+     is still readable from the node's own status text and aria, so it stops moving. */
+  .react-flow__edge.animated .react-flow__edge-path { animation: none; }
 }
 
 /* Keyboard reach on shell chrome: a visible ring on every collapsible control. */
@@ -977,9 +1010,13 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 
 @media (max-width: 760px) {
   .app-header { grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px 10px; padding: 7px 10px; }
-  .header-health { justify-content: flex-end; }
+  .header-health { justify-content: flex-end; min-width: 0; gap: 7px; }
+  .health-state { font-size: 0.65rem; }
   .brand-host { display: none; }
   .health-state .health-dot { display: none; }
+  /* Truncate the model name instead of letting it widen the status row. */
+  .header-model { max-width: min(140px, 30vw); }
+  .header-error { max-width: min(160px, 34vw); }
   .connection-form { grid-column: 1 / -1; order: 5; display: grid; grid-template-columns: minmax(0, 1fr) auto; }
   .connection-input { width: 100%; min-width: 0; }
   .header-actions { padding-left: 0; border-left: 0; }
@@ -1000,6 +1037,12 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   .graph-tools { width: 100%; overflow-x: auto; max-width: 100%; justify-content: flex-end; }
   .control-group [data-slot="button"] { font-size: 0; gap: 0; }
   .control-group [data-slot="button"] svg { width: 15px; height: 15px; }
+  /* Mobile touch targets: keep the toolbar reachable at the 44px recommendation
+     without collapsing the graph space away. */
+  .control-group [data-slot="button"] { min-width: 40px; min-height: 38px; }
+  .run-chip { min-height: 32px; }
+  .app-header [data-slot="button"] { min-width: 44px; }
+  .connection-input { min-height: 38px; }
   .drawer { width: min(var(--w-drawer), calc(100vw - 36px)); z-index: 30; }
   .graph-minimap { display: none; }
   .graph-legend-note { display: none; }
@@ -1052,10 +1095,10 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 .g-input .g-card { background: color-mix(in oklab, var(--primary) 8%, var(--card)); }
 .g-output .g-card { background: color-mix(in oklab, var(--success) 9%, var(--card)); }
 .g-router .g-card {
-  border-color: #dfbd78;
+  border-color: var(--caution);
   background: color-mix(in oklab, var(--caution) 10%, var(--card));
 }
-.g-route .g-card { border-color: #dfbd78; background: color-mix(in oklab, var(--caution) 10%, var(--card)); }
+.g-route .g-card { border-color: var(--caution); background: color-mix(in oklab, var(--caution) 10%, var(--card)); }
 
 .g-chip {
   flex-direction: row;
@@ -1100,7 +1143,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 }
 .g-profile .g-card:has(.g-profile-route) {
   border-color: var(--success);
-  background: #f2fbf7;
+  background: var(--queued-surface);
 }
 .g-profile-route {
   color: var(--success);
@@ -1133,7 +1176,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 .g-glyph svg { width: 11px; height: 11px; stroke-width: 2.2; }
 .run-chip svg { width: 12px; height: 12px; }
 .graph-legend .g-glyph { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-.g-glyph.ok { color: #46957e; }
+.g-glyph.ok { color: var(--success); }
 .g-glyph.info { color: var(--primary); }
 .g-glyph.err { color: var(--destructive); }
 .g-glyph.faint { color: var(--muted-foreground); opacity: 0.6; }
@@ -1380,7 +1423,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 .graph-minimap-node.is-traversed { stroke: var(--success); opacity: 1; }
 .graph-minimap-node.is-muted { opacity: 0.48; }
 .graph-minimap-viewport {
-  fill: color-mix(in oklab, var(--primary) 7%, transparent);
+  fill: var(--minimap-viewport);
   stroke: var(--primary);
   stroke-width: 8px;
   vector-effect: non-scaling-stroke;
@@ -1402,7 +1445,7 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 
 /* --- compact pipeline node -------------------------------------------------- */
 .g-compact {
-  width: 420px;
+  width: 360px;
   box-sizing: border-box;
   background: var(--card);
   border: 1px solid var(--border);
@@ -1417,8 +1460,9 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 .g-compact:hover { border-color: var(--ring); }
 .g-compact.is-active { border-color: color-mix(in oklab, var(--success) 72%, var(--border)); }
 .g-compact.is-done { border-color: color-mix(in oklab, var(--success) 48%, var(--border)); background: color-mix(in oklab, var(--success) 3%, var(--card)); }
-.g-compact.is-failed { border-color: color-mix(in oklab, var(--destructive) 48%, var(--border)); background: color-mix(in oklab, var(--destructive) 3%, var(--card)); }
-.g-compact.is-idle { background: color-mix(in oklab, var(--muted) 32%, var(--card)); }
+.g-compact.is-failed { border-color: color-mix(in oklab, var(--destructive) 48%, var(--border)); background: var(--failed-surface); }
+.g-compact.is-idle { background: var(--queued-surface); }
+.g-compact.is-muted { opacity: 0.62; }
 
 .c-header {
   display: flex;
@@ -1449,6 +1493,27 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 .is-failed .c-header-status { background: color-mix(in oklab, var(--destructive) 10%, var(--card)); color: var(--destructive); }
 .is-idle .c-header-status { background: var(--muted); color: var(--muted-foreground); }
 .c-header-time { color: var(--muted-foreground); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.7rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.c-header-inspect {
+  flex: none;
+  margin-left: 6px;
+  padding: 3px 8px;
+  min-height: 22px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-family: inherit;
+  font-size: 0.7rem;
+  cursor: pointer;
+  position: relative;
+}
+.c-header-inspect::before {
+  content: '';
+  position: absolute;
+  inset: -8px -6px -8px -6px;
+}
+.c-header-inspect:hover { color: var(--primary); border-color: var(--ring); }
+.c-header-inspect:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
 
 .c-progress {
   height: 3px;
@@ -1496,6 +1561,10 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   color: var(--muted-foreground);
   font-size: 0.7rem;
   font-style: italic;
+}
+.c-empty-reason {
+  color: var(--destructive);
+  font-style: normal;
 }
 
 .c-step {
@@ -1567,6 +1636,14 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   background: transparent;
   color: var(--muted-foreground);
   cursor: pointer;
+  position: relative;
+}
+/* The compact rows reserve 36px; give the toggle a 44px effective hit area on
+   coarse pointers without shifting the deterministic layout measurements. */
+.c-step-toggle::before {
+  content: '';
+  position: absolute;
+  inset: -10px -6px -10px -6px;
 }
 .c-step-toggle:hover { background: var(--muted); color: var(--foreground); }
 .c-step-toggle:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
@@ -1646,3 +1723,10 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
 .react-flow__edge { cursor: default; }
 .react-flow__edge-path { stroke-linecap: round; }
 .react-flow__edge-text { fill: var(--muted-foreground); font-size: 0.7rem; }
+
+/* --- gateway node (product pipeline front door) ------------------------------- */
+.g-gateway { width: 340px; }
+.g-gateway .g-card {
+  background: color-mix(in oklab, var(--caution) 8%, var(--card));
+  border-color: color-mix(in oklab, var(--caution) 42%, var(--border));
+}

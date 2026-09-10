@@ -108,8 +108,8 @@ export const flowEdge = (
 ): GraphEdge => {
   const COLORS: Record<typeof kind, { stroke: string; width: number; dash?: string }> = {
     data: { stroke: 'var(--secondary-foreground)', width: 1.5 },
-    branch: { stroke: 'var(--success)', width: 2.4 },
-    ghost: { stroke: 'var(--border)', width: 1.2, dash: '5 4' },
+    branch: { stroke: 'var(--route-selected)', width: 2.4 },
+    ghost: { stroke: 'var(--route-possible)', width: 1.2, dash: '5 4' },
   }
   const c = COLORS[kind]
   return {
@@ -181,6 +181,7 @@ export const layoutHeightOf = (n: GraphNode): number => {
         + (d.inputRef ? 18 : 0)
         + ((d.childCount ?? 0) > 0 ? 24 : 0)
     case 'group': return 0
+    case 'gateway': return 56
     case 'compact-pipeline': {
       const stepCount = (n.data.steps as CompactStepData[] | undefined)?.length ?? 0
       const routerCount = ((n.data.steps as CompactStepData[] | undefined) ?? []).filter((step) => step.router && step.chosenProfile).length
@@ -199,7 +200,8 @@ export const layoutWidthOf = (n: GraphNode): number => {
     case 'branch': return CHIP_W
     case 'profile': return 196
     case 'group': return 0
-    case 'compact-pipeline': return 420
+    case 'gateway': return 340
+    case 'compact-pipeline': return 360
   }
 }
 
@@ -212,7 +214,7 @@ export const graphBounds = (nodes: GraphNode[], includeGroups = false): { left: 
   for (const n of nodes) {
     if (n.data.kind === 'group' && !includeGroups) continue
     const width = typeof n.style?.width === 'number' ? n.style.width : n.measured?.width ?? (
-      n.data.kind === 'step' ? STEP_W : n.data.kind === 'stage' || n.data.kind === 'route' ? STAGE_W : n.data.kind === 'profile' ? 196 : n.data.kind === 'branch' ? CHIP_W : n.data.kind === 'compact-pipeline' ? 420 : 240
+      n.data.kind === 'step' ? STEP_W : n.data.kind === 'stage' || n.data.kind === 'route' ? STAGE_W : n.data.kind === 'profile' ? 196 : n.data.kind === 'branch' ? CHIP_W : n.data.kind === 'compact-pipeline' ? 360 : n.data.kind === 'gateway' ? 340 : 240
     )
     const height = typeof n.style?.height === 'number' ? n.style.height : layoutHeightOf(n)
     left = Math.min(left, n.position.x)
