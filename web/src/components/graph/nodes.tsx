@@ -18,8 +18,8 @@ const StatusGlyph = ({ status }: { status: GraphNodeData['status'] }) =>
 
 /** Small coloured graph node card — every real (non-group) node is one of these. */
 const Card = ({ data, children }: { data: GraphNodeData; children?: React.ReactNode }) => (
-  <div className={`g-card ${data.kind === 'branch' ? 'g-chip' : ''} ${data.operation ? `g-work-${data.operation}` : ''} ${statusClass(data.status)}${data.traversed ? ' g-traversed' : ''}${data.current ? ' g-current' : ''}${data.muted ? ' g-muted-path' : ''}`}>
-    {data.current && <span className="g-now" aria-label="Current operation">NOW</span>}
+  <div className={`g-card ${data.kind === 'branch' ? 'g-chip' : ''} ${data.operation ? `g-work-${data.operation}` : ''} ${statusClass(data.status)}${data.traversed ? ' g-traversed' : ''}${data.currentOperation ? ' g-current' : ''}${data.muted ? ' g-muted-path' : ''}`}>
+    {data.currentOperation && <span className="g-now" aria-label="Current operation">NOW</span>}
     {children}
   </div>
 )

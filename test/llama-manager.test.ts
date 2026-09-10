@@ -168,6 +168,27 @@ test('a pinned backend is exempt from the idle sweep', async () => {
   fake.stopAll()
 })
 
+test('a workflow reservation keeps a later backend alive between long pipeline steps', async () => {
+  const { fake, spawn } = makeWorld()
+  const url = 'http://127.0.0.1:18114'
+  const m = new LlamaManager({ idleMs: 10_000, spawnArgs: [], pollMs: 10, startTimeoutMs: 2000, spawn })
+  m.register({ baseUrl: url, model: '~/models/verifier.gguf' })
+
+  assert.equal(await m.ensure(url), true)
+  const reservation = m.track(url)
+  reservation.acquire()
+  ;(m as any).entries.get(url).lastUsed = Date.now() - 60_000
+
+  await m.sweep()
+  assert.equal(m.status(url).state, 'running', 'reserved future step survives the idle sweep')
+
+  reservation.release()
+  ;(m as any).entries.get(url).lastUsed = Date.now() - 60_000
+  await m.sweep()
+  assert.equal(m.status(url).state, 'stopped', 'backend becomes sweepable after the workflow')
+  fake.stopAll()
+})
+
 test('withTouching bumps in-flight around a call so a long generation is not swept', async () => {
   let released = false
   const gate = new Promise<void>((r) => setTimeout(r, 20))

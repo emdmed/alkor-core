@@ -60,8 +60,10 @@ export interface GraphNodeData {
   onToggle?: () => void
   /** Injected by the view layer: opens the inspector on this node. */
   onInspect?: () => void
-  /** The most specific active node for this run; called out by the operating view. */
+  /** This node belongs to the active execution lineage. */
   current?: boolean
+  /** The single most specific visible operation; this node alone receives the NOW badge. */
+  currentOperation?: boolean
   /** This node received data during the selected run; persists after completion. */
   traversed?: boolean
   /** ReactFlow's `Node<T>` requires an index signature; keep it honest. */

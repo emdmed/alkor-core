@@ -146,7 +146,10 @@ export interface PipelineDefinition {
 }
 
 export interface TopologySnapshot {
+  /** The product-level front door that owns routing and the workflow catalogue. */
+  pipeline?: { router: string; workflows: string[]; defaultWorkflow: string }
   profiles: ProfileEntry[]
+  /** Workflow recipes. The key remains `pipelines` for activity-spec-1 compatibility. */
   pipelines: PipelineDefinition[]
 }
 

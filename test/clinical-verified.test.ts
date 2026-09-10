@@ -9,7 +9,13 @@ import { nullTrace } from '../src/core/trace.ts'
 import { loadConfig, requireProfile } from '../src/core/config.ts'
 import { loadPack, resolvePackRoot } from '../src/core/pack.ts'
 import { PROFILE } from '../src/profiles/clinical-verified/profile.ts'
+import { runPipelineCaseEval } from '../src/profiles/clinical-verified/eval.ts'
+import { PROFILE as CLINICAL_PROFILE } from '../src/profiles/clinical/profile.ts'
+import { PROFILE as VERIFIER_PROFILE } from '../src/profiles/verifier/profile.ts'
 import { emptyTally, absorb, ratio } from '../src/profiles/clinical/scorer.ts'
+import { buildPipeline, runPipeline } from '../src/modes/pipeline.ts'
+import type { ProfileModule } from '../src/core/profile.ts'
+import type { ChatOptions, Provider } from '../src/core/client.ts'
 
 test('smoke test passes when pipeline steps are well-formed', async () => {
   const cfg = loadConfig()
@@ -22,14 +28,138 @@ test('smoke test passes when pipeline steps are well-formed', async () => {
     options: {},
   })
   assert.equal(verdict.pass, true)
-  assert.ok(verdict.summary.includes('2 pipeline steps validated'))
+  assert.ok(verdict.summary.includes('3 pipeline steps validated'))
 })
 
-test('pipeline passes the clinical constrained completion to the verifier', () => {
+test('pipeline passes the clinical structured output to the verifier', () => {
   const cfg = loadConfig()
   const config = requireProfile(cfg, 'clinical-verified')
   const steps = config.steps as Array<{ input?: unknown }>
-  assert.deepEqual(steps[1]?.input, { document: 'initial', extraction: 'step-0.raw' })
+  assert.deepEqual(steps[1]?.input, { document: 'initial', extraction: 'step-0.output' })
+  assert.equal(steps[2]?.input, 'step-1.output')
+})
+
+test('multi-task clinical output reaches the verifier when there is no single raw completion', async () => {
+  const combined = {
+    routes: ['shock-extraction', 'shock'],
+    results: {
+      'shock-extraction': { ok: true, output: { exam: { systolic: 68 } } },
+      shock: { ok: true, output: { shock_category: 'cardiogenic' } },
+    },
+  }
+  let adapterInput: Record<string, unknown> | undefined
+  const adapter: ProfileModule = {
+    name: 'clinical-verifier',
+    mode: 'router',
+    needsPack: false,
+    async review(ctx) {
+      adapterInput = JSON.parse(ctx.input.kind === 'text' ? ctx.input.text : '')
+      return { text: 'prepared', ok: true, report: adapterInput }
+    },
+    async runEval() {
+      return { pass: true, summary: 'not used' }
+    },
+  }
+  let verifierInput: Record<string, unknown> | undefined
+  const clinical: ProfileModule = {
+    name: 'clinical',
+    mode: 'extract',
+    needsPack: false,
+    async review() {
+      return { text: JSON.stringify(combined), ok: true, report: combined }
+    },
+    async runEval() {
+      return { pass: true, summary: 'not used' }
+    },
+  }
+  const verifier: ProfileModule = {
+    name: 'verifier',
+    mode: 'extract',
+    needsPack: false,
+    async review(ctx) {
+      verifierInput = JSON.parse(ctx.input.kind === 'text' ? ctx.input.text : '')
+      return { text: 'verified', ok: true, report: { verified: true } }
+    },
+    async runEval() {
+      return { pass: true, summary: 'not used' }
+    },
+  }
+  const cfg = loadConfig()
+  const configuredSteps = requireProfile(cfg, 'clinical-verified').steps as Parameters<typeof buildPipeline>[0]
+  const steps = buildPipeline(configuredSteps)
+  const result = await runPipeline({
+    initialInput: 'synthetic clinical note',
+    steps,
+    profiles: new Map([['clinical', clinical], ['clinical-verifier', adapter], ['verifier', verifier]]),
+    packs: new Map([['clinical', undefined], ['clinical-verifier', undefined], ['verifier', undefined]]),
+    baseUrls: new Map([['clinical', undefined], ['clinical-verifier', undefined], ['verifier', undefined]]),
+  })
+
+  assert.equal(result.stoppedEarly, false)
+  assert.equal(result.steps.length, 3)
+  assert.deepEqual(adapterInput, { document: 'synthetic clinical note', extraction: combined })
+  assert.deepEqual(verifierInput, adapterInput)
+})
+
+test('full configured pipeline verifies shock derivations before source verification', async () => {
+  const clinicalPack = loadPack(resolvePackRoot('clinical', { configured: 'packs/clinical', base: process.cwd() }))
+  const note = clinicalPack.document('sh-02-cardiogenic-classic')
+  const verifierPrompts: string[] = []
+  const replies = {
+    'shock-extraction': JSON.stringify({
+      hypotension: { systolic: 68, diastolic: 50, duration_minutes: 200 },
+      heart_rate: 115,
+      skin_temperature: 'cool',
+      jugular_venous_pressure: 'elevated',
+      capillary_refill: 'brisk',
+      pulse_volume: 'thready',
+      lung_exam: 'bilateral_crackles',
+    }),
+    shock: JSON.stringify({
+      skin_temperature: 'cool',
+      jugular_venous_pressure: 'elevated',
+      shock_category: 'cardiogenic',
+      supporting_findings: ['lung_exam'],
+      discordant_findings: ['capillary_refill'],
+      indeterminate_reason: null,
+      assessment_confidence: 0.95,
+      notes: null,
+    }),
+    extraction: JSON.stringify({
+      verified: true,
+      confidence: 0.95,
+      issues: [],
+    }),
+  } as const
+  const provider: Provider = {
+    async chat(o: ChatOptions): Promise<string> {
+      if (o.label === 'extraction') verifierPrompts.push(o.userPrompt)
+      return replies[o.label as keyof typeof replies]
+    },
+    async toolChat() { return { content: '', toolCalls: [] } },
+    async streamChat() { return { content: '', toolCalls: [], chunks: 0 } },
+    async identify() { return { model: 'pipeline-test-stub', identified: true } },
+  }
+
+  // Prove this is the production profile chain, not the lightweight mock flow used by the
+  // routing tests. The custom provider replaces only transport/model output.
+  assert.equal(CLINICAL_PROFILE.name, 'clinical')
+  assert.equal(VERIFIER_PROFILE.name, 'verifier')
+  const { verdict, pipeline } = await runPipelineCaseEval({ input: note, trace: nullTrace(), provider })
+
+  assert.equal(verdict.pass, true)
+  assert.equal(pipeline.stoppedEarly, false)
+  assert.deepEqual(pipeline.steps.map((step) => [step.name, step.ok]), [
+    ['extract', true],
+    ['verify-derived', true],
+    ['verify-source', true],
+  ])
+  assert.equal(verifierPrompts.length, 1)
+  assert.match(verifierPrompts[0]!, /not_assessed/)
+  assert.doesNotMatch(verifierPrompts[0]!, /"shockIndex":\s*1\.69/)
+  assert.doesNotMatch(verifierPrompts[0]!, /"shock_category":\s*"cardiogenic"/)
+  assert.doesNotMatch(note, /shockIndex|shock_category/)
+  assert.match(verdict.summary, /3\/3 configured steps completed/)
 })
 
 test('smoke test fails when pipeline config has no steps', async () => {

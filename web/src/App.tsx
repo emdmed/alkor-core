@@ -145,8 +145,6 @@ export const App = () => {
           onToggle={toggleChat}
           state={state}
           run={run}
-          selectedProfile={selectedPipeline}
-          onSelectedProfileChange={setSelectedPipeline}
           onOpenActivity={isNarrow ? toggleActivity : undefined}
         />
         <div className="graph-area">

@@ -48,10 +48,23 @@ export interface ProfileConfig {
   [key: string]: unknown
 }
 
+/**
+ * The deployment's front door. A pipeline owns the router and the complete catalogue of
+ * workflows it may select; the entries themselves remain profile-backed recipes so old
+ * out-of-tree `mode = "pipeline"` definitions keep loading unchanged.
+ */
+export interface PipelineConfig {
+  router: string
+  workflows: string[]
+  defaultWorkflow: string
+}
+
 export interface Config {
   /** Directory holding profiles.toml — the base for resolving relative pack paths. */
   base: string
   profiles: Record<string, ProfileConfig>
+  /** Present when this deployment exposes an automatic route-then-run front door. */
+  pipeline?: PipelineConfig
 }
 
 export class ConfigError extends Error {}
@@ -82,11 +95,16 @@ export const loadConfig = (explicitPath?: string): Config => {
   }
 
   const profiles: Record<string, ProfileConfig> = {}
+  let pipelineRaw: Record<string, unknown> | undefined
   for (const [name, value] of Object.entries(raw)) {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) {
       throw new ConfigError(`${path}: '${name}' is not a profile table`)
     }
     const t = value as Record<string, unknown>
+    if (name === 'pipeline' && t.mode === undefined) {
+      pipelineRaw = t
+      continue
+    }
     if (t.mode !== 'extract' && t.mode !== 'agentic' && t.mode !== 'router' && t.mode !== 'pipeline') {
       throw new ConfigError(`${path}: profile '${name}' has mode '${t.mode}' (expected 'extract', 'agentic', 'router', or 'pipeline')`)
     }
@@ -94,7 +112,30 @@ export const loadConfig = (explicitPath?: string): Config => {
   }
   if (!Object.keys(profiles).length) throw new ConfigError(`${path} declares no profiles`)
 
-  return { base: dirname(path), profiles }
+  let pipeline: PipelineConfig | undefined
+  if (pipelineRaw) {
+    const router = typeof pipelineRaw.router === 'string' ? pipelineRaw.router : ''
+    const workflows = Array.isArray(pipelineRaw.workflows)
+      ? pipelineRaw.workflows.filter((name): name is string => typeof name === 'string')
+      : []
+    const defaultWorkflow = typeof pipelineRaw.default === 'string' ? pipelineRaw.default : workflows[0] ?? ''
+    if (!router) throw new ConfigError(`${path}: pipeline.router must name a router profile`)
+    if (!profiles[router] || profiles[router].mode !== 'router') {
+      throw new ConfigError(`${path}: pipeline router '${router}' is not a declared router profile`)
+    }
+    if (workflows.length === 0) throw new ConfigError(`${path}: pipeline.workflows must name at least one workflow`)
+    for (const workflow of workflows) {
+      if (!profiles[workflow] || profiles[workflow].mode !== 'pipeline') {
+        throw new ConfigError(`${path}: pipeline workflow '${workflow}' is not a declared pipeline-mode profile`)
+      }
+    }
+    if (!workflows.includes(defaultWorkflow)) {
+      throw new ConfigError(`${path}: pipeline default '${defaultWorkflow}' is not in pipeline.workflows`)
+    }
+    pipeline = { router, workflows, defaultWorkflow }
+  }
+
+  return { base: dirname(path), profiles, pipeline }
 }
 
 export const requireProfile = (cfg: Config, name: string): ProfileConfig => {

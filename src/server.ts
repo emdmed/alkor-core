@@ -9,6 +9,7 @@
  *   GET  /health                    — list loaded profiles, active sessions, and activity stats
  *   GET  /events                    — SSE stream of activity events (metadata-only)
  *   POST /route                     — classify input (uses router mode directly)
+ *   POST /pipeline                  — route to and execute one workflow
  *   POST /run                       — execute a profile against input
  *   POST /session                   — create a new conversational session
  *   POST /session/:id/send          — send a message to a session
@@ -444,6 +445,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
         ok(res, {
           profiles: Object.keys(cfg.profiles),
           topology: {
+            pipeline: cfg.pipeline,
             profiles: topologyProfiles,
             pipelines: Object.values(cfg.profiles)
               .filter((profile) => profile.mode === 'pipeline')
@@ -554,21 +556,25 @@ export const createServer = async (configPath?: string, options: ServerOptions =
         const gateway = gatewayProfiles[0]
         if (!rules && !explicitModel && gateway) {
           const { profile, config: profileConfig } = await loadProfile(gateway.name)
-          const gatewayUrl = (profileConfig.url ?? process.env.LLAMA_URL ?? DEFAULT_URL).replace(/\/+$/, '')
+          const gatewayUrl = profileConfig.url?.replace(/\/+$/, '')
 
-          const ready = await manager.ensure(gatewayUrl)
-          if (!ready) {
-            backendReachability.set(gatewayUrl, false)
-            serviceUnavailable(
-              res,
-              `no model backend is reachable at ${gatewayUrl} — ${manager.describe(gatewayUrl)}. ` +
-                'Start llama-server on it first (scripts/llama-server.sh), or check MEDEXTRACT_MANAGE_MODELS.',
-            )
-            done(503)
-            return
+          // No URL means this gateway is intentionally rules-only. A configured URL opts
+          // the router into model fallback and therefore into managed-backend preflight.
+          if (gatewayUrl) {
+            const ready = await manager.ensure(gatewayUrl)
+            if (!ready) {
+              backendReachability.set(gatewayUrl, false)
+              serviceUnavailable(
+                res,
+                `no model backend is reachable at ${gatewayUrl} — ${manager.describe(gatewayUrl)}. ` +
+                  'Start llama-server on it first (scripts/llama-server.sh), or check MEDEXTRACT_MANAGE_MODELS.',
+              )
+              done(503)
+              return
+            }
+            backendReachability.set(gatewayUrl, true)
+            await emitModelIdentified(gatewayUrl)
           }
-          backendReachability.set(gatewayUrl, true)
-          await emitModelIdentified(gatewayUrl)
 
           if (!profile.review) {
             serverError(res, `pinned gateway profile '${gateway.name}' exposes no review (mode ${profile.mode})`)
@@ -605,12 +611,14 @@ export const createServer = async (configPath?: string, options: ServerOptions =
         return
       }
 
-      // --- Run a profile -------------------------------------------------------
-      if (method === 'POST' && url.pathname === '/run') {
+      // --- Run the product pipeline or one profile directly --------------------
+      if (method === 'POST' && (url.pathname === '/pipeline' || url.pathname === '/run')) {
         const body = (await readBody(req)) as Record<string, unknown> | undefined
-        const profileName = String(body?.profile ?? '')
         const input = String(body?.input ?? '')
-        if (!profileName) {
+        const automatic = url.pathname === '/pipeline'
+        let profileName = String(body?.profile ?? '')
+        let pipelineRoute: RouteResult | undefined
+        if (!automatic && !profileName) {
           bad(res, 'profile is required')
           done(400)
           return
@@ -622,10 +630,86 @@ export const createServer = async (configPath?: string, options: ServerOptions =
         }
 
         const runId = randomUUID()
+        if (automatic) {
+          if (!cfg.pipeline) {
+            bad(res, 'no product pipeline is configured')
+            done(400)
+            return
+          }
+          const forcedWorkflow = typeof body?.workflow === 'string' ? body.workflow : undefined
+          if (forcedWorkflow) {
+            if (!cfg.pipeline.workflows.includes(forcedWorkflow)) {
+              bad(res, `workflow '${forcedWorkflow}' is not in the pipeline catalogue`)
+              done(400)
+              return
+            }
+            pipelineRoute = { profile: forcedWorkflow, confidence: 1, reason: 'manual workflow override' }
+          } else {
+            const gateway = await loadProfile(cfg.pipeline.router)
+            if (!gateway.profile.review) {
+              serverError(res, `pipeline router '${cfg.pipeline.router}' exposes no review`)
+              done(500)
+              return
+            }
+            // A workflow router without a URL is deliberately rules-only. Supplying a URL
+            // opts it into the same model fallback lifecycle as any other router profile.
+            const gatewayUrl = gateway.config.url as string | undefined
+            if (gatewayUrl) {
+              const ready = await manager.ensure(gatewayUrl)
+              backendReachability.set(gatewayUrl, ready)
+              if (!ready) {
+                serviceUnavailable(
+                  res,
+                  `no model backend is reachable at ${gatewayUrl} — ${manager.describe(gatewayUrl)}. ` +
+                    'Start llama-server on it first (scripts/llama-server.sh), or check MEDEXTRACT_MANAGE_MODELS.',
+                )
+                done(503)
+                return
+              }
+              await emitModelIdentified(gatewayUrl)
+            }
+            const review = await withActivityScope({ runId }, () => gateway.profile.review!({
+              pack: undefined,
+              baseUrl: gatewayUrl,
+              trace: nullTrace(),
+              input: { kind: 'text', text: input, label: 'pipeline-input' },
+              options: {},
+              provider: wrappedProvider,
+              activity,
+            }))
+            if (!review.report || typeof review.report !== 'object') {
+              serverError(res, `pipeline router '${cfg.pipeline.router}' produced no workflow route`)
+              done(500)
+              return
+            }
+            pipelineRoute = review.report as RouteResult
+          }
+          if (!cfg.pipeline.workflows.includes(pipelineRoute.profile)) {
+            serverError(res, `pipeline router selected workflow '${pipelineRoute.profile}' outside its catalogue`)
+            done(500)
+            return
+          }
+          profileName = pipelineRoute.profile
+          activity.emit({
+            kind: 'route.decided',
+            runId,
+            profile: profileName,
+            confidence: pipelineRoute.confidence,
+            reason: pipelineRoute.reason,
+            ruleVsModel: pipelineRoute.reason.startsWith('model:') ? 'model' : 'rule',
+          })
+        }
+
         const { profile, config: profileConfig } = await loadProfile(profileName)
         const pack = await loadPackForProfile(profileName, profile, profileConfig)
         const baseUrl = profileConfig.url as string | undefined
         const options = (body?.options ?? {}) as Record<string, unknown>
+        const respond = <T extends object>(result: T, output: unknown) => ok(
+          res,
+          automatic
+            ? { ...runResult(result, output), workflow: profileName, route: pipelineRoute }
+            : runResult(result, output),
+        )
 
         // A run that would need a model can see the check coming: a backend that can never
         // answer the FIRST step would fail with a buried "cannot reach server" message and
@@ -708,7 +792,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
                 profile: profileName,
                 wallMs: performance.now() - runStartedAt,
               })
-              ok(res, runResult(result, result.report ?? result.raw ?? result.text))
+              respond(result, result.report ?? result.raw ?? result.text)
               done(200)
               return
             }
@@ -736,7 +820,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
                 profile: profileName,
                 wallMs: performance.now() - runStartedAt,
               })
-              ok(res, runResult(result, result.answer ?? result.error ?? result))
+              respond(result, result.answer ?? result.error ?? result)
               done(200)
               return
             }
@@ -782,24 +866,37 @@ export const createServer = async (configPath?: string, options: ServerOptions =
               packs.set(profileName, pack)
               baseUrls.set(profileName, baseUrl)
 
-              const result = await runPipeline({
-                initialInput: input,
-                steps: pipelineSteps,
-                profiles,
-                packs,
-                baseUrls,
-                trace: nullTrace(),
-                contextDir: options.contextDir as string | undefined,
-                runStep: options.step !== undefined ? Number(options.step) : undefined,
-                provider: wrappedProvider,
-                activity,
-              })
+              // Preflight starts every backend before the first step. A later backend can
+              // then wait longer than the idle window while an earlier model generates
+              // (the clinical shock route takes >120s on the reference hardware). Reserve
+              // the complete set for the workflow so the sweeper cannot stop step N+1
+              // before the pipeline reaches it. Individual provider calls still touch the
+              // backend and the reservations are released as soon as the workflow ends.
+              const reservations = [...neededBackends].map((url) => manager.track(url))
+              for (const reservation of reservations) reservation.acquire()
+              let result: Awaited<ReturnType<typeof runPipeline>>
+              try {
+                result = await runPipeline({
+                  initialInput: input,
+                  steps: pipelineSteps,
+                  profiles,
+                  packs,
+                  baseUrls,
+                  trace: nullTrace(),
+                  contextDir: options.contextDir as string | undefined,
+                  runStep: options.step !== undefined ? Number(options.step) : undefined,
+                  provider: wrappedProvider,
+                  activity,
+                })
+              } finally {
+                for (const reservation of reservations) reservation.release()
+              }
               activity.emit({
                 kind: 'run.completed',
                 profile: profileName,
                 wallMs: performance.now() - runStartedAt,
               })
-              ok(res, runResult(result, result.final))
+              respond(result, result.final)
               done(200)
               return
             }

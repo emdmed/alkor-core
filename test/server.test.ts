@@ -49,13 +49,24 @@ test('health endpoint returns profiles and session count', async () => {
   assert.ok((data as any).profiles.includes('clinical'))
   assert.ok((data as any).profiles.includes('router'))
   assert.ok(Array.isArray((data as any).topology?.pipelines))
+  assert.deepEqual((data as any).topology?.pipeline, {
+    router: 'workflow-router',
+    workflows: ['clinical-verified', 'sepsis-verified'],
+    defaultWorkflow: 'clinical-verified',
+  })
   const topologyProfiles = (data as any).topology?.profiles as any[]
   const router = topologyProfiles.find((profile) => profile.name === 'router')
-  assert.equal(router.pinned, true)
+  assert.equal(router.pinned, false)
   const routerTargets = router.topology.stages
     .flatMap((stage: any) => stage.routes ?? [])
     .map((route: any) => route.targetProfile)
   assert.deepEqual(routerTargets, ['clinical', 'transcriptor', 'verifier'])
+  const workflowRouter = topologyProfiles.find((profile) => profile.name === 'workflow-router')
+  assert.equal(workflowRouter.pinned, true)
+  const workflowTargets = workflowRouter.topology.stages
+    .flatMap((stage: any) => stage.routes ?? [])
+    .map((route: any) => route.targetProfile)
+  assert.deepEqual(workflowTargets, ['clinical-verified', 'sepsis-verified'])
   const clinical = topologyProfiles.find((profile) => profile.name === 'clinical')
   assert.ok(clinical.topology.stages[0].routes.some((route: any) => route.name === 'shock-extraction'))
   assert.equal(clinical.topology.stages[0].routes.find((route: any) => route.name === 'shock-extraction').feeds, 'shock')
@@ -63,8 +74,11 @@ test('health endpoint returns profiles and session count', async () => {
   const verified = (data as any).topology.pipelines.find((pipeline: any) => pipeline.name === 'clinical-verified')
   assert.deepEqual(verified.steps[1].input, [
     { name: 'document', ref: 'initial' },
-    { name: 'extraction', ref: 'step-0.raw' },
+    { name: 'extraction', ref: 'step-0.output' },
   ])
+  assert.equal(verified.steps[1].profile, 'clinical-verifier')
+  assert.equal(verified.steps[2].profile, 'verifier')
+  assert.equal(verified.steps[2].input, 'step-1.output')
   assert.equal(typeof (data as any).sessions, 'number')
   await close()
 })
@@ -441,6 +455,87 @@ test('run endpoint requires input', async () => {
   assert.equal(status, 400)
   assert.ok((data as any).error.includes('input is required'))
   await close()
+})
+
+test('pipeline endpoint routes to a workflow and supports an explicit diagnostic override', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'medextract-pipeline-front-door-test-'))
+  const tomlPath = join(dir, 'profiles.toml')
+  const routerPath = join(dir, 'workflow-router.mjs')
+  const workflowPath = join(dir, 'workflow.mjs')
+  const workerPath = join(dir, 'worker.mjs')
+  writeFileSync(
+    tomlPath,
+    `[pipeline]
+router = "choose"
+workflows = ["alpha", "beta"]
+default = "alpha"
+
+[choose]
+mode = "router"
+module = "workflow-router.mjs"
+
+[alpha]
+mode = "pipeline"
+module = "workflow.mjs"
+steps = [{ name = "work", profile = "worker", input = "initial" }]
+
+[beta]
+mode = "pipeline"
+module = "workflow.mjs"
+steps = [{ name = "work", profile = "worker", input = "initial" }]
+
+[worker]
+mode = "router"
+module = "worker.mjs"
+`,
+  )
+  writeFileSync(
+    routerPath,
+    `export const PROFILE = {
+  name: 'choose', mode: 'router', needsPack: false,
+  async review(ctx) {
+    const input = ctx.input.text
+    const profile = input.includes('beta') ? 'beta' : 'alpha'
+    return { text: profile, ok: true, report: { profile, confidence: 1, reason: 'rule: test' } }
+  },
+  async runEval() { return { pass: true, summary: 'test' } },
+}
+`,
+  )
+  writeFileSync(
+    workflowPath,
+    `export const PROFILE = {
+  name: 'workflow', mode: 'pipeline', needsPack: false,
+  async runEval() { return { pass: true, summary: 'test' } },
+}
+`,
+  )
+  writeFileSync(
+    workerPath,
+    `export const PROFILE = {
+  name: 'worker', mode: 'router', needsPack: false,
+  async review(ctx) { return { text: 'done', ok: true, report: { received: ctx.input.text } } },
+  async runEval() { return { pass: true, summary: 'test' } },
+}
+`,
+  )
+
+  const { url, close } = await startServer(tomlPath)
+  try {
+    const routed = await request(`${url}/pipeline`, 'POST', { input: 'choose beta' })
+    assert.equal(routed.status, 200)
+    assert.equal((routed.data as any).workflow, 'beta')
+    assert.equal((routed.data as any).route.profile, 'beta')
+    assert.equal((routed.data as any).final.received, 'choose beta')
+
+    const forced = await request(`${url}/pipeline`, 'POST', { input: 'choose beta', workflow: 'alpha' })
+    assert.equal(forced.status, 200)
+    assert.equal((forced.data as any).workflow, 'alpha')
+    assert.equal((forced.data as any).route.reason, 'manual workflow override')
+  } finally {
+    await close()
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('session create, reset, load, and delete', async () => {

@@ -273,6 +273,24 @@ const markChainCurrentLineage = (chain: ChainItem[]): void => {
   for (const item of chain) markCurrentLineage(item)
 }
 
+/**
+ * Pick one visible operation from the active lineage. When detail is expanded, the
+ * deepest stage wins; when it is collapsed, the enclosing step becomes the visible
+ * current operation. Ancestors remain active without each claiming a NOW badge.
+ */
+export const markCurrentOperation = (nodes: GraphNode[]): void => {
+  const visible = nodes.filter((candidate) => candidate.data.kind !== 'group' && candidate.data.current)
+  const deepestFirst = [...visible].reverse()
+  const operation =
+    visible.find((candidate) => candidate.data.currentOperation) ??
+    deepestFirst.find((candidate) => candidate.data.status === 'active' && (candidate.data.kind === 'stage' || candidate.data.kind === 'route')) ??
+    deepestFirst.find((candidate) => candidate.data.status === 'active') ??
+    visible[0]
+  for (const candidate of nodes) {
+    candidate.data.currentOperation = candidate.id === operation?.id
+  }
+}
+
 /* ------------------------------------------------------------------ trail layout */
 
 const expandable = (item: ChainItem, ctx: BuildCtx): boolean =>
@@ -550,7 +568,9 @@ export const buildGraph = (state: ProjectState, runId: string, expanded: Set<str
   const pipelineRoot = tree.find((n) => n.name === 'pipeline' && n.parentId === undefined)
   const pipelineEntry = state.pipelines.get(runId)
   const isPipeline = Boolean(pipelineRoot || (pipelineEntry && pipelineEntry.steps.length > 0))
-  return isPipeline ? buildPipeline(state, run, tree, expanded) : buildStages(state, run, tree, expanded)
+  const graph = isPipeline ? buildPipeline(state, run, tree, expanded) : buildStages(state, run, tree, expanded)
+  markCurrentOperation(graph.nodes)
+  return graph
 }
 
 /** Build an idle pipeline from configuration alone, before its first activity event. */

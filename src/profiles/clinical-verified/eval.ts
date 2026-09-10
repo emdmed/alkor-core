@@ -12,7 +12,7 @@
  *
  * The verified arm is run manually (internally routed extraction → verify) rather than
  * through the pipeline mode. The pipeline's verify step now composes both refs
- * (`{document = "initial", extraction = "step-0.raw"}` in profiles.toml), and this
+ * (`{document = "initial", extraction = "step-0.output"}` in profiles.toml), and this
  * transform exists because the clinical step's report is NOT the flat {value, quote} shape
  * the verifier is graded on: the vital-signs task reports nothing, and shock-extraction
  * reports exam fields that carry no quotes. Until a report is verifier-shaped, feeding the
@@ -23,10 +23,12 @@
 import type { Pack } from '../../core/pack.ts'
 import type { Trace } from '../../core/trace.ts'
 import type { ProfileModule, EvalContext, EvalVerdict, ReviewResult } from '../../core/profile.ts'
+import type { Provider } from '../../core/client.ts'
 import { loadConfig, requireProfile } from '../../core/config.ts'
 import { loadPack, resolvePackRoot } from '../../core/pack.ts'
 import { loadProfileModule, resolveProfileModule } from '../../core/profile.ts'
 import { identifyServer, UNIDENTIFIED, type ServerIdentity } from '../../core/client.ts'
+import { buildPipeline, runPipeline, type PipelineResult } from '../../modes/pipeline.ts'
 import { HARNESS_VERSION } from '../../core/version.ts'
 import { vitalRequest } from '../../profiles/clinical/contracts.ts'
 import { parseVitalSigns } from '../../profiles/clinical/extraction.ts'
@@ -35,6 +37,80 @@ import { scoreCase, scoreFailure, emptyTally, absorb, type VitalTally, type Miss
 import { reviewVitalSigns } from '../../profiles/clinical/review.ts'
 import { routeClinicalShape } from '../../profiles/clinical/clinical-router.ts'
 import { loadSettings } from '../../profiles/clinical/settings.ts'
+
+export interface PipelineCaseEvalOptions {
+  input: string
+  trace: Trace
+  provider?: Provider
+  profileName?: string
+  options?: Record<string, unknown>
+}
+
+export interface PipelineCaseEvalResult {
+  verdict: EvalVerdict
+  pipeline: PipelineResult
+}
+
+/**
+ * Exercise the declared pipeline exactly as production does for one supplied input.
+ *
+ * This is intentionally separate from the corpus fidelity comparison below. That comparison
+ * measures three experimental arms and transforms the verified arm into the generic verifier's
+ * flat `{value, quote}` vocabulary. A case eval answers a different and more operational
+ * question: do the profiles and data shapes declared in `profiles.toml` actually compose?
+ */
+export const runPipelineCaseEval = async (o: PipelineCaseEvalOptions): Promise<PipelineCaseEvalResult> => {
+  const cfg = loadConfig()
+  const profileName = o.profileName ?? 'clinical-verified'
+  const pipelineConfig = requireProfile(cfg, profileName)
+  if (pipelineConfig.mode !== 'pipeline' || !Array.isArray(pipelineConfig.steps)) {
+    throw new Error(`profile '${profileName}' is not a configured pipeline`)
+  }
+
+  const steps = buildPipeline(pipelineConfig.steps as Parameters<typeof buildPipeline>[0])
+  const profiles = new Map<string, ProfileModule>()
+  const packs = new Map<string, Pack | undefined>()
+  const baseUrls = new Map<string, string | undefined>()
+
+  for (const step of steps) {
+    if (profiles.has(step.profile)) continue
+    const config = requireProfile(cfg, step.profile)
+    const profile = await loadProfileModule(
+      step.profile,
+      resolveProfileModule(step.profile, { configured: config.module, base: cfg.base }),
+    )
+    profiles.set(step.profile, profile)
+    baseUrls.set(step.profile, config.url)
+    if (profile.needsPack || config.pack) {
+      packs.set(step.profile, loadPack(resolvePackRoot(step.profile, {
+        explicit: undefined,
+        configured: config.pack as string | undefined,
+        base: cfg.base,
+      })))
+    } else {
+      packs.set(step.profile, undefined)
+    }
+  }
+
+  const pipeline = await runPipeline({
+    initialInput: o.input,
+    steps,
+    profiles,
+    packs,
+    baseUrls,
+    trace: o.trace,
+    provider: o.provider,
+    options: o.options,
+  })
+  const failed = pipeline.steps.find((step) => !step.ok)
+  const verdict: EvalVerdict = {
+    pass: !pipeline.stoppedEarly,
+    summary: failed
+      ? `stopped at step ${failed.step + 1} '${failed.name}' (${failed.profile}): ${failed.error ?? 'step failed'}`
+      : `${pipeline.steps.length}/${steps.length} configured steps completed`,
+  }
+  return { verdict, pipeline }
+}
 
 /**
  * Transform a clinical extraction (nested, with `raw_text` and `unit` fields) into the

@@ -405,12 +405,24 @@ input, textarea, select, .eventlog, .g-card, .graph-subtitle, .run-chip-id, .ins
   .chat-head-activity { display: inline-flex; }
 }
 
+.chat-options {
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+}
+.chat-options summary {
+  cursor: pointer;
+  padding: 7px 12px;
+  font-weight: 600;
+}
+.chat-options summary:hover { color: var(--foreground); }
+.chat-options summary:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.chat-options p { margin: -2px 12px 8px; line-height: 1.4; }
 .chat-target {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
 }
 .chat-target-label {
   color: var(--muted-foreground);

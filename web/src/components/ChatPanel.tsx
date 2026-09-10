@@ -22,7 +22,7 @@ import { cn } from '../lib/utils'
 export interface ChatMessage {
   id: string
   input: string
-  profile: string
+  workflow: string
   status: 'pending' | 'done' | 'error'
   result?: unknown
   error?: string
@@ -33,9 +33,7 @@ interface ChatPanelProps {
   open: boolean
   onToggle: () => void
   state: ProjectState
-  run: (profile: string, input: string) => Promise<unknown>
-  selectedProfile: string
-  onSelectedProfileChange: (profile: string) => void
+  run: (input: string, workflow?: string) => Promise<unknown>
   /** Narrow-shell coordination: jump straight from the run console to the drawer. */
   onOpenActivity?: () => void
 }
@@ -46,15 +44,16 @@ const PRESETS = [
   'Extract allergies and prior surgeries',
 ]
 
-export const ChatPanel = ({ open, onToggle, state, run, selectedProfile, onSelectedProfileChange, onOpenActivity }: ChatPanelProps) => {
+export const ChatPanel = ({ open, onToggle, state, run, onOpenActivity }: ChatPanelProps) => {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [pending, setPending] = useState(false)
+  const [forcedWorkflow, setForcedWorkflow] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  // The list of available pipelines from the topology snapshot. Fall back to
-  // profiles with mode === 'pipeline' if the topology is not populated yet.
+  // The workflow catalogue from the topology snapshot. It appears only in the explicit
+  // diagnostic override; the normal path asks the pipeline router to choose.
   const pipelines: PipelineDefinition[] = state.topology.pipelines
 
   // Auto-scroll the message list whenever the message count or status changes.
@@ -77,23 +76,26 @@ export const ChatPanel = ({ open, onToggle, state, run, selectedProfile, onSelec
 
   const handleSend = async () => {
     const text = input.trim()
-    if (!text || !selectedProfile || pending) return
+    if (!text || pending) return
 
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    const msg: ChatMessage = { id, input: text, profile: selectedProfile, status: 'pending' }
+    const msg: ChatMessage = { id, input: text, workflow: forcedWorkflow || 'routing…', status: 'pending' }
     setMessages((prev) => [...prev, msg])
     setInput('')
     setPending(true)
     requestAnimationFrame(fitTextarea)
 
     try {
-      const result = await run(selectedProfile, text)
+      const result = await run(text, forcedWorkflow || undefined)
+      const workflow = typeof result === 'object' && result !== null && typeof (result as Record<string, unknown>)['workflow'] === 'string'
+        ? String((result as Record<string, unknown>)['workflow'])
+        : forcedWorkflow || 'selected workflow'
       const wallMs = typeof result === 'object' && result !== null && 'totalMs' in (result as Record<string, unknown>)
         ? Number((result as Record<string, unknown>)['totalMs'])
         : undefined
       setMessages((prev) =>
         prev.map((m) =>
-          m.id === id ? { ...m, status: 'done', result, wallMs } : m,
+          m.id === id ? { ...m, workflow, status: 'done', result, wallMs } : m,
         ),
       )
     } catch (e) {
@@ -149,23 +151,26 @@ export const ChatPanel = ({ open, onToggle, state, run, selectedProfile, onSelec
         </div>
       </div>
 
-      {/* Pipeline selector */}
-      <div className="chat-target">
-        <label className="chat-target-label" htmlFor="chat-profile">pipeline</label>
-        <select
-          id="chat-profile"
-          className="chat-select"
-          value={selectedProfile}
-          onChange={(e) => onSelectedProfileChange(e.target.value)}
-        >
-          {pipelines.map((p) => (
-            <option key={p.name} value={p.name}>
-              {p.name} ({p.steps.map((s) => s.profile).join(' → ')})
-            </option>
-          ))}
-          {pipelines.length === 0 && <option value="" disabled>no pipelines loaded</option>}
-        </select>
-      </div>
+      <details className="chat-options">
+        <summary>Run options</summary>
+        <div className="chat-target">
+          <label className="chat-target-label" htmlFor="chat-workflow">Force workflow</label>
+          <select
+            id="chat-workflow"
+            className="chat-select"
+            value={forcedWorkflow}
+            onChange={(e) => setForcedWorkflow(e.target.value)}
+          >
+            <option value="">Automatic routing</option>
+            {pipelines.map((workflow) => (
+              <option key={workflow.name} value={workflow.name}>
+                {workflow.name} ({workflow.steps.map((step) => step.profile).join(' → ')})
+              </option>
+            ))}
+          </select>
+        </div>
+        <p>For diagnostics only. Forcing a workflow bypasses the router.</p>
+      </details>
 
       {/* Presets — compact actions that say what to do next on their own. */}
       {messages.length === 0 && (
@@ -183,7 +188,7 @@ export const ChatPanel = ({ open, onToggle, state, run, selectedProfile, onSelec
         {messages.map((msg) => (
           <div key={msg.id} className={cn('chat-msg', msg.status === 'error' && 'chat-msg-err')}>
             <div className="chat-msg-head">
-              <span className="chat-msg-profile">{msg.profile}</span>
+              <span className="chat-msg-profile">{msg.workflow}</span>
               <span className={cn('chat-msg-status', msg.status === 'pending' && 'chat-msg-status-wait')}>
                 {msg.status === 'pending' ? 'running…' : msg.status === 'error' ? 'error' : 'done'}
                 {msg.wallMs != null && msg.status === 'done' && ` · ${(msg.wallMs / 1000).toFixed(1)}s`}
@@ -220,7 +225,6 @@ export const ChatPanel = ({ open, onToggle, state, run, selectedProfile, onSelec
             fitTextarea()
           }}
           onKeyDown={handleKeyDown}
-          disabled={!selectedProfile}
         />
         <div className="chat-foot-actions">
           {messages.length > 0 && (
@@ -231,7 +235,7 @@ export const ChatPanel = ({ open, onToggle, state, run, selectedProfile, onSelec
           <Button
             size="sm"
             onClick={handleSend}
-            disabled={pending || !input.trim() || !selectedProfile}
+            disabled={pending || !input.trim()}
           >
             <Send size={13} /> Run
           </Button>

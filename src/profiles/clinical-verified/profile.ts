@@ -19,7 +19,7 @@
 import type { EvalContext, EvalVerdict, ProfileModule } from '../../core/profile.ts'
 import { loadConfig, requireProfile } from '../../core/config.ts'
 import { loadPack, resolvePackRoot } from '../../core/pack.ts'
-import { runPipelineFidelityEval } from './eval.ts'
+import { runPipelineCaseEval, runPipelineFidelityEval } from './eval.ts'
 
 export const PROFILE: ProfileModule = {
   name: 'clinical-verified',
@@ -27,6 +27,21 @@ export const PROFILE: ProfileModule = {
   needsPack: false,
 
   async runEval(ctx: EvalContext): Promise<EvalVerdict> {
+    // One ad-hoc input through the production pipeline. Unlike --fidelity, this performs no
+    // shape transform between steps: it exists to catch integration failures hidden by an
+    // experimental arm that calls the same profiles manually.
+    if (typeof ctx.options.input === 'string' && ctx.options.input.length > 0) {
+      return (await runPipelineCaseEval({
+        input: ctx.options.input,
+        trace: ctx.trace,
+        provider: ctx.provider,
+        options: {
+          constrain: Boolean(ctx.options.constrain),
+          calculate: Boolean(ctx.options.calculate),
+        },
+      })).verdict
+    }
+
     // Full pipeline fidelity eval: run all three arms against the clinical corpus.
     // Requires a GPU and takes several minutes.
     if (ctx.options.fidelity) {

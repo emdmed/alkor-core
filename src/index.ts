@@ -30,6 +30,7 @@ export {
   requireProfile,
   type Config,
   type Mode,
+  type PipelineConfig,
   type ProfileConfig,
 } from './core/config.ts'
 

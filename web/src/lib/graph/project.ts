@@ -32,7 +32,7 @@ import {
   stageState,
   stepIndexOf,
 } from './core.ts'
-import { buildConfiguredPipeline, buildGraph, declaredRouteTargets, matchTopology } from './run.ts'
+import { buildConfiguredPipeline, buildGraph, declaredRouteTargets, markCurrentOperation, matchTopology } from './run.ts'
 import type { ExpandedGraphBuild, GraphBuild, GraphEdge, GraphNode } from './types.ts'
 
 /* ------------------------------------------------------------------ shared workspace */
@@ -456,7 +456,7 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
     const isSelected = selected?.profile === def.name
     const raw = isSelected ? buildGraph(state, selected.runId, expanded) : buildConfiguredPipeline(state, def)
     selectedPlaced ||= isSelected
-    laneY = addLane(surface, raw, `pipeline-${def.name}`, `${def.name} · pipeline`, true, laneY, pipelineOutputRank)
+    laneY = addLane(surface, raw, `pipeline-${def.name}`, `${def.name} · workflow`, true, laneY, pipelineOutputRank)
   }
 
   // A direct profile run is still useful operational detail, but it sits alongside the
@@ -577,7 +577,7 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
   return {
     nodes: surface.nodes,
     edges: surface.edges,
-    title: `${count} pipeline${count === 1 ? '' : 's'} · ${state.topology.profiles.length} configured profiles${missingTitle}${runTitle}`,
+    title: `1 pipeline · ${count} workflow${count === 1 ? '' : 's'} · ${state.topology.profiles.length} configured profiles${missingTitle}${runTitle}`,
   }
 }
 
@@ -671,7 +671,7 @@ export const buildPipelinesGraph = (
     edges.push(...placed.edges)
 
     nodes.push({
-      ...node(`pipeline-lane-group-${pipeline.name}`, 'group', `${pipeline.name} · pipeline`, isSelected ? 'active' : 'idle', {
+      ...node(`pipeline-lane-group-${pipeline.name}`, 'group', `${pipeline.name} · workflow`, isSelected ? 'active' : 'idle', {
         current: isSelected,
       }),
       position: { x: bounds.left - 24, y: bounds.top - 34 },
@@ -694,8 +694,11 @@ export const buildPipelinesGraph = (
     })
   }
 
+  // Composing lanes can duplicate the selected run's active operation in topology
+  // overlays. Resolve those representations back to one visible NOW badge.
+  markCurrentOperation(nodes)
   const count = state.topology.pipelines.length
-  return { nodes, edges, title: `${count} pipeline${count === 1 ? '' : 's'} · full process detail` }
+  return { nodes, edges, title: `1 pipeline · ${count} workflow${count === 1 ? '' : 's'} · full process detail` }
 }
 
 /** Resolve default-open graph disclosure to a fixed point while respecting closes. */

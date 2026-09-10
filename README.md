@@ -380,10 +380,16 @@ it will not be recovered, so the loop stops instead of re-nudging until the step
 
 ### Routing and pipeline
 
-The **router** (`src/modes/router.ts`) is a rule-based classifier with an optional model
-fallback. It decides which specialist profile should handle a given input — clinical,
-coding, transcriptor, or verifier — measured at 98.1% accuracy on a 54-case adversarial
-corpus (see `next_steps.md`).
+The product-level **pipeline** is the complete path from input to output. Its router chooses
+one named **workflow**, and that workflow supplies the step-by-step recipe. A step invokes a
+profile; users do not choose profiles or workflows during a normal run. `POST /pipeline`
+performs routing and workflow execution under one run id. Passing `workflow` is a diagnostic
+override that deliberately bypasses routing.
+
+The generic **router mode** (`src/modes/router.ts`) is a rule-based classifier with an
+optional model fallback. The deployed `workflow-router` uses it to choose a workflow. The
+older `router` worked example still measures specialist classification at 98.1% accuracy on
+a 54-case adversarial corpus (see `next_steps.md`); it is no longer the product front door.
 
 The **clinical internal router** (`src/profiles/clinical/clinical-router.ts`) runs *before*
 any GPU call, selecting the right sub-task (`vital-signs`, `transcript`, `summary`,
@@ -391,7 +397,8 @@ any GPU call, selecting the right sub-task (`vital-signs`, `transcript`, `summar
 prose, or plain note. It is purely rule-based, zero GPU cost, and measured at 100% on 60
 cases.
 
-The **pipeline** (`src/modes/pipeline.ts`) chains profiles together. Each step names a
+Each **workflow recipe** is currently stored by the backwards-compatible `mode = "pipeline"`
+execution shape in `src/modes/pipeline.ts`. It chains profiles together: each step names a
 profile and an input reference, and the harness passes outputs from one step to the next.
 Every step is a **fresh LLM call** — no conversation history carries forward. The pipeline
 maintains a state map that accumulates results, and each step's input is resolved from it:
@@ -410,21 +417,29 @@ For example, the `clinical-verified` workflow:
 ```toml
 steps = [
   { name = "extract", profile = "clinical", input = "initial" },
-  { name = "verify",  profile = "verifier", input = { document = "initial", extraction = "step-0.raw" } }
+  { name = "verify-derived", profile = "clinical-verifier", input = { document = "initial", extraction = "step-0.output" } },
+  { name = "verify-source", profile = "verifier", input = "step-1.output" }
 ]
 ```
 
-Step 0 runs the clinical extractor against the original note. Step 1 composes the original
-document and the raw JSON completion from step 0 into `{document, extraction}`, then runs
-the verifier — a different LLM instance on a different port. Each step delegates to its
-profile's own mode (`extract`, `agentic`, or `router`), so the pipeline is a generic
-orchestrator that knows nothing about what any step does.
+Step 0 runs the clinical extractor against the original note. Step 1 deterministically checks
+clinical derivations and removes them from the source-provenance payload. Step 2 runs the generic
+verifier against only the source observations — on a different LLM instance and port. Each step
+delegates to its profile's own mode (`extract`, `agentic`, or `router`), so the pipeline is a
+generic orchestrator that knows nothing about what any step does.
 
 A failed step stops the pipeline. No retry, no fallback. Checkpointing to disk
 (`context.json` + `step-N.json`) enables crash recovery and step-by-step execution when
 only one GPU is available. See `profiles.toml` for the definition and
 `src/profiles/clinical-verified/` for the fidelity eval that compares three arms (monolith,
 specialist, verified) against each other.
+
+To evaluate that production composition for one ad-hoc synthetic input, without the fidelity
+eval's verifier-shape transform:
+
+```bash
+node src/cli.ts eval --profile clinical-verified --input "<synthetic clinical note>"
+```
 
 ## Traces
 

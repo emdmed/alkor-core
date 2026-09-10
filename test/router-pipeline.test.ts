@@ -18,8 +18,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { route, type RouteRule, type RouterOptions } from '../src/modes/router.ts'
 import { ROUTER_RULES as CLINICAL_RULES } from '../src/profiles/router/profile.ts'
+import { PROFILE as WORKFLOW_ROUTER } from '../src/profiles/workflow-router/profile.ts'
 import { runPipeline, buildPipeline, type PipelineStep, type PipelineOptions } from '../src/modes/pipeline.ts'
 import { createActivity, withActivityScope } from '../src/core/activity.ts'
+import { nullTrace } from '../src/core/trace.ts'
 import type { ProfileModule, ReviewResult, EvalVerdict } from '../src/core/profile.ts'
 
 // ---------------------------------------------------------------------------
@@ -109,6 +111,20 @@ test('multiple keywords in one rule: any match triggers', async () => {
   ]
   const result = await route({ input: 'temperature is 37.1', rules, defaultProfile: 'unknown' })
   assert.equal(result.profile, 'clinical')
+})
+
+const routeWorkflow = async (input: string) => WORKFLOW_ROUTER.review!({
+  pack: undefined,
+  trace: nullTrace(),
+  input: { kind: 'text', text: input },
+  options: {},
+})
+
+test('front-door router chooses complete workflows, including its configured default', async () => {
+  const sepsis = await routeWorkflow('Calculate qSOFA for this synthetic input')
+  const general = await routeWorkflow('Extract the findings from this synthetic note')
+  assert.equal((sepsis.report as any).profile, 'sepsis-verified')
+  assert.equal((general.report as any).profile, 'clinical-verified')
 })
 
 // ---------------------------------------------------------------------------

@@ -40,8 +40,8 @@ export interface UseMedextract {
   paused: boolean
   setPaused: (paused: boolean) => void
   clear: () => void
-  /** Send input into a profile via POST /run and resolve to its parsed result. */
-  run: (profile: string, input: string) => Promise<unknown>
+  /** Route input through the product pipeline and execute its chosen workflow. */
+  run: (input: string, workflow?: string) => Promise<unknown>
   /** Live backend status from /health, as the server reports it. */
   models: ModelHealth[]
 }
@@ -128,13 +128,13 @@ export const useMedextract = (initialUrl: string): UseMedextract => {
     dispatch({ type: 'clear' })
   }, [])
 
-  // POST /run carries a prompt into the pipeline; the SSE stream paints its progress
-  // as run/step/stage events, and the resolved body is the chat's answer.
-  const run = useCallback(async (profile: string, input: string): Promise<unknown> => {
-    const res = await fetch(`${trimBase(serverUrl)}/run`, {
+  // POST /pipeline owns both decisions: the router chooses a workflow, then the server
+  // executes that recipe under one run id. `workflow` is an explicit diagnostic override.
+  const run = useCallback(async (input: string, workflow?: string): Promise<unknown> => {
+    const res = await fetch(`${trimBase(serverUrl)}/pipeline`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile, input }),
+      body: JSON.stringify({ input, ...(workflow ? { workflow } : {}) }),
     })
     if (!res.ok) {
       // The server answers 4xx/5xx with { error: … }; surface that sentence instead of a

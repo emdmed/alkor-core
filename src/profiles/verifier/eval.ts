@@ -1,7 +1,7 @@
 /**
- * Verifier catch-rate eval: 30 synthetic cases with injected hallucinations.
+ * Verifier catch-rate eval: 31 synthetic cases with injected hallucinations.
  *
- * 20 clean cases  → measure false-positive rate (gate ≤ 5%)
+ * 21 clean cases  → measure false-positive rate (gate ≤ 5%)
  * 10 error cases  → measure catch rate (gate ≥ 90%)
  *
  * The cases are short clinical snippets so the 1.7B verifier can run them
@@ -19,6 +19,8 @@ interface VerifierTestCase {
   expectVerified: boolean
   label: string
   category: 'clean' | 'injected'
+  /** Integration contracts may not spend the aggregate clean-case error budget. */
+  mustPass?: boolean
 }
 
 const CLEAN_CASES: VerifierTestCase[] = [
@@ -192,6 +194,26 @@ const CLEAN_CASES: VerifierTestCase[] = [
     label: 'clean-edge-numbers',
     category: 'clean',
   },
+  {
+    document: 'Synthetic example. Hypotensive for two hours. BP 80/50. Heart rate 120 bpm. Skin cool. JVP elevated. Capillary refill brisk. Bilateral crackles.',
+    extraction: {
+      'shock-extraction': {
+        exam: {
+          hypotension: { systolic: 80, diastolic: 50, duration_minutes: 120 },
+          heart_rate: 120,
+          skin_temperature: 'cool',
+          jugular_venous_pressure: 'elevated',
+          capillary_refill: 'brisk',
+          pulse_volume: 'not_assessed',
+          lung_exam: 'bilateral_crackles',
+        },
+      },
+    },
+    expectVerified: true,
+    label: 'clean-normalized-source-report',
+    category: 'clean',
+    mustPass: true,
+  },
 ]
 
 const INJECTED_CASES: VerifierTestCase[] = [
@@ -281,6 +303,7 @@ export const runVerifierEval = async (opts: {
 
   let cleanCorrect = 0
   let injectedCorrect = 0
+  let requiredFailures = 0
   const results: string[] = []
   const detailLines: string[] = []
 
@@ -301,6 +324,7 @@ export const runVerifierEval = async (opts: {
     const parsed = outcome.parsed as Record<string, unknown> | undefined
     const verified = Boolean(parsed?.verified)
     const pass = verified === test.expectVerified
+    if (test.mustPass && !pass) requiredFailures++
 
     if (test.category === 'clean') {
       if (pass) cleanCorrect++
@@ -342,6 +366,7 @@ export const runVerifierEval = async (opts: {
   const summaryLines = [
     `${cleanCorrect}/${cleanTotal} clean cases correct (FP rate ${(fpRate * 100).toFixed(1)}% vs ≤${(fpGate * 100).toFixed(0)}% ${fpPass ? '✓' : '✗'})`,
     `${injectedCorrect}/${injectedTotal} injected errors caught (catch rate ${(catchRate * 100).toFixed(1)}% vs ≥${(catchGate * 100).toFixed(0)}% ${catchPass ? '✓' : '✗'})`,
+    `required integration cases ${requiredFailures === 0 ? 'PASS' : `FAIL (${requiredFailures})`}`,
     ...results,
   ]
 
@@ -352,7 +377,7 @@ export const runVerifierEval = async (opts: {
   }
 
   return {
-    pass: fpPass && catchPass,
+    pass: fpPass && catchPass && requiredFailures === 0,
     summary: summaryLines.join('\n'),
   }
 }

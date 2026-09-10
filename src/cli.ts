@@ -81,7 +81,7 @@ const usage = (msg?: string) => {
   if (msg) console.error(`${msg}\n`)
   console.error('usage:')
   console.error('  node src/cli.ts extract --profile NAME (--note FILE | --case NAME | --note -) [--task NAME] [--constrain] [--repair] [--no-medication-pass] [--calculate] [--json] [--url URL] [--pack DIR]')
-  console.error('  node src/cli.ts eval    --profile NAME [--runs N] [--constrain] [--task NAME] [--repair] [--difficulty N|N-M] [--no-cache-prompt] [--no-medication-pass] [--url URL] [--pack DIR]')
+  console.error('  node src/cli.ts eval    --profile NAME [--input "..."] [--runs N] [--constrain] [--task NAME] [--repair] [--difficulty N|N-M] [--no-cache-prompt] [--no-medication-pass] [--url URL] [--pack DIR]')
   console.error('  node src/cli.ts eval    --profile NAME --from-trace FILE [--strip-fences] [--pack DIR]   (re-score a recorded run, no server)')
   console.error('  node src/cli.ts agent   --profile NAME --task "..." --workspace DIR [--url URL] [--steps N]')
   console.error('  node src/cli.ts route   --profile NAME --input "..." [--json] [--url URL]')
@@ -425,6 +425,7 @@ try {
       medicationPass: !values['no-medication-pass'],
       fidelity: values.fidelity,
       caseLimit: values['case-limit'] ? Number(values['case-limit']) : undefined,
+      input: values.input,
     },
   })
 } catch (e) {

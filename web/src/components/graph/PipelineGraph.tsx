@@ -198,8 +198,8 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
   const graphView = useMemo(() => {
     const graph = buildExpandedPipelinesGraph(state, selected?.runId, userExpanded, userCollapsed)
     const expandedKeys = graph.expanded
-    // The model marks the complete active lineage, so both a pipeline step and its
-    // active internal stage stay legible at their respective zoom levels.
+    // The model keeps the complete active lineage for navigation while identifying one
+    // most-specific visible operation for the NOW badge.
     const nodes: GraphNode[] = graph.nodes.map((n) =>
       n.data.kind === 'group'
         ? n
@@ -262,7 +262,7 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
         </div>
 
         <div className="graph-commandbar">
-          <span className="graph-map-hint">All pipelines · live activity highlights the path taken</span>
+          <span className="graph-map-hint">Pipeline workflows · live activity highlights the route taken</span>
           <div className="graph-runs" aria-label="Recent runs">
             {runs.length === 0 && <span className="graph-waiting">Waiting for the first run…</span>}
             {runs.slice(-8).map((run) => {
@@ -342,7 +342,7 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
       {nodes.length === 0 && (
         <div className="graph-empty">
           <div>No execution path</div>
-          <div className="text-muted-foreground text-xs">Waiting for configured pipelines and workflows.</div>
+          <div className="text-muted-foreground text-xs">Waiting for the pipeline workflow catalogue.</div>
         </div>
       )}
     </div>

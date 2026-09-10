@@ -31,8 +31,10 @@ test('an active nested stage marks its step lineage and renders inline', () => {
   const input = graph.nodes.find((n) => n.id === 'input')
   const output = graph.nodes.find((n) => n.id === 'output')
 
-  assert.equal(step?.data.current, true, 'the summary step carries the live badge')
-  assert.equal(leaf?.data.current, true, 'the active leaf carries the live badge')
+  assert.equal(step?.data.current, true, 'the summary step remains in the active lineage')
+  assert.equal(leaf?.data.current, true, 'the active leaf remains in the active lineage')
+  assert.equal(step?.data.currentOperation, false, 'the active ancestor does not claim NOW')
+  assert.equal(leaf?.data.currentOperation, true, 'the deepest visible active stage claims NOW')
   assert.ok(step!.position.x < leaf!.position.x, 'the live stage follows its owning step')
   assert.equal(step!.position.y, leaf!.position.y, 'the execution trail stays on one axis')
   assert.equal(graph.nodes.some((n) => n.data.kind === 'group'), false, 'the trail needs no secondary detail lane')
@@ -40,6 +42,13 @@ test('an active nested stage marks its step lineage and renders inline', () => {
   assert.equal(input?.data.current, undefined, 'input is not current for the whole run')
   assert.equal(output?.data.status, 'idle', 'output remains pending while work is in flight')
   assert.equal(output?.data.current, undefined, 'output is not current before the run settles')
+
+  const collapsed = buildGraph(state, 'run-1', new Set())
+  assert.equal(collapsed.nodes.find((n) => n.id === 'step-0')?.data.currentOperation, true, 'a collapsed step represents its hidden current stage')
+  assert.equal(collapsed.nodes.filter((n) => n.data.currentOperation).length, 1, 'only one visible node claims NOW')
+
+  const composed = buildExpandedPipelinesGraph(state, 'run-1', new Set(), new Set())
+  assert.equal(composed.nodes.filter((n) => n.data.currentOperation).length, 1, 'composed topology overlays do not duplicate NOW')
 
   state.runs.set('run-1', { ...state.runs.get('run-1')!, status: 'completed', wallMs: 1200 })
   const completed = buildGraph(state, 'run-1', new Set())
@@ -223,7 +232,7 @@ test('progress graph preserves composed data references between configured steps
           profile: 'verifier',
           input: [
             { name: 'document', ref: 'initial' },
-            { name: 'extraction', ref: 'step-0.raw' },
+            { name: 'extraction', ref: 'step-0.output' },
           ],
         },
       ],
@@ -234,7 +243,7 @@ test('progress graph preserves composed data references between configured steps
   const verify = graph.nodes.find((node) => node.id === 'step-1')
   const transfer = graph.edges.find((edge) => edge.target === 'step-1')
 
-  assert.equal(verify?.data.inputRef, 'document ← initial · extraction ← step-0.raw')
+  assert.equal(verify?.data.inputRef, 'document ← initial · extraction ← step-0.output')
   assert.equal(transfer?.label, verify?.data.inputRef)
 })
 
@@ -281,7 +290,7 @@ test('progress graph renders one run without router alternatives', () => {
   assert.deepEqual(columns.slice(1).map((x, index) => x - columns[index]!), [296, 320, 320])
 })
 
-test('pipelines graph keeps every pipeline as a detailed left-to-right lane', () => {
+test('pipeline graph keeps every workflow as a detailed left-to-right lane', () => {
   const state = emptyState()
   state.topology = {
     profiles: [
@@ -299,7 +308,7 @@ test('pipelines graph keeps every pipeline as a detailed left-to-right lane', ()
   const steps = graph.nodes.filter((node) => node.data.kind === 'step')
   const profiles = graph.nodes.filter((node) => node.data.kind === 'profile')
 
-  assert.match(graph.title, /^2 pipelines/)
+  assert.match(graph.title, /^1 pipeline · 2 workflows/)
   assert.equal(inputs.length, 2)
   assert.equal(steps.length, 2)
   assert.deepEqual(profiles.map((node) => node.data.profile), ['alpha', 'beta'])
