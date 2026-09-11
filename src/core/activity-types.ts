@@ -103,9 +103,12 @@ export interface ModelLifecycleEvent extends BaseActivityEvent {
   state: 'starting' | 'ready' | 'stopped' | 'failed'
   pid?: number
   model?: string
-  reason?: 'idle' | 'shutdown'
+  /** `evicted`: stopped to make room for another model under the resident-memory budget. */
+  reason?: 'idle' | 'shutdown' | 'evicted'
   error?: string
   wallMs?: number
+  /** The accounted resident cost of this backend, so a feed can show what a stop freed. */
+  footprintBytes?: number
 }
 
 export interface LlmRequestEvent extends BaseActivityEvent {

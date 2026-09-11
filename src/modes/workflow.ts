@@ -64,6 +64,7 @@ import type { Provider } from '../core/client.ts'
 import { runAgent } from './agentic.ts'
 import { type RouterOptions } from './router.ts'
 import { nullTrace } from '../core/trace.ts'
+import { callsModel } from '../core/config.ts'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -123,6 +124,18 @@ export interface WorkflowOptions {
   provider?: Provider
   /** Activity bus for operational events. */
   activity?: Activity
+  /**
+   * Bring up the backend a step is about to use, returning null when it is usable and the
+   * reason when it is not. Called once per step that can reach a model, immediately before
+   * that step runs — which is what keeps a multi-model workflow to one resident model at a
+   * time on a machine that cannot hold two. The step whose backend cannot be made usable
+   * fails like any other failing step; the workflow stops there and its terminal step still
+   * runs, so a run refused for want of memory still ends with a sentence.
+   *
+   * Absent, every step assumes its backend is already up — which is how the CLI runs, where
+   * the operator started the servers themselves.
+   */
+  ensureBackend?: (baseUrl: string | undefined, profile: string) => Promise<string | null>
 }
 
 /** The values carried between steps, serialized to `contextDir` after each one. */
@@ -353,6 +366,23 @@ export const runWorkflow = async (o: WorkflowOptions): Promise<WorkflowResult> =
       return
     }
 
+    // The ending needs its own backend like any other step, and by the time it runs the
+    // chain's last model may have been evicted to make room for one of its successors.
+    const unusable = callsModel(profile.mode)
+      ? await o.ensureBackend?.(o.baseUrls.get(stepDef.profile), stepDef.profile)
+      : null
+    if (unusable) {
+      record({
+        step: index,
+        name: stepDef.name,
+        profile: stepDef.profile,
+        ok: false,
+        error: unusable,
+        wallMs: performance.now() - stepStart,
+      })
+      return
+    }
+
     try {
       const result = await withActivityScope({ ...currentActivityScope(), parentId: stepStageId }, () =>
         runStep({
@@ -470,6 +500,17 @@ export const runWorkflow = async (o: WorkflowOptions): Promise<WorkflowResult> =
     const pack = o.packs.get(stepDef.profile)
     const baseUrl = o.baseUrls.get(stepDef.profile)
     const stepOptions = { ...o.options, ...stepDef.options }
+
+    // The model this step needs, loaded at this step. A deterministic step reaches no
+    // backend at all, so asking for one would start a model to run code that never calls it.
+    const unusable = callsModel(profile.mode) ? await o.ensureBackend?.(baseUrl, stepDef.profile) : null
+    if (unusable) {
+      const wallMs = performance.now() - stepStart
+      results.push({ step: i, name: stepDef.name, profile: stepDef.profile, ok: false, error: unusable, wallMs })
+      o.activity?.emit({ kind: 'workflow.step.completed', step: i, name: stepDef.name, profile: stepDef.profile, ok: false, wallMs })
+      o.activity?.emit({ kind: 'stage', stageId: stepStageId, parentId: rootStageId, name: stepDef.name, status: 'completed', wallMs, detail: { step: i, ok: false } })
+      return conclude(true)
+    }
 
     try {
       const result = await withActivityScope(

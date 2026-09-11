@@ -67,6 +67,13 @@ export interface ProfileConfig {
    * names are the ones that start and stop on demand. One deployment keeps one resident.
    */
   pinned?: boolean
+  /**
+   * What this profile's backend costs while resident (`"6GiB"`, or bytes), for the
+   * interactive server's model budget. Optional: the default is the model file's size plus
+   * the KV cache its `ctx` implies, which is an estimate. A deployment that has measured
+   * the real figure on its own hardware sets it here and the estimate is not consulted.
+   */
+  footprint?: string | number
   /** Free-form, passed through to the profile module (e.g. a model hint). */
   [key: string]: unknown
 }

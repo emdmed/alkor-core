@@ -24,6 +24,16 @@
 # explicit rules routes through it, so one classifier catches every initial prompt and the
 # specialists it names start and stop around it. MEDEXTRACT_MANAGE_MODELS=0 restores the
 # manual flow.
+#
+# THE MACHINE IS THE CONSTRAINT. This product is meant to run on a laptop, so the server
+# holds a budget — MEDEXTRACT_MODEL_BUDGET, default 60% of RAM, `0` for unbounded — on how
+# much model may be resident at once. Each backend is accounted at its weights plus the KV
+# cache its `ctx` implies (set `footprint = "6GiB"` on a profile to state the real figure
+# instead), one model loads at a time, and a model that does not fit evicts the least
+# recently used idle backend rather than joining it in RAM. A workflow therefore brings up
+# each step's model AT that step: a four-step recipe over three models is three loads in
+# sequence, never three models at once. Lowering `ctx` is the cheapest way to fit more —
+# at 32768 the cache is several GB per model, dwarfing the weights on a 4B at Q4.
 
 # The product-level pipeline is the complete front door: its router chooses one workflow
 # from this catalogue, then the server executes that workflow under the same run id. Each

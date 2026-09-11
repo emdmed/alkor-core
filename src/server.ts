@@ -20,7 +20,9 @@
 import { createServer as httpCreateServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http'
 import { randomUUID, createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { resolve } from 'node:path'
+import { statSync } from 'node:fs'
+import { homedir, totalmem } from 'node:os'
+import { isAbsolute, join, resolve } from 'node:path'
 import { loadConfig, requireProfile, ConfigError, callsModel } from './core/config.ts'
 import { loadPack, resolvePackRoot, PackError } from './core/pack.ts'
 import { loadProfileModule, resolveProfileModule, ProfileError } from './core/profile.ts'
@@ -38,6 +40,7 @@ import type { ProfileTopology } from './core/topology.ts'
 import { identifyServer, probeServer, DEFAULT_URL } from './core/client.ts'
 import {
   LlamaManager,
+  fmtBytes,
   normalizeBaseUrl,
   withTouching,
   type LlamaManagerOptions,
@@ -93,6 +96,8 @@ export interface ServerOptions {
   llamaManager?: Pick<LlamaManagerOptions, 'binary' | 'pollMs' | 'probe' | 'spawn' | 'startTimeoutMs'>
   /** Per-SSE-client queue cap; a test shrinks it to reach the overflow path deliberately. */
   sseBufferBytes?: number
+  /** Resident-model budget in bytes; overrides MEDEXTRACT_MODEL_BUDGET. 0 is unbounded. */
+  budgetBytes?: number
 }
 
 /** The bounded-buffer part of an SSE response: what a fan-out may still use it for. */
@@ -118,6 +123,69 @@ export const sseWrite = (
   return res.writableLength > bufferBytes ? 'overflow' : 'ok'
 }
 
+/**
+ * How many bytes of model this host will hold resident at once.
+ *
+ * `MEDEXTRACT_MODEL_BUDGET` takes `6GiB`, `600MB`, a percentage of total RAM (`50%`), a
+ * plain byte count, or `0` for the old unbounded behaviour. The default is 60% of total
+ * RAM: the rest of the machine — the browser the dashboard is open in, the editor, the OS
+ * — is not free, and a budget that assumed it was would be a budget that swaps.
+ */
+export const modelBudgetBytes = (raw?: string, total: number = totalmem()): number => {
+  const spec = (raw ?? '').trim()
+  if (!spec) return Math.floor(total * 0.6)
+  const pct = /^(\d+(?:\.\d+)?)\s*%$/.exec(spec)
+  if (pct) return Math.floor((total * Number(pct[1])) / 100)
+  const size = /^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb|kib|mib|gib)?$/i.exec(spec)
+  if (!size) return Math.floor(total * 0.6)
+  const scale: Record<string, number> = {
+    b: 1,
+    kb: 1000,
+    mb: 1000 ** 2,
+    gb: 1000 ** 3,
+    kib: 1024,
+    mib: 1024 ** 2,
+    gib: 1024 ** 3,
+  }
+  return Math.floor(Number(size[1]) * (scale[(size[2] ?? 'b').toLowerCase()] ?? 1))
+}
+
+/**
+ * What a backend is expected to cost while resident: the weights on disk, plus the KV cache
+ * its context window implies.
+ *
+ * Both halves matter and the second is the one people forget — a 4B model quantised to 2.5
+ * GB serves a 32k context out of a KV cache measured in GB of its own, so a budget counting
+ * only file sizes would admit two models that cannot both run. The per-token figure is a
+ * coarse average across the 3B-8B architectures this project targets rather than a
+ * derivation from any one of them; a profile that knows better sets `footprint` itself.
+ *
+ * A model file that cannot be stat'd (not downloaded yet, wrong path) returns undefined
+ * rather than zero. The distinction is the point: zero would mean "free", and the manager
+ * would let it in beside anything.
+ */
+const KV_BYTES_PER_TOKEN = 131_072
+
+export const footprintBytesFor = (
+  model?: string,
+  ctx?: number,
+  override?: string | number,
+): number | undefined => {
+  if (override !== undefined && override !== null && override !== '') {
+    const bytes = typeof override === 'number' ? Math.floor(override) : modelBudgetBytes(String(override), 0)
+    if (bytes > 0) return bytes
+  }
+  if (!model) return undefined
+  const expanded = model.startsWith('~/') ? join(homedir(), model.slice(2)) : model
+  let weights: number
+  try {
+    weights = statSync(isAbsolute(expanded) ? expanded : resolve(expanded)).size
+  } catch {
+    return undefined
+  }
+  return weights + (ctx ?? 4096) * KV_BYTES_PER_TOKEN
+}
+
 export const createServer = async (configPath?: string, options: ServerOptions = {}): Promise<Server> => {
   const cfg = loadConfig(configPath)
   const activity = createActivity()
@@ -133,10 +201,12 @@ export const createServer = async (configPath?: string, options: ServerOptions =
     .trim()
     .split(/\s+/)
     .filter(Boolean)
+  const budgetBytes = options.budgetBytes ?? modelBudgetBytes(process.env.MEDEXTRACT_MODEL_BUDGET)
   const manager = new LlamaManager({
     idleMs,
     spawnArgs,
     enabled: manageModels,
+    budgetBytes,
     ...options.llamaManager,
     emit: (e) => {
       activity.emit({
@@ -148,6 +218,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
         reason: e.reason,
         error: e.error,
         wallMs: e.wallMs,
+        footprintBytes: e.footprintBytes,
       })
     },
   })
@@ -213,11 +284,17 @@ export const createServer = async (configPath?: string, options: ServerOptions =
   // guess how to launch it for you.
   for (const baseUrl of backendUrls) {
     const profile = Object.values(cfg.profiles).find((p) => backendFor(p.url) === baseUrl)
+    const model = profile ? (profile.model as string | undefined) : undefined
+    const ctx = profile ? Number(profile.ctx) || undefined : undefined
     const spec: ManagedSpec = {
       baseUrl,
-      model: profile ? (profile.model as string | undefined) : undefined,
-      ctx: profile ? Number(profile.ctx) || undefined : undefined,
+      model,
+      ctx,
       pinned: Boolean(profile?.pinned),
+      // What this backend costs the machine while it is up, so the manager can decide
+      // whether it fits beside what is already there. `footprint` on the profile wins:
+      // a deployment that has measured its own model knows better than an estimate.
+      footprintBytes: footprintBytesFor(model, ctx, profile?.footprint as string | number | undefined),
     }
     manager.register(spec)
   }
@@ -545,8 +622,16 @@ export const createServer = async (configPath?: string, options: ServerOptions =
               // idle-stopped, so a consumer can render it distinctly from a dormant one.
               pinned: status.pinned,
               state: status.state,
+              // What holding this model costs, which is what decides whether it can be up
+              // at the same time as the next one. Absent when the model file is not there
+              // to measure — unknown, which the budget treats as free rather than guessing.
+              footprintBytes: status.footprintBytes,
             }
           }),
+          // The resident-model budget: how much this host will hold at once, and how much
+          // of it is spoken for. A dashboard showing a model starting and another stopping
+          // in the same second can say WHY from these two numbers.
+          resources: manager.resources(),
           sessions: sessions.size,
           activity: {
             buffered: activity.recent().length,
@@ -820,22 +905,50 @@ export const createServer = async (configPath?: string, options: ServerOptions =
           }
           return neededBackends.size > 0
         })()
+        // A workflow's models are loaded ONE AT A TIME, at the step that needs each.
+        //
+        // Preflight used to start every step's backend before step 0 and hold them all for
+        // the run. That is the wrong shape for the machine this product targets: a two-model
+        // workflow then peaks at both sets of weights plus both KV caches, and the loads race
+        // each other on the way up. Nothing about the recipe requires it — step 2 cannot run
+        // until step 1 has finished, so its model is dead weight until then. `ensureBackend`
+        // below brings each up at its turn, and a backend the budget needs room for is
+        // evicted between steps rather than kept beside its successor.
+        //
+        // What preflight was RIGHT about is failing before the prompt is consumed, so that
+        // survives as a check on the configuration rather than on the memory: a backend that
+        // is neither reachable nor spawnable can never answer, and that is knowable now.
+        const ensureOrExplain = async (needed: string): Promise<string | null> => {
+          const ready = await manager.ensure(needed)
+          backendReachability.set(needed, ready)
+          return ready
+            ? null
+            : `no model backend is reachable at ${needed} — ${manager.describe(needed)}. ` +
+              'Start llama-server on it first (scripts/llama-server.sh), or check MEDEXTRACT_MANAGE_MODELS.'
+        }
         if (needsModel) {
-          // Keep the parsed request (including its prompt) in this handler while every
-          // backend starts. Workflow models are independent, so load them concurrently;
-          // only dispatch the run after all of them have answered their readiness probe.
-          const readiness = await Promise.all(
-            [...neededBackends].map(async (needed) => ({ needed, ready: await manager.ensure(needed) })),
-          )
-          const unavailable = readiness.find(({ ready }) => !ready)
-          for (const { needed, ready } of readiness) backendReachability.set(needed, ready)
-          if (unavailable) {
-            serviceUnavailable(
-              res,
-              `no model backend is reachable at ${unavailable.needed} — ${manager.describe(unavailable.needed)}. ` +
-                'Start llama-server on it first (scripts/llama-server.sh), or check MEDEXTRACT_MANAGE_MODELS.',
-              { runId },
-            )
+          const isWorkflow = profile.mode === 'workflow' && hasSteps
+          const unusable: string[] = []
+          for (const needed of neededBackends) {
+            // A single-profile run needs its one model now, so start it now — deferring it
+            // would only move the same load a few lines later.
+            if (!isWorkflow) {
+              const problem = await ensureOrExplain(needed)
+              if (problem) unusable.push(problem)
+              continue
+            }
+            if (manager.canSpawn(needed)) continue
+            const reachable = await probeServer(needed)
+            backendReachability.set(needed, reachable)
+            if (!reachable) {
+              unusable.push(
+                `no model backend is reachable at ${needed} — ${manager.describe(needed)}. ` +
+                  'Start llama-server on it first (scripts/llama-server.sh), or check MEDEXTRACT_MANAGE_MODELS.',
+              )
+            }
+          }
+          if (unusable[0]) {
+            serviceUnavailable(res, unusable[0], { runId })
             done(503)
             return
           }
@@ -950,31 +1063,24 @@ export const createServer = async (configPath?: string, options: ServerOptions =
               packs.set(profileName, pack)
               baseUrls.set(profileName, baseUrl)
 
-              // Preflight starts every backend before the first step. A later backend can
-              // then wait longer than the idle window while an earlier model generates
-              // (the clinical shock route takes >120s on the reference hardware). Reserve
-              // the complete set for the workflow so the sweeper cannot stop step N+1
-              // before the workflow reaches it. Individual provider calls still touch the
-              // backend and the reservations are released as soon as the workflow ends.
-              const reservations = [...neededBackends].map((url) => manager.track(url))
-              for (const reservation of reservations) reservation.acquire()
-              let result: Awaited<ReturnType<typeof runWorkflow>>
-              try {
-                result = await runWorkflow({
-                  initialInput: input,
-                  steps: workflowSteps,
-                  profiles,
-                  packs,
-                  baseUrls,
-                  trace: nullTrace(),
-                  contextDir: options.contextDir as string | undefined,
-                  runStep: options.step !== undefined ? Number(options.step) : undefined,
-                  provider: wrappedProvider,
-                  activity,
-                })
-              } finally {
-                for (const reservation of reservations) reservation.release()
-              }
+              // Each step's model comes up at that step, and no sooner. No reservation is
+              // needed to protect a later backend from the idle sweep any more, because a
+              // later backend is not running yet: the thing the reservation defended
+              // against — a long step 1 letting step 2's model be reclaimed out from under
+              // it — cannot happen to a model that has not been loaded.
+              const result = await runWorkflow({
+                initialInput: input,
+                steps: workflowSteps,
+                profiles,
+                packs,
+                baseUrls,
+                trace: nullTrace(),
+                contextDir: options.contextDir as string | undefined,
+                runStep: options.step !== undefined ? Number(options.step) : undefined,
+                provider: wrappedProvider,
+                activity,
+                ensureBackend: async (stepBaseUrl) => ensureOrExplain(backendFor(stepBaseUrl)),
+              })
               activity.emit({
                 kind: 'run.completed',
                 profile: profileName,
@@ -1223,6 +1329,13 @@ export const createServer = async (configPath?: string, options: ServerOptions =
   // "the model is up" nowhere in the middle, so a server that starts before llama.cpp is
   // indistinguishable from a healthy one. Probe once here, say plainly what is reachable,
   // and let the /run pre-flight and /health `models` carry the same facts onward.
+  if (manageModels) {
+    console.log(
+      budgetBytes > 0
+        ? `model budget: ${fmtBytes(budgetBytes)} resident at once — a model that does not fit evicts the least recently used one (MEDEXTRACT_MODEL_BUDGET)`
+        : 'model budget: unbounded — every backend a run needs is started and kept (MEDEXTRACT_MODEL_BUDGET=0)',
+    )
+  }
   await Promise.allSettled([...backendUrls.map((url) => emitModelIdentified(url)), refreshReachability()])
   for (const url of backendUrls) {
     const up = backendReachability.get(url) ?? false
