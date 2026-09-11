@@ -61,6 +61,10 @@ import { runShockPipelineEval, shockPipelineDocumentNames } from './shock-pipeli
  * task by name. None of it is a second statement of anything: the fan comes from the
  * shapes, the edges from `TASK_FEEDS`, the refusals from `UNREVIEWABLE_TASKS`, and each
  * route's stages from the passes the review modules are required to emit through.
+ *
+ * The fan is therefore CLINICAL QUESTIONS ONLY. Transcription, note formatting and
+ * summarisation are tooling a caller asks for by name — see `TOOLING_TASKS` — and drawing
+ * them here would show a decision the router does not make.
  */
 const clinicalTopology = (): ProfileTopology => ({
   stages: [{

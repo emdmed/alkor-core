@@ -5,10 +5,14 @@
  * so it can be run on every commit, in CI, and expanded to hundreds of cases without budget
  * constraint.
  *
- * The corpus is synthetic and deliberately adversarial: cases where dictation markers appear
- * in notes, where vitals abbreviations appear in transcripts, and where the boundary between
- * two shapes is genuinely fuzzy. A router that only tests the happy path will miss the
+ * The corpus is synthetic and deliberately adversarial: cases where a syndrome is stated in a
+ * conversation, where vitals abbreviations appear in spoken prose, and where the boundary
+ * between two shapes is genuinely fuzzy. A router that only tests the happy path will miss the
  * expensive mistakes.
+ *
+ * Every expected task here is a CLINICAL one, and that is now a property of the router rather
+ * than of the corpus: transcription, note formatting and summarisation are tooling, asked for
+ * by name, and no rule can select them. See `TOOLING_TASKS`.
  */
 
 import { routeClinicalShape, taskForShape } from './clinical-router.ts'
@@ -38,19 +42,23 @@ export const CLINICAL_ROUTER_CASES: RouterCase[] = [
     difficulty: 1 as 1 | 2 | 3,
     discriminates: 'shock exam JSON payload',
   })),
+  // A consultation and a dictation are routed by what they SAY. Neither modality is a shape
+  // any more — see `TOOLING_TASKS` — so these two families are here to hold the rules to the
+  // reading they now have to give: a conversation about a patient with no syndrome stated in
+  // it is a clinical note, exactly as the same words typed up would be.
   ...Array.from({ length: 10 }, (_, i) => ({
     input: `Doctor: How are you feeling today?\nPatient: I have chest pain and shortness of breath.\nDoctor: When did it start?\nPatient: About two hours ago, case ${i}.`,
-    expectedShape: 'dialogue' as ClinicalShape,
-    expectedTask: 'transcript',
+    expectedShape: 'note' as ClinicalShape,
+    expectedTask: 'vital-signs',
     difficulty: 1 as 1 | 2 | 3,
-    discriminates: 'two-speaker dialogue transcript',
+    discriminates: 'two-speaker consultation, no syndrome stated',
   })),
   ...Array.from({ length: 10 }, (_, i) => ({
     input: `Dictation: Patient reports chest pain radiating to the left arm. Associated symptoms include sweating and nausea. Case ${i}.`,
-    expectedShape: 'dictation' as ClinicalShape,
-    expectedTask: 'transcript',
+    expectedShape: 'note' as ClinicalShape,
+    expectedTask: 'vital-signs',
     difficulty: 1 as 1 | 2 | 3,
-    discriminates: 'dictated monologue transcript',
+    discriminates: 'dictated monologue, no syndrome stated',
   })),
   ...Array.from({ length: 10 }, (_, i) => ({
     input: `Patient BP ${120 + i}/${80 + i} mmHg, HR ${70 + i} bpm, SpO2 98% on room air, temperature 37.0 C.`,
@@ -87,19 +95,22 @@ export const CLINICAL_ROUTER_CASES: RouterCase[] = [
   })),
 
   // --- Difficulty 2: competing markers, one dominates ---
+  // The pair that changed sides, and the reason the change was worth making: vitals spoken
+  // aloud are vitals. Both of these used to be transcribed and nothing else, because the
+  // modality rule outranked the vitals rule at 0.95 to 0.9.
   ...Array.from({ length: 5 }, (_, i) => ({
     input: `Dictation: BP ${130 + i}/${85 + i}, HR ${75 + i}. Patient also reports dizziness.`,
-    expectedShape: 'dictation' as ClinicalShape,
-    expectedTask: 'transcript',
+    expectedShape: 'vitals-note' as ClinicalShape,
+    expectedTask: 'vital-signs',
     difficulty: 2 as 1 | 2 | 3,
-    discriminates: 'dictation marker with vitals (dictation wins)',
+    discriminates: 'dictated vitals reach the vitals route',
   })),
   ...Array.from({ length: 5 }, (_, i) => ({
     input: `Doctor: BP ${140 + i}/${90 + i}.\nPatient: HR feels fast, maybe ${100 + i}.\nDoctor: Any other symptoms?`,
-    expectedShape: 'dialogue' as ClinicalShape,
-    expectedTask: 'transcript',
+    expectedShape: 'vitals-note' as ClinicalShape,
+    expectedTask: 'vital-signs',
     difficulty: 2 as 1 | 2 | 3,
-    discriminates: 'dialogue with vitals (dialogue wins)',
+    discriminates: 'vitals spoken in a consultation reach the vitals route',
   })),
   ...Array.from({ length: 5 }, (_, i) => ({
     input: `Patient BP ${80 + i}/${50 + i}, HR ${115 + i} bpm, hypotensive, tachycardic, oliguria.`,

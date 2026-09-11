@@ -611,7 +611,7 @@ test('clinical pipeline routes vitals note to vital-signs via internal router', 
   assert.equal((result.steps[0]!.report as any)?.shape, 'vitals-note')
 })
 
-test('clinical pipeline routes dialogue transcript to transcript via internal router', async () => {
+test('clinical pipeline routes a dialogue by what it says, via the internal router', async () => {
   const { routeClinicalShape } = await import('../src/profiles/clinical/clinical-router.ts')
 
   const clinicalProfile: ProfileModule = {
@@ -643,8 +643,11 @@ test('clinical pipeline routes dialogue transcript to transcript via internal ro
   assert.equal(result.stoppedEarly, false)
   assert.equal(result.steps.length, 1)
   assert.equal(result.steps[0]!.ok, true)
-  assert.equal((result.steps[0]!.report as any)?.routedTask, 'transcript')
-  assert.equal((result.steps[0]!.report as any)?.shape, 'dialogue')
+  // The internal router routes clinical questions only — transcription is tooling, reached by
+  // `--task transcript`, which the next test covers. A consultation with no syndrome stated in
+  // it is read as the clinical note it is.
+  assert.equal((result.steps[0]!.report as any)?.routedTask, 'vital-signs')
+  assert.equal((result.steps[0]!.report as any)?.shape, 'note')
 })
 
 test('clinical pipeline explicit --task overrides internal router', async () => {

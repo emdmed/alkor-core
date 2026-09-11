@@ -17,6 +17,15 @@
  * and an input that raises more than one clinical question returns an ordered task plan: a
  * septic-shock note runs the shock workflow and the sepsis workflow, four passes in all.
  *
+ * IT ROUTES CLINICAL QUESTIONS ONLY. Transcription, note formatting and summarisation are
+ * things done TO a document rather than questions asked about a patient — `TOOLING_TASKS`
+ * makes the argument — so no rule here selects them and this file no longer detects modality
+ * at all. A consultation is now routed by WHAT IT SAYS: a dialogue in which the patient is
+ * hypotensive and tachycardic reaches the shock arm, where it used to be transcribed and
+ * nothing else because modality won outright. Whether a document is a dialogue still decides
+ * which PROMPT the transcript contract takes, and that question is asked of the pack's own
+ * detector in `settings.ts`, which is the only place it was ever load-bearing.
+ *
  * THE PLAN IS A UNION, NOT A WINNER, and that distinction is the reason the rules carry a
  * `kind`. This router used to collapse to the single highest-confidence rule, which meant the
  * only way two workflows ever ran together was if their rules happened to sit at exactly the
@@ -26,15 +35,17 @@
  * confident of the two answers half the question and reports it as the whole one.
  */
 
-import { type ClinicalShape, DEFAULT_TASK_FOR_SHAPE, NOTE_DEFAULT_TASKS, TASK_FEEDS, TASK_ORDER, TASKS, type Task } from './contracts.ts'
+import { CLINICAL_TASKS, type ClinicalShape, DEFAULT_TASK_FOR_SHAPE, TASK_FEEDS, TASK_ORDER, type Task } from './contracts.ts'
 import type { MeasuredVitals, RouteThresholds } from './vitals-first.ts'
 
 /**
  * What a rule is answering, which is what decides whether it may share a plan.
  *
- * `modality` rules describe the SHAPE OF THE DOCUMENT — a dialogue, a dictation, a list of
- * paths, a note with vitals in it. A document has exactly one of these, so they compete and
- * the highest confidence wins.
+ * `modality` rules describe the SHAPE OF THE DOCUMENT — a note with vitals in it, a note with
+ * none. A document has exactly one of these, so they compete and the highest confidence wins.
+ * Two of them read the same prose at different strengths, which is all that is left here now
+ * that a document's modality no longer chooses a task: `vitals-note` is a note whose numbers
+ * are worth going after, and `note` is the floor beneath it.
  *
  * `question` rules describe WHAT IS BEING ASKED ABOUT THE PATIENT — is this shock, is this
  * sepsis. A patient can be both, and septic shock is precisely the case where they are: it
@@ -174,7 +185,14 @@ const isExamJson = (input: string): boolean => {
   return false
 }
 
-const isSummaryInput = (input: string): boolean => {
+/**
+ * Is this a LIST of documents rather than a document?
+ *
+ * No longer a shape — nothing routes to `summary` — but still the question the front door
+ * needs answered, because a JSON array or a column of file paths has no vital sign written
+ * in it and a prose extractor spent on one is a GPU call bought for nothing.
+ */
+const isDocumentList = (input: string): boolean => {
   // JSON array of strings/objects
   try {
     const parsed = JSON.parse(input)
@@ -191,94 +209,20 @@ const isSummaryInput = (input: string): boolean => {
   return false
 }
 
-/**
- * Who speaks in a clinical transcript, as the label is actually written at the head of a turn.
- *
- * A CLOSED SET, and the reason it is closed is the bug it fixes. `Patient:` used to be enough on
- * its own — one line-initial match and the document was a dialogue at 0.95 — and `Patient: 71
- * y/o F  MRN 4471982` is the demographics header of an ordinary admission note, not a turn. The
- * generic fallback behind it was worse: two lines of `Word: ` anywhere in the document, which is
- * `HPI:`, `Gen:`, `CV:`, `Resp:`, `Abd:`, `Neuro:`, `ABG:`, `CXR:` — the section headings and
- * exam systems every note is laid out with. A septic-shock admission note matched both, was
- * classified a transcript, and `skipsFrontDoor` therefore suppressed the vital-signs pass: no
- * blood-pressure parse, no shock index, and neither syndrome arm ever asked.
+/*
+ * NO SPEAKER DETECTION LIVES HERE ANY MORE, and its absence is the point of the change rather
+ * than a tidy-up. A closed set of speaker labels, a recurring-label fallback and a list of
+ * dictation markers used to decide that a document was a conversation, and that verdict chose
+ * the `transcript` task and suppressed the front door with it. Both halves were wrong for the
+ * same reason: a dialogue is a document's modality, and no modality tells you whether the
+ * patient in it is in shock. The one place the question still decides something is which
+ * prompt the transcript contract takes, and it is asked there of the pack's own detector —
+ * `[clinical.dialogueDetection]`, read by `isDialogue` in `settings.ts`.
  */
-const SPEAKER_LABELS = new Set([
-  'doctor', 'dr', 'physician', 'clinician', 'consultant', 'registrar',
-  'nurse', 'interviewer', 'examiner', 'interpreter', 'speaker',
-  'patient', 'pt', 'caller', 'relative', 'carer',
-  // Initials only, and deliberately only these two. `A:` and `P:` are the assessment and the
-  // plan of a SOAP note, `S:` and `O:` its subjective and objective; admitting `a` here to catch
-  // a `Q:`/`A:` interview would classify every SOAP note as a conversation, which is the same
-  // family of mistake this set exists to stop. `P:` alone is one speaker, so a SOAP note is a
-  // monologue and stays a note.
-  'd', 'p',
-])
-
-/** `Speaker 1:`, `Dr Patel:` — a vocabulary label carrying a name or a number still speaks. */
-const isSpeakerLabel = (label: string): boolean =>
-  SPEAKER_LABELS.has(label) || SPEAKER_LABELS.has(label.split(/\s+/)[0]!)
-
-/**
- * The `label:` prefixes a line opens with, outermost first.
- *
- * Plural because a marker can sit in front of a turn — `Dictation: Doctor: How are you?` is a
- * dictated dialogue, and reading only the outermost label would see `Dictation` and stop. Capped
- * at three so a line of prose containing colons cannot be walked indefinitely.
- */
-const leadingLabels = (line: string): string[] => {
-  const labels: string[] = []
-  let rest = line
-  for (let i = 0; i < 3; i++) {
-    const m = /^\s*([A-Za-z][\w.]*(?: [\w.]+){0,2})\s*:[ \t]+/.exec(rest)
-    if (!m) break
-    labels.push(m[1]!.toLowerCase())
-    rest = rest.slice(m[0].length)
-  }
-  return labels
-}
-
-/**
- * Is this document a conversation between two or more people?
- *
- * TWO DISTINCT SPEAKERS, because one is a monologue and a monologue is a dictation. That is the
- * single test that separates a transcript from a note: an admission note may well carry
- * `Patient:` at the top, but it does not also carry `Doctor:` — nothing in it takes a turn.
- *
- * The generic fallback stays, for transcripts labelled with names this file cannot know
- * (`Smith:` / `Jones:`), but it now demands what a conversation actually looks like: a label
- * that RECURS. Turn-taking means somebody speaks twice. Section headings are each written once,
- * so a note of twelve distinct headings is twelve headings, and a dialogue of two speakers over
- * four turns is a dialogue.
- */
-const isDialogue = (input: string): boolean => {
-  const speakers = new Set<string>()
-  const labels = new Set<string>()
-  let total = 0
-
-  for (const line of input.split('\n')) {
-    for (const label of leadingLabels(line)) {
-      total++
-      labels.add(label)
-      if (isSpeakerLabel(label)) speakers.add(label)
-    }
-  }
-
-  if (speakers.size >= 2) return true
-  return labels.size >= 2 && total > labels.size
-}
-
-const DICTATION_MARKERS = ['Dictation:', 'Transcribed:', 'Audio:', 'Speech-to-text:', 'Audio recording:']
-
-const isDictation = (input: string): boolean => {
-  const trimmed = input.trim()
-  return DICTATION_MARKERS.some((m) => trimmed.startsWith(m))
-}
 
 const VITALS_ABBREVIATIONS = ['BP', 'HR', 'Temp', 'SpO2', 'RR', 'O2', 'BMI', 'weight', 'height']
 
 const isVitalsNote = (input: string): boolean => {
-  if (isDialogue(input)) return false
   const found = new Set<string>()
   const text = input.toUpperCase()
   for (const abbr of VITALS_ABBREVIATIONS) {
@@ -292,8 +236,15 @@ const isVitalsNote = (input: string): boolean => {
 
 const CLINICAL_TERMS = ['patient', 'admitted', 'treated', 'discharge', 'medication', 'diagnosis', 'prescription', 'symptom', 'disease', 'therapy']
 
+/**
+ * Is there a patient being described here at all?
+ *
+ * The weakest rule in the set and the last one to fire, which is why it may now read a
+ * consultation: two speakers discussing a patient's medication ARE a clinical note for
+ * routing purposes, and the guard that used to exclude them existed only to stop this rule
+ * competing with the dialogue rule that no longer exists.
+ */
 const isClinicalNote = (input: string): boolean => {
-  if (isDialogue(input)) return false
   const lower = input.toLowerCase()
   return CLINICAL_TERMS.some((t) => lower.includes(t))
 }
@@ -451,19 +402,24 @@ const isSepsisSuspicion = (input: string, evidence?: RouteEvidence): boolean => 
 }
 
 /**
- * Documents the front door must NOT spend an extraction pass on, and why each one.
+ * Documents the front door must NOT spend an extraction pass on.
  *
- * A structured payload — an exam, a qSOFA screen, a list of paths — already IS the numbers;
- * sending it to a prose extractor is asking a model to copy JSON. A dialogue or a dictation is
- * a MODALITY, and modality wins outright in the plan below, so the route is `transcript` no
- * matter what the numbers say: the pass would be bought and then not used.
+ * Structured inputs, and only structured inputs: an exam, a qSOFA screen, a list of paths.
+ * Each already IS the numbers, so sending it to a prose extractor is asking a model to copy
+ * JSON.
+ *
+ * DIALOGUES AND DICTATIONS ARE NO LONGER EXCLUDED, and the reason they were is the reason
+ * they stopped being. The exclusion was sound only while modality won outright and their route
+ * was `transcript` whatever the numbers said — the pass would have been bought and then not
+ * used. Now that a consultation is routed by what it says, the numbers in it are exactly what
+ * decides, and skipping the pass would be the way to never see them.
  *
  * Exported because the decision belongs with the rules it mirrors. The front door asking its
  * own question here, in its own words, is how the two would come to disagree about which
  * documents take which path.
  */
 export const skipsFrontDoor = (input: string): boolean =>
-  isExamJson(input) || isSepsisJson(input) || isSummaryInput(input) || isDialogue(input) || isDictation(input)
+  isExamJson(input) || isSepsisJson(input) || isDocumentList(input)
 
 // --- Rule set ------------------------------------------------------------------------------
 
@@ -481,27 +437,6 @@ export const DEFAULT_CLINICAL_RULES: ClinicalRouteRule[] = [
     kind: 'question',
     detect: isExamJson,
     confidence: 1.0,
-  },
-  {
-    name: 'summary-input',
-    shape: 'summary-input',
-    kind: 'modality',
-    detect: isSummaryInput,
-    confidence: 1.0,
-  },
-  {
-    name: 'dialogue',
-    shape: 'dialogue',
-    kind: 'modality',
-    detect: isDialogue,
-    confidence: 0.95,
-  },
-  {
-    name: 'dictation',
-    shape: 'dictation',
-    kind: 'modality',
-    detect: isDictation,
-    confidence: 0.95,
   },
   {
     name: 'shock-suspicion',
@@ -567,11 +502,15 @@ const measuredReason = (evidence?: RouteEvidence): string => {
   return facts.length ? ` · measured: ${facts.join(', ')}` : ''
 }
 
-/** Which shape maps to which task, with the `note` shape reading the pack's default. */
-export const taskForShape = (shape: ClinicalShape, defaultTask?: string): Task => {
-  if (shape === 'note' && NOTE_DEFAULT_TASKS.includes(defaultTask as Task)) return defaultTask as Task
-  return DEFAULT_TASK_FOR_SHAPE[shape]
-}
+/**
+ * Which shape maps to which task.
+ *
+ * A table lookup and nothing else. The `note` shape used to be re-pointable by a pack's
+ * `defaultTask` — to `note-format`, the one task that override could name — and a pack can no
+ * longer turn note formatting on for every unremarkable note that way: it is tooling, asked
+ * for by name. `defaultTask` still decides what a document matching NO rule falls back to.
+ */
+export const taskForShape = (shape: ClinicalShape): Task => DEFAULT_TASK_FOR_SHAPE[shape]
 
 // --- Router --------------------------------------------------------------------------------
 
@@ -593,7 +532,7 @@ export const taskForShape = (shape: ClinicalShape, defaultTask?: string): Task =
  * classifier it has always been, which is what lets the router evals run on every commit.
  *
  * @param input — the raw document text or payload
- * @param defaultTask — the pack's declared `defaultTask`, used only for the `note` shape
+ * @param defaultTask — the pack's declared `defaultTask`, used only when no rule fires
  * @param evidence — measured vitals and the pack's thresholds, when the front door ran
  */
 export const routeClinicalShape = (
@@ -624,7 +563,7 @@ export const routeClinicalShape = (
   if (top !== undefined && contributing.length > 0) {
     const confidence = top.confidence
     const matches = contributing.map((rule) => ({
-      task: taskForShape(rule.shape, defaultTask),
+      task: taskForShape(rule.shape),
       shape: rule.shape,
       rule: rule.name,
     }))
@@ -658,9 +597,12 @@ export const routeClinicalShape = (
     }
   }
 
-  // Nothing matched: fall back to the pack's default task, or vital-signs.
+  // Nothing matched: fall back to the pack's default task, or vital-signs. A CLINICAL default
+  // only — a pack nominating `transcript` or `summary` here would have the router selecting
+  // tooling for a document it recognised nothing in, which is the one thing routing by
+  // clinical question is meant to stop.
   const fallback: Task =
-    defaultTask && (TASKS as readonly string[]).includes(defaultTask) ? (defaultTask as Task) : 'vital-signs'
+    defaultTask && CLINICAL_TASKS.includes(defaultTask as Task) ? (defaultTask as Task) : 'vital-signs'
 
   return {
     task: fallback,

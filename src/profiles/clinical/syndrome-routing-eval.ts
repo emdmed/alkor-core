@@ -209,12 +209,11 @@ const BOTH: SyndromeCase[] = [
     input: 'Dictation: patient with pneumonia, now hypotensive and tachycardic with cool extremities and rising lactate. Query septic shock.',
     expectedArms: ['shock', 'sepsis'],
     difficulty: 3,
+    // The gap this case documented is closed. It failed for as long as modality beat question:
+    // `dictation` won at 0.95, the plan was [transcript], and both syndromes went unscreened.
+    // Transcription is tooling now and no rule can select it, so the note is read for what it
+    // says — which is septic shock.
     discriminates: 'a dictation marker in front of a septic-shock note must not demote it to a transcript',
-    knownGap:
-      'modality beats question by design — `dictation` at 0.95 wins outright, so the plan is ' +
-      '[transcript] and both syndromes go unscreened. Defensible if the dictation is meant to be ' +
-      'transcribed and re-routed, indefensible if this is the only pass the note gets; the case ' +
-      'stays here stating the clinical answer until that is decided',
   },
   {
     input:

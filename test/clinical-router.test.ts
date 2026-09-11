@@ -17,7 +17,7 @@ import {
 import {
   type ClinicalShape,
   DEFAULT_TASK_FOR_SHAPE,
-  NOTE_DEFAULT_TASKS,
+  TOOLING_TASKS,
   UNREVIEWABLE_TASKS,
   type Task,
 } from '../src/profiles/clinical/contracts.ts'
@@ -80,54 +80,58 @@ test('exam-json shape: JSON without shock keys falls through to note', () => {
   assert.equal(r.task, 'vital-signs')
 })
 
-test('summary-input shape: JSON array of strings routes to summary', () => {
-  const r = routeClinicalShape(JSON.stringify(['note1.txt', 'note2.txt']))
-  assert.equal(r.shape, 'summary-input')
-  assert.equal(r.task, 'summary')
-  assert.equal(r.confidence, 1.0)
+/*
+ * Modality is no longer a shape. Transcription, note formatting and summarisation are tooling
+ * asked for by name — see `TOOLING_TASKS` — so a consultation, a dictation and a list of paths
+ * are each routed by what they SAY, or by nothing at all. These tests pin the reading the
+ * clinical rules now have to give them.
+ */
+
+test('a list of paths is no longer routed, but still skips the front door', () => {
+  const r = routeClinicalShape(JSON.stringify(['a.txt', 'b.txt']))
+  assert.equal(r.task, 'vital-signs')
+  assert.equal(r.confidence, 0)
+  assert.ok(skipsFrontDoor(JSON.stringify(['a.txt', 'b.txt'])))
+  assert.ok(skipsFrontDoor('notes/patient-a.note.txt\nnotes/patient-b.note.txt\n'))
 })
 
-test('summary-input shape: newline-separated list of file paths routes to summary', () => {
-  const r = routeClinicalShape('notes/patient-a.note.txt\nnotes/patient-b.note.txt\n')
-  assert.equal(r.shape, 'summary-input')
-  assert.equal(r.task, 'summary')
-})
-
-test('summary-input shape: single line does not route to summary', () => {
-  const r = routeClinicalShape('notes/patient-a.note.txt')
-  assert.notEqual(r.shape, 'summary-input')
-})
-
-test('dialogue shape: two speaker turns routes to transcript', () => {
+test('a consultation with no syndrome in it is a clinical note', () => {
   const r = routeClinicalShape('Doctor: How are you?\nPatient: I have chest pain.')
-  assert.equal(r.shape, 'dialogue')
-  assert.equal(r.task, 'transcript')
-  assert.equal(r.confidence, 0.95)
+  assert.equal(r.shape, 'note')
+  assert.equal(r.task, 'vital-signs')
+  assert.deepEqual(r.tasks, ['vital-signs'])
 })
 
-test('dialogue shape: D: and P: labels routes to transcript', () => {
+test('vitals spoken in a consultation reach the vitals route', () => {
   const r = routeClinicalShape('D: BP 120/80.\nP: HR 72.')
-  assert.equal(r.shape, 'dialogue')
-  assert.equal(r.task, 'transcript')
+  assert.equal(r.shape, 'vitals-note')
+  assert.equal(r.task, 'vital-signs')
 })
 
-test('dictation shape: starts with Dictation: routes to transcript', () => {
+test('a dictation carrying vitals reaches the vitals route', () => {
+  const r = routeClinicalShape('Dictation: BP 130/85, HR 76. Patient also reports dizziness.')
+  assert.equal(r.shape, 'vitals-note')
+  assert.equal(r.task, 'vital-signs')
+})
+
+test('a dictated note with no vitals is a clinical note', () => {
   const r = routeClinicalShape('Dictation: patient reports chest pain radiating to left arm.')
-  assert.equal(r.shape, 'dictation')
-  assert.equal(r.task, 'transcript')
-  assert.equal(r.confidence, 0.95)
+  assert.equal(r.shape, 'note')
+  assert.equal(r.task, 'vital-signs')
 })
 
-test('dictation shape: starts with Transcribed: routes to transcript', () => {
-  const r = routeClinicalShape('Transcribed: BP 120 over 80, heart rate 72.')
-  assert.equal(r.shape, 'dictation')
-  assert.equal(r.task, 'transcript')
+test('a dialogue and a dictation both take the front door', () => {
+  assert.equal(skipsFrontDoor('Doctor: How are you?\nPatient: I have chest pain.'), false)
+  assert.equal(skipsFrontDoor('Dictation: patient reports chest pain.'), false)
 })
 
-test('dictation shape: starts with Audio: routes to transcript', () => {
-  const r = routeClinicalShape('Audio: the patient says they feel dizzy.')
-  assert.equal(r.shape, 'dictation')
-  assert.equal(r.task, 'transcript')
+test('no rule can select a tooling task', () => {
+  for (const rule of DEFAULT_CLINICAL_RULES) {
+    assert.ok(
+      !TOOLING_TASKS.includes(taskForShape(rule.shape)),
+      `rule '${rule.name}' routes to the tooling task '${taskForShape(rule.shape)}'`,
+    )
+  }
 })
 
 test('vitals-note shape: contains BP and HR routes to vital-signs', () => {
@@ -155,13 +159,19 @@ test('note shape: clinical prose without vitals routes to vital-signs (default)'
   assert.equal(r.confidence, 0.7)
 })
 
-test('note shape: defaultTask note-format overrides to note-format', () => {
+test('a pack cannot re-point the note shape at note formatting', () => {
   const r = routeClinicalShape(
     'Patient admitted for chest pain, treated with aspirin, discharge planned.',
     'note-format',
   )
   assert.equal(r.shape, 'note')
-  assert.equal(r.task, 'note-format')
+  assert.equal(r.task, 'vital-signs')
+})
+
+test('a tooling defaultTask does not become the fallback either', () => {
+  const r = routeClinicalShape('hello world', 'transcript')
+  assert.equal(r.task, 'vital-signs')
+  assert.equal(r.confidence, 0)
 })
 
 // --- Shock suspicion shape -----------------------------------------------------------------
@@ -215,7 +225,7 @@ test('non-clinical input falls back to defaultTask', () => {
 
 // --- Rule precedence -----------------------------------------------------------------------
 
-test('exam-json wins over dialogue because confidence 1.0 > 0.95', () => {
+test('exam-json wins over the prose rules at confidence 1.0', () => {
   const r = routeClinicalShape(
     JSON.stringify({ heart_rate: 72 }) + '\nDoctor: How are you?\nPatient: Fine.',
   )
@@ -223,17 +233,10 @@ test('exam-json wins over dialogue because confidence 1.0 > 0.95', () => {
   assert.equal(r.confidence, 1.0)
 })
 
-test('dialogue overrides dictation when both present (both 0.95, dialogue first in rule order)', () => {
-  const r = routeClinicalShape('Dictation: Doctor: How are you?\nPatient: Fine.')
-  // dialogue is checked before dictation in the rule list, so it wins even though
-  // both have the same confidence. The first rule at a given confidence wins.
-  assert.equal(r.shape, 'dialogue')
-})
-
-test('dictation wins over vitals-note because confidence 0.95 > 0.9', () => {
+test('a dictation marker no longer outranks the vitals it precedes', () => {
   const r = routeClinicalShape('Dictation: BP 120/80, HR 72.')
-  assert.equal(r.shape, 'dictation')
-  assert.equal(r.task, 'transcript')
+  assert.equal(r.shape, 'vitals-note')
+  assert.equal(r.task, 'vital-signs')
 })
 
 test('vitals-note wins over note because confidence 0.9 > 0.7', () => {
@@ -307,21 +310,22 @@ test('a structured shock exam payload is not sent to the sepsis workflow', () =>
 })
 
 /**
- * Modality still wins outright, and this is the boundary of the change: a dialogue is a
- * document shape, not a clinical question, so a transcript that mentions shock is transcribed
- * rather than fanned out into extraction passes over a two-speaker conversation.
+ * The case that turned around, and the reason tooling came out of the router: a patient
+ * described as hypotensive and confused is a patient in suspected shock whether the words were
+ * typed into a note or spoken across a desk. This used to be classified a dialogue at 0.95 and
+ * transcribed, which answered a question nobody asked and suppressed the front door doing it.
  */
-test('a dialogue mentioning shock is still transcribed, not fanned out', () => {
+test('a consultation stating shock criteria reaches the shock workflow', () => {
   const r = routeClinicalShape(
     'Doctor: Your blood pressure is low and you seem confused.\nPatient: I feel faint, I think I am in shock.',
   )
-  assert.equal(r.shape, 'dialogue')
-  assert.deepEqual(r.tasks, ['transcript'])
+  assert.equal(r.shape, 'shock-suspicion')
+  assert.deepEqual(r.tasks, ['shock-extraction', 'shock'])
 })
 
 // --- taskForShape --------------------------------------------------------------------------
 
-const allShapes: ClinicalShape[] = ['exam-json', 'qsofa-json', 'shock-suspicion', 'sepsis-suspicion', 'dialogue', 'dictation', 'vitals-note', 'note', 'summary-input']
+const allShapes: ClinicalShape[] = ['exam-json', 'qsofa-json', 'shock-suspicion', 'sepsis-suspicion', 'vitals-note', 'note']
 
 for (const shape of allShapes) {
   test(`taskForShape(${shape}) returns the default task`, () => {
@@ -330,16 +334,8 @@ for (const shape of allShapes) {
   })
 }
 
-test('taskForShape(note) with defaultTask note-format returns note-format', () => {
-  assert.equal(taskForShape('note', 'note-format'), 'note-format')
-})
-
-test('taskForShape(note) with defaultTask vital-signs returns vital-signs', () => {
-  assert.equal(taskForShape('note', 'vital-signs'), 'vital-signs')
-})
-
-test('taskForShape(note) with unknown defaultTask returns vital-signs', () => {
-  assert.equal(taskForShape('note', 'unknown'), 'vital-signs')
+test('taskForShape(note) returns vital-signs, whatever the pack nominates', () => {
+  assert.equal(taskForShape('note'), 'vital-signs')
 })
 
 // --- Router edge cases --------------------------------------------------------------------
@@ -354,20 +350,17 @@ test('routeClinicalShape with JSON object that is not exam falls through', () =>
   assert.equal(r.shape, 'note')
 })
 
-test('dialogue detection requires two speaker labels for generic pattern', () => {
-  const r = routeClinicalShape('Speaker: hello world')
-  assert.notEqual(r.shape, 'dialogue')
-})
-
 /**
- * A dialogue is turn-taking, and these four cases are the edges of that definition.
+ * The note that made modality routing untenable, kept because the failure it describes is the
+ * one this change is for.
  *
- * `Patient:` at the head of a demographics line used to be sufficient on its own, and two lines
- * of `Word: ` used to be sufficient behind it — so a section-headed admission note was a
- * transcript at 0.95, which suppressed the front door and both syndrome arms. Section headings
- * are each written once; speakers speak twice.
+ * `Patient:` at the head of a demographics line was sufficient to classify a septic-shock
+ * admission note as a transcript at 0.95, and two lines of `Word: ` behind it made every
+ * section-headed note a candidate. The document was transcribed, `skipsFrontDoor` suppressed
+ * the vital-signs pass, and neither syndrome arm ever asked. Nothing here can read a speaker
+ * label any more, so the note is read for what it says — and it says shock.
  */
-test('a section-headed admission note is not a dialogue', () => {
+test('a section-headed admission note reaches the syndrome arms', () => {
   const note = [
     'Patient: 71 y/o F  MRN 4471982',
     'HPI: Two days of confusion, burning on urination.',
@@ -376,28 +369,22 @@ test('a section-headed admission note is not a dialogue', () => {
     'Neuro: Nonfocal.',
     'CXR: No consolidation.',
   ].join('\n')
-  assert.notEqual(routeClinicalShape(note).shape, 'dialogue')
+  const r = routeClinicalShape(note)
+  assert.deepEqual(r.tasks, ['shock-extraction', 'shock'])
   assert.equal(skipsFrontDoor(note), false, 'the front door must still read this note')
 })
 
-test('a SOAP note is not a dialogue, because P: alone is one speaker', () => {
+test('a SOAP note is routed by the vitals in it', () => {
   const soap = 'S: Chest pain for two days.\nO: BP 120/80, HR 72.\nA: Stable angina.\nP: Start GTN.'
-  assert.notEqual(routeClinicalShape(soap).shape, 'dialogue')
+  const r = routeClinicalShape(soap)
+  assert.equal(r.shape, 'vitals-note')
+  assert.equal(r.task, 'vital-signs')
 })
 
-test('a generic two-speaker transcript is a dialogue when a label recurs', () => {
+test('a two-speaker transcript is routed by its content, not its turns', () => {
   const r = routeClinicalShape('Smith: We reviewed her this morning.\nJones: Agreed.\nSmith: Discharge today.')
-  assert.equal(r.shape, 'dialogue')
-})
-
-test('a marker in front of a turn does not hide the speaker behind it', () => {
-  const r = routeClinicalShape('Dictation: Doctor: How are you?\nPatient: Fine.')
-  assert.equal(r.shape, 'dialogue')
-})
-
-test('dictation marker must be at the start of the string', () => {
-  const r = routeClinicalShape('The note says Dictation: something here.')
-  assert.notEqual(r.shape, 'dictation')
+  assert.equal(r.shape, 'note')
+  assert.equal(r.task, 'vital-signs')
 })
 
 test('vitals-note does not trigger on single abbreviation', () => {
@@ -834,11 +821,10 @@ test('every task a shape can route to is published as a route', async () => {
   }
 })
 
-test('a pack default that re-points the note shape is published as a route', async () => {
+test('no tooling task is published as a route', async () => {
   const routes = new Set((await clinicalRouteFan()).map((route) => route.name))
-  for (const task of NOTE_DEFAULT_TASKS) {
-    assert.equal(taskForShape('note', task), task)
-    assert.ok(routes.has(task), `note-shape override '${task}' is not published as a route`)
+  for (const task of TOOLING_TASKS) {
+    assert.ok(!routes.has(task), `tooling task '${task}' is drawn as a clinical route`)
   }
 })
 

@@ -218,10 +218,10 @@ test('full flow: vitals note → clinical → vital-signs → verified', async (
 })
 
 // ---------------------------------------------------------------------------
-// Case 2: Doctor-patient dialogue routes through transcript extraction
+// Case 2: A consultation is routed by what it says, not by being a conversation
 // ---------------------------------------------------------------------------
 
-test('full flow: doctor-patient dialogue → clinical → transcript → verified', async () => {
+test('full flow: doctor-patient dialogue → clinical → vital-signs → verified', async () => {
   const input = `Dr: How are you today?
 Pt: I have chest pain when I walk up hills.
 Dr: Does it settle when you stop?
@@ -234,9 +234,10 @@ Pt: Yes, within a couple of minutes.`
 
   // 2. Clinical internal router
   const clinicalRoute = routeClinicalShape(input)
-  assert.equal(clinicalRoute.shape, 'dialogue', 'clinical router should detect dialogue shape')
-  assert.equal(clinicalRoute.task, 'transcript', 'clinical router should choose transcript task')
-  assert.equal(clinicalRoute.confidence, 0.95, 'dialogue confidence should be 0.95')
+  // Transcription is tooling, not a clinical question, so no rule can select it: the
+  // consultation is read as the clinical note it is. See `TOOLING_TASKS`.
+  assert.equal(clinicalRoute.shape, 'note', 'a consultation with no syndrome in it is a note')
+  assert.equal(clinicalRoute.task, 'vital-signs', 'clinical router should choose vital-signs')
 
   // 3. Full pipeline
   const result = await buildTestPipeline(input)
@@ -253,15 +254,15 @@ Pt: Yes, within a couple of minutes.`
   assert.equal(finalReport!.verified, true)
   assert.deepStrictEqual(finalReport!.checkedFields, [
     'routedTask', 'shape', 'confidence', 'reason',
-    'presenting_complaint', 'medications',
+    'blood_pressure', 'heart_rate',
   ])
 })
 
 // ---------------------------------------------------------------------------
-// Case 3: Dictated note routes through transcript extraction
+// Case 3: A dictated note is routed by what it says too
 // ---------------------------------------------------------------------------
 
-test('full flow: dictated note → clinical → transcript → verified', async () => {
+test('full flow: dictated note → clinical → vital-signs → verified', async () => {
   const input = `Dictation: BP 120 over 80, heart rate 72, temperature 36.4, patient reports no chest pain.`
 
   // 1. Router classification
@@ -272,9 +273,11 @@ test('full flow: dictated note → clinical → transcript → verified', async 
 
   // 2. Clinical internal router (used when the pipeline still runs clinical anyway)
   const clinicalRoute = routeClinicalShape(input)
-  assert.equal(clinicalRoute.shape, 'dictation', 'clinical router should detect dictation shape')
-  assert.equal(clinicalRoute.task, 'transcript', 'clinical router should choose transcript task')
-  assert.equal(clinicalRoute.confidence, 0.95)
+  // The pipeline router still sends dictation to a transcriptor WORKFLOW — a different
+  // processing shape is exactly what that router is for. What changed is one level down: the
+  // clinical profile no longer has a transcript ROUTE to pick.
+  assert.equal(clinicalRoute.shape, 'note', 'clinical router reads the dictation as a note')
+  assert.equal(clinicalRoute.task, 'vital-signs')
 
   // 3. Full pipeline (the pipeline always runs clinical for extraction, even when router says transcriptor)
   const result = await buildTestPipeline(input)
@@ -336,10 +339,10 @@ test('full flow: shock exam JSON → clinical → shock → verified', async () 
 })
 
 // ---------------------------------------------------------------------------
-// Case 5: Summary input routes through patient summary extraction
+// Case 5: A list of notes is no longer routed to the summary contract
 // ---------------------------------------------------------------------------
 
-test('full flow: summary input → clinical → summary → verified', async () => {
+test('full flow: a list of notes → clinical → no summary route → verified', async () => {
   const input = `notes/patient-a.note.txt
 notes/patient-b.note.txt
 notes/patient-c.note.txt`
@@ -350,9 +353,9 @@ notes/patient-c.note.txt`
 
   // 2. Clinical internal router
   const clinicalRoute = routeClinicalShape(input)
-  assert.equal(clinicalRoute.shape, 'summary-input', 'clinical router should detect summary-input shape')
-  assert.equal(clinicalRoute.task, 'summary', 'clinical router should choose summary task')
-  assert.equal(clinicalRoute.confidence, 1.0, 'summary-input confidence should be definitive 1.0')
+  // Summarising a record is tooling: `--task summary` is how a caller asks for it, and the
+  // router cannot choose it for them. See `TOOLING_TASKS`.
+  assert.notEqual(clinicalRoute.task, 'summary', 'the router must not select a tooling task')
 
   // 3. Full pipeline
   const result = await buildTestPipeline(input)
@@ -369,7 +372,7 @@ notes/patient-c.note.txt`
   assert.equal(finalReport!.verified, true)
   assert.deepStrictEqual(finalReport!.checkedFields, [
     'routedTask', 'shape', 'confidence', 'reason',
-    'diagnoses', 'medications',
+    'blood_pressure', 'heart_rate',
   ])
 })
 
@@ -417,29 +420,29 @@ test('full flow: workflow context is written after each step and resumes correct
 })
 
 // ---------------------------------------------------------------------------
-// Rule precedence: dictation marker wins over vitals keywords
+// Rule precedence: dictated vitals are vitals
 // ---------------------------------------------------------------------------
 
-test('full flow: dictation marker takes precedence over vitals-note in clinical router', async () => {
-  // This input contains BOTH vitals abbreviations AND a dictation marker.
-  // The clinical router should choose dictation (confidence 0.95) over vitals-note (0.9).
+test('full flow: a dictation marker no longer outranks the vitals behind it', async () => {
+  // This input contains BOTH vitals abbreviations AND a dictation marker. The marker used to
+  // win at 0.95 and the reading was never taken.
   const input = `Dictation: BP 120/80, HR 72, temperature 36.5, SpO2 97%.`
 
   const clinicalRoute = routeClinicalShape(input)
-  assert.equal(clinicalRoute.shape, 'dictation', 'dictation should win over vitals-note')
-  assert.equal(clinicalRoute.task, 'transcript')
-  assert.equal(clinicalRoute.confidence, 0.95)
+  assert.equal(clinicalRoute.shape, 'vitals-note')
+  assert.equal(clinicalRoute.task, 'vital-signs')
 
-  // The external router also should route to transcriptor for this input.
+  // The pipeline router is unchanged: a dictation is still a different processing shape, and
+  // choosing a workflow is the question that router answers.
   const routerResult = await route({ input, rules: CLINICAL_RULES, defaultProfile: 'clinical' })
   assert.equal(routerResult.profile, 'transcriptor')
 })
 
 // ---------------------------------------------------------------------------
-// Edge case: exam-json wins over dialogue when both are present
+// Edge case: a structured payload wins over the prose around it
 // ---------------------------------------------------------------------------
 
-test('full flow: exam-json shape wins over dialogue when both present (confidence 1.0 > 0.95)', async () => {
+test('full flow: exam-json shape wins over the prose it is embedded in (confidence 1.0)', async () => {
   const input = JSON.stringify({ heart_rate: 110, skin_temperature: 'cool' }) +
     '\nDr: How are you?\nPt: I feel dizzy.'
 

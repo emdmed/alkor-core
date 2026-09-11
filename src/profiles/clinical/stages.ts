@@ -63,11 +63,13 @@ export type ClinicalPass =
   | { kind: 'code'; name: string; optional?: boolean }
 
 /**
- * Every routed task's passes, in execution order.
+ * Every RUNNABLE task's passes, in execution order.
  *
- * Only the routed tasks appear. `summary` is graded but cannot be run over one document, and
- * `shock-pipeline` is two of these tasks chained under one `--task` flag rather than a shape
- * of its own — neither is a route, so neither has a shape to declare here.
+ * Runnable, not routed, and the two stopped being the same thing when transcription and note
+ * formatting became tooling: nothing routes to them, and both still run — by name — so both
+ * still emit stages and both still have to declare them here. What is absent is what cannot
+ * be run over one document at all: `summary` reads an assembled record, and `shock-pipeline`
+ * is two of these tasks chained under one `--task` flag rather than a pass shape of its own.
  */
 export const TASK_PASSES: Partial<Record<Task, ClinicalPass[]>> = {
   'vital-signs': [{ kind: 'model' }, { kind: 'code', name: 'verify' }],

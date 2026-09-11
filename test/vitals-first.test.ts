@@ -47,15 +47,16 @@ test('the detector names what it saw, so a trace can show the decision', () => {
   assert.deepEqual(vitalsDetected('BP 88/54, HR 118, RR 24'), ['blood_pressure', 'heart_rate', 'respiratory_rate'])
 })
 
-test('structured payloads and transcripts skip the front door', () => {
-  // An exam or a qSOFA payload already IS the numbers; a dialogue or a dictation is a modality
-  // that wins the route outright, so the pass would be bought and then not used.
+test('structured inputs skip the front door, and only structured inputs', () => {
+  // An exam, a qSOFA payload or a list of paths already IS the numbers, or has none in it.
   assert.ok(skipsFrontDoor(JSON.stringify({ hypotension: true, heart_rate: 118, capillary_refill: 'delayed' })))
   assert.ok(skipsFrontDoor(JSON.stringify({ respiratory_rate: 24, systolic_bp: 88, gcs: 12 })))
-  assert.ok(skipsFrontDoor('Doctor: How are you?\nPatient: BP was 88 over 54.'))
-  assert.ok(skipsFrontDoor('Dictation: blood pressure 88 over 54, heart rate 118.'))
   assert.ok(skipsFrontDoor('notes/a.note.txt\nnotes/b.note.txt'))
   assert.equal(skipsFrontDoor('BP 88/54, HR 118, peripheries cool.'), false)
+  // Spoken prose takes the pass like any other prose. It was excluded only while a dialogue
+  // routed to `transcript` whatever its numbers said; now the numbers are what routes it.
+  assert.equal(skipsFrontDoor('Doctor: How are you?\nPatient: BP was 88 over 54.'), false)
+  assert.equal(skipsFrontDoor('Dictation: blood pressure 88 over 54, heart rate 118.'), false)
 })
 
 // --- Measurement ------------------------------------------------------------------------------

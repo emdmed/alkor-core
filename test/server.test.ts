@@ -79,7 +79,14 @@ test('health endpoint returns profiles and session count', async () => {
   assert.ok(decision, 'the clinical profile publishes no decision stage')
   assert.ok(decision.routes.some((route: any) => route.name === 'shock-extraction'))
   assert.equal(decision.routes.find((route: any) => route.name === 'shock-extraction').feeds, 'shock')
-  assert.equal(decision.routes.find((route: any) => route.name === 'summary').available, false)
+  // The fan is clinical questions only: transcription, note formatting and summarisation are
+  // tooling reached by `--task`, so none of them is drawn as a route. See `TOOLING_TASKS`.
+  for (const tooling of ['summary', 'note-format', 'transcript']) {
+    assert.ok(
+      !decision.routes.some((route: any) => route.name === tooling),
+      `tooling task '${tooling}' is published as a clinical route`,
+    )
+  }
   const verified = (data as any).topology.workflows.find((pipeline: any) => pipeline.name === 'clinical-verified')
   assert.deepEqual(verified.steps[1].input, [
     { name: 'document', ref: 'initial' },

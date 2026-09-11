@@ -141,7 +141,7 @@ src/profiles/ clinical/    the reference profile: four tasks, names no vital sig
                            review.ts    one note in, one reading out, provenance checked
                            eval.ts      vital signs over the corpus, scored and gated
                            set-eval.ts  summary, note-format, transcript: set extraction, cited
-                           clinical-router.ts  shape-based routing inside clinical (dialogue, dictation, exam-json, vitals-note, note)
+                           clinical-router.ts  shape-based routing inside clinical (exam-json, qsofa-json, shock/sepsis suspicion, vitals-note, note)
                            vitals-first.ts  the front door: read the vitals, run the CLI, then route
                            shock.ts     shock-category classification with rule-based reference arm
                            router-eval.ts   60-case confusion-matrix eval for the clinical router
@@ -456,10 +456,16 @@ older `router` worked example still measures specialist classification at 98.1% 
 a 54-case adversarial corpus (see `next_steps.md`); it is no longer the product front door.
 
 The **clinical internal router** (`src/profiles/clinical/clinical-router.ts`) runs *before*
-any GPU call, selecting the right sub-task (`vital-signs`, `transcript`, `summary`,
-`note-format`, `shock`) based on input shape: dialogue, dictation, exam JSON, vitals
-prose, or plain note. It is purely rule-based, zero GPU cost, and measured at 100% on 60
-cases.
+any GPU call, selecting the right sub-task (`vital-signs`, `shock`, `sepsis`, and the two
+prose extractions that feed them) from what the document says: an exam or qSOFA payload,
+shock or sepsis criteria in prose, vitals prose, or plain note. It is purely rule-based,
+zero GPU cost, and measured at 100% on 60 cases.
+
+It routes **clinical questions only**. `transcript`, `note-format` and `summary` are document
+tooling — transcribing, laying out, summarising — and none of them names a syndrome or decides
+a diagnosis, so the router cannot select them: they are asked for by name (`--task transcript`)
+and graded by `--task all` like every other contract. A consultation is therefore routed by
+what it says, not by being a conversation.
 
 Each **workflow recipe** is a `mode = "workflow"` profile, run by `src/modes/workflow.ts`.
 It chains profiles together: each step names a profile and an input reference, and the

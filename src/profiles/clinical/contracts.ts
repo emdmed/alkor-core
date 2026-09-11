@@ -311,30 +311,50 @@ export const UNGRADED_TASKS: Task[] = ['sepsis-extraction']
 /** The tasks `--task all` runs: every task that can actually report a number. */
 export const GRADED_TASKS: Task[] = TASKS.filter((t) => !UNGRADED_TASKS.includes(t))
 
-export type ClinicalShape = 'exam-json' | 'qsofa-json' | 'shock-suspicion' | 'sepsis-suspicion' | 'dialogue' | 'dictation' | 'vitals-note' | 'note' | 'summary-input'
+/**
+ * The tasks that are DOCUMENT TOOLING rather than clinical questions.
+ *
+ * Transcribing a consultation, laying a note out in four sections, and summarising a record
+ * are things you do TO a document. None of them names a syndrome, decides a diagnosis, or
+ * has a clinical answer to be right or wrong about — the run ends with a formatted document,
+ * not with something established about the patient. So the router does not select them:
+ * routing is the question "what does this document raise about this patient", and a document
+ * being a dialogue is an answer to a different question entirely.
+ *
+ * They are NOT removed, and the distinction matters. Each keeps its contract, its corpus,
+ * its eval and its stages, and each remains runnable by name — `--task transcript` is how a
+ * caller who wants a transcript asks for one, and `--task all` still grades them. What they
+ * lost is the ability to be chosen FOR a caller by the clinical router.
+ *
+ * The consequence worth stating is what now happens to a consultation: it is routed by what
+ * it says. A dialogue in which a patient is hypotensive and tachycardic used to be
+ * transcribed and nothing else, because modality won outright; it now runs the front door
+ * and reaches the shock arm like any other prose that states those two findings.
+ */
+export const TOOLING_TASKS: Task[] = ['summary', 'note-format', 'transcript']
 
-/** The default task each shape routes to. The `note` shape is overridden by the pack's `defaultTask`. */
+/** Every task that answers a clinical question — the complement of `TOOLING_TASKS`. */
+export const CLINICAL_TASKS: Task[] = TASKS.filter((t) => !TOOLING_TASKS.includes(t))
+
+export type ClinicalShape = 'exam-json' | 'qsofa-json' | 'shock-suspicion' | 'sepsis-suspicion' | 'vitals-note' | 'note'
+
+/**
+ * The task each shape routes to.
+ *
+ * Every shape here is a clinical question or the prose that raises one. The three modality
+ * shapes this table used to carry — `dialogue`, `dictation`, `summary-input` — are gone with
+ * the tooling tasks they pointed at: see `TOOLING_TASKS`. A document's modality decides which
+ * PROMPT a contract takes (`[clinical.dialogueDetection]`, read in `settings.ts`), which is
+ * where that fact was always load-bearing; it no longer decides which question is asked.
+ */
 export const DEFAULT_TASK_FOR_SHAPE: Record<ClinicalShape, Task> = {
   'exam-json': 'shock',
   'qsofa-json': 'sepsis',
   'shock-suspicion': 'shock-extraction',
   'sepsis-suspicion': 'sepsis-extraction',
-  'summary-input': 'summary',
-  dialogue: 'transcript',
-  dictation: 'transcript',
   'vitals-note': 'vital-signs',
   note: 'vital-signs',
 }
-
-/**
- * The tasks a pack's `defaultTask` may re-point the `note` shape to.
- *
- * Data rather than a condition inside `taskForShape` because two things read it: the router
- * applies the override, and the topology has to draw a route for a task no shape names by
- * default. A pack that turns on note formatting makes it reachable, so a graph that omitted
- * it would be describing a different profile than the one running.
- */
-export const NOTE_DEFAULT_TASKS: Task[] = ['note-format']
 
 /**
  * Which task consumes which other task's output, when prose takes the long path.
@@ -364,29 +384,26 @@ export const TASK_ORDER: Task[] = [
   'sepsis-extraction',
   'sepsis',
   'vital-signs',
-  'note-format',
-  'transcript',
-  'summary',
 ]
 
 /**
  * Tasks the profile can GRADE but cannot RUN over one document.
  *
  * Summary reads a whole record assembled from many notes, so `extract` refuses it by name.
- * Stated here because the refusal and the topology's `available: false` are the same fact,
- * and a route drawn as runnable that throws on arrival is worse than no route at all.
+ * It is tooling and therefore not a route either, so this no longer has a drawn route to
+ * agree with — it is now only the refusal, stated once, where `review` reads it.
  */
 export const UNREVIEWABLE_TASKS: Task[] = ['summary']
 
 /**
  * Every task the internal router can select, in dependency order.
  *
- * Derived rather than listed: a shape's task, the `note` shape's overrides, and whatever
- * those tasks feed. This is the profile's route fan — adding a shape adds a route without
- * anyone remembering to.
+ * Derived rather than listed: a shape's task and whatever that task feeds. This is the
+ * profile's route fan — adding a shape adds a route without anyone remembering to, and no
+ * tooling task can appear in it, because no shape names one.
  */
 export const ROUTED_TASKS: Task[] = (() => {
-  const entry = [...new Set([...Object.values(DEFAULT_TASK_FOR_SHAPE), ...NOTE_DEFAULT_TASKS])]
+  const entry = [...new Set(Object.values(DEFAULT_TASK_FOR_SHAPE))]
   const reached = new Set<Task>()
   for (const task of entry) {
     let current: Task | undefined = task
