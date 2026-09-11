@@ -38,6 +38,7 @@ import type { ProfileTopology } from './core/topology.ts'
 import { identifyServer, probeServer, DEFAULT_URL } from './core/client.ts'
 import {
   LlamaManager,
+  normalizeBaseUrl,
   withTouching,
   type LlamaManagerOptions,
   type ManagedSpec,
@@ -169,7 +170,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
   const modelIdentityCache = new Map<string, Awaited<ReturnType<typeof identifyServer>>>()
 
   const emitModelIdentified = async (baseUrl?: string) => {
-    const url = baseUrl ?? process.env.LLAMA_URL ?? 'http://127.0.0.1:8080'
+    const url = backendFor(baseUrl)
     if (modelIdentityCache.has(url)) return
     // Only a backend that answers is identified. A down one would fire a useless
     // model.identified(false) and, once cached, stay silent when it later comes up or is
@@ -187,12 +188,17 @@ export const createServer = async (configPath?: string, options: ServerOptions =
     })
   }
 
+  // The endpoint a profile talks to, spelled the one way everything here keys by: the
+  // manager's entries, the reachability map, and the identity cache are all read with this.
+  const backendFor = (profileUrl?: string): string =>
+    normalizeBaseUrl(profileUrl ?? process.env.LLAMA_URL ?? DEFAULT_URL)
+
   // The distinct llama-server endpoints everything here can talk to: each profile's own
   // `url`, plus the process-wide fallback. This set is what "is a model up?" means.
   const backendUrls = ((): string[] => {
     const seen = new Set<string>()
     const add = (url: string) => {
-      const clean = url.replace(/\/+$/, '')
+      const clean = normalizeBaseUrl(url)
       if (clean) seen.add(clean)
     }
     for (const profile of Object.values(cfg.profiles)) {
@@ -206,9 +212,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
   // A backend with no `model`/`ctx` in any profile stays unmanaged: the server will not
   // guess how to launch it for you.
   for (const baseUrl of backendUrls) {
-    const profile = Object.values(cfg.profiles).find(
-      (p) => (p.url ?? process.env.LLAMA_URL ?? DEFAULT_URL).replace(/\/+$/, '') === baseUrl,
-    )
+    const profile = Object.values(cfg.profiles).find((p) => backendFor(p.url) === baseUrl)
     const spec: ManagedSpec = {
       baseUrl,
       model: profile ? (profile.model as string | undefined) : undefined,
@@ -630,7 +634,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
         const pinned = pinnedRouters[0]
         if (!rules && !explicitModel && pinned) {
           const { profile, config: profileConfig } = await loadProfile(pinned.name)
-          const routerUrl = profileConfig.url?.replace(/\/+$/, '')
+          const routerUrl = profileConfig.url ? backendFor(profileConfig.url) : undefined
 
           // No URL means this router is intentionally rules-only. A configured URL opts
           // the router into model fallback and therefore into managed-backend preflight.
@@ -727,7 +731,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
             }
             // A workflow router without a URL is deliberately rules-only. Supplying a URL
             // opts it into the same model fallback lifecycle as any other router profile.
-            const routerUrl = router.config.url as string | undefined
+            const routerUrl = router.config.url ? backendFor(router.config.url as string) : undefined
             if (routerUrl) {
               const ready = await manager.ensure(routerUrl)
               backendReachability.set(routerUrl, ready)
@@ -777,7 +781,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
 
         const { profile, config: profileConfig } = await loadProfile(profileName)
         const pack = await loadPackForProfile(profileName, profile, profileConfig)
-        const baseUrl = profileConfig.url as string | undefined
+        const baseUrl = profileConfig.url ? backendFor(profileConfig.url as string) : undefined
         const options = (body?.options ?? {}) as Record<string, unknown>
         // `runId` is on the response for the same reason it is on every event this run
         // emits: it is the only key that ties the answer a caller holds to the feed that
@@ -798,7 +802,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
         const neededBackends = new Set<string>()
         const hasSteps = Array.isArray(profileConfig.steps) && profileConfig.steps.length > 0
         const needsModel = await (async (): Promise<boolean> => {
-          const profileUrl = baseUrl ?? process.env.LLAMA_URL ?? DEFAULT_URL
+          const profileUrl = backendFor(baseUrl)
           if (profile.mode === 'extract' || profile.mode === 'agentic') {
             neededBackends.add(profileUrl)
             return true
@@ -811,7 +815,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
             // obligates a usable backend. Configs are cached, so this costs nothing.
             const stepEntry = await loadProfile(stepName)
             if (callsModel(stepEntry.config.mode)) {
-              neededBackends.add(stepEntry.config.url ?? process.env.LLAMA_URL ?? DEFAULT_URL)
+              neededBackends.add(backendFor(stepEntry.config.url as string | undefined))
             }
           }
           return neededBackends.size > 0
@@ -1021,7 +1025,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
         }
 
         const { profile, config: profileConfig } = await loadProfile(profileName)
-        const baseUrl = profileConfig.url as string | undefined
+        const baseUrl = profileConfig.url ? backendFor(profileConfig.url as string) : undefined
 
         const rawPrompt = profile.chatSystemPrompt ?? profile.systemPrompt ?? ''
         const systemPrompt = typeof rawPrompt === 'function' ? rawPrompt(undefined) : rawPrompt
@@ -1039,7 +1043,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
         })
 
         const id = randomUUID()
-        const effectiveBaseUrl = baseUrl ?? process.env.LLAMA_URL ?? DEFAULT_URL
+        const effectiveBaseUrl = backendFor(baseUrl)
         // Session creation carries no user prompt, so it must not wake a dormant model.
         // Retaining the URL here lets the first (and every post-idle) send wait for it.
         sessions.set(id, { profile: profileName, baseUrl: effectiveBaseUrl, session })

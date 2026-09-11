@@ -97,12 +97,37 @@ const realSpawn: SpawnFn = (command, args) => {
   child.stderr?.on('data', (c: Buffer) => (err = `${err}${c.toString()}`.slice(-4000)))
   return {
     pid: child.pid ?? 0,
-    exit: new Promise((onExit) => child.once('exit', (code, signal) => onExit({ code, signal }))),
+    // A spawn that never happens — `llama-server` off PATH, a typo in the binary — reports
+    // ENOENT on the 'error' event, asynchronously, and then emits no 'exit' at all. Both
+    // halves matter: without this listener the EventEmitter rethrows the error as an
+    // uncaught exception (the host dies on the first prompt for a dormant backend, where a
+    // 503 naming the reason was the whole intent), and without resolving `exit` here the
+    // start loop would wait out its full timeout for a child that does not exist. The
+    // error text goes on the stderr tail because that is what the failure message quotes.
+    exit: new Promise((onExit) => {
+      child.once('exit', (code, signal) => onExit({ code, signal }))
+      child.once('error', (e: Error) => {
+        err = `${err}${e.message}\n`.slice(-4000)
+        onExit({ code: null, signal: null })
+      })
+    }),
     kill: (signal) => child.kill(signal),
     stdout: () => out,
     stderr: () => err,
   }
 }
+
+/**
+ * The key a backend is known by: one spelling per endpoint, so `http://host:8081` and
+ * `http://host:8081/` are the same entry.
+ *
+ * Registration used to normalize and the callers did not, which made a single trailing
+ * slash in `profiles.toml` silently unmanage that profile: `ensure` missed the entry and
+ * refused with "no model is configured to spawn it" while one plainly was, and `track`
+ * bumped nothing, so a long generation lost its guard against the idle sweep. Normalizing
+ * inside the manager means every method agrees regardless of how a caller spells the URL.
+ */
+export const normalizeBaseUrl = (baseUrl: string): string => baseUrl.replace(/\/+$/, '')
 
 const expandTilde = (p: string): string =>
   p === '~' ? homedir() : p.startsWith('~/') || p.startsWith('~\\') ? join(homedir(), p.slice(2)) : p
@@ -160,11 +185,12 @@ export class LlamaManager {
   /** Record a backend the host could manage. Idempotent; latest spec wins. */
   register(spec: ManagedSpec): void {
     const now = Date.now()
-    const existing = this.entries.get(spec.baseUrl)
-    this.entries.set(spec.baseUrl, {
+    const baseUrl = normalizeBaseUrl(spec.baseUrl)
+    const existing = this.entries.get(baseUrl)
+    this.entries.set(baseUrl, {
       // A re-register may omit the lifecycle facts; last-known pinning survives it, so
       // the host declaring a gateway once cannot lose the property by re-invoking.
-      spec: { ...spec, pinned: spec.pinned ?? existing?.spec.pinned },
+      spec: { ...spec, baseUrl, pinned: spec.pinned ?? existing?.spec.pinned },
       state: existing?.state ?? 'stopped',
       pid: existing?.pid,
       startedAt: existing?.startedAt ?? now,
@@ -175,39 +201,40 @@ export class LlamaManager {
   }
 
   canSpawn(baseUrl: string): boolean {
-    const e = this.entries.get(baseUrl)
+    const e = this.entries.get(normalizeBaseUrl(baseUrl))
     return Boolean(this.options.enabled && e?.spec.model)
   }
 
   status(baseUrl: string): { managed: boolean; state: BackendState; pinned: boolean } {
-    const e = this.entries.get(baseUrl)
+    const e = this.entries.get(normalizeBaseUrl(baseUrl))
     if (!e) return { managed: false, state: 'stopped', pinned: false }
     return { managed: this.options.enabled && Boolean(e.spec.model), state: e.state, pinned: Boolean(e.spec.pinned) }
   }
 
   /** Feature description for the 503 message: why a backend could not come up. */
   describe(baseUrl: string): string {
-    const e = this.entries.get(baseUrl)
+    const e = this.entries.get(normalizeBaseUrl(baseUrl))
     if (e?.state === 'failed' && e.error) return e.error
     if (this.canSpawn(baseUrl)) return 'did not come up in time'
     return 'not reachable, and no model is configured to spawn it'
   }
 
   touch(baseUrl: string): void {
-    const e = this.entries.get(baseUrl)
+    const e = this.entries.get(normalizeBaseUrl(baseUrl))
     if (e) e.lastUsed = Date.now()
   }
 
   /** Bookkeeping for one in-flight transport call: guard against idle-sweep, then clock. */
   track(baseUrl: string): { acquire(): void; release(): void } {
+    const key = normalizeBaseUrl(baseUrl)
     const on = () => {
-      const e = this.entries.get(baseUrl)
+      const e = this.entries.get(key)
       if (!e) return
       e.inFlight++
       e.lastUsed = Date.now()
     }
     const off = () => {
-      const e = this.entries.get(baseUrl)
+      const e = this.entries.get(key)
       if (!e) return
       e.inFlight = Math.max(0, e.inFlight - 1)
       e.lastUsed = Date.now()
@@ -220,15 +247,16 @@ export class LlamaManager {
    * Returns false when it is neither reachable nor spawnable.
    */
   async ensure(baseUrl: string): Promise<boolean> {
-    const e = this.entries.get(baseUrl)
-    if (await this.options.probe(baseUrl)) {
-      this.touch(baseUrl)
+    const key = normalizeBaseUrl(baseUrl)
+    const e = this.entries.get(key)
+    if (await this.options.probe(key)) {
+      this.touch(key)
       if (e) e.state = 'running'
       return true
     }
-    if (!this.canSpawn(baseUrl)) return false
+    if (!this.canSpawn(key)) return false
     if (e?.inflight) return e.inflight
-    const attempt = this.start(baseUrl)
+    const attempt = this.start(key)
     if (e) e.inflight = attempt
     try {
       return await attempt
@@ -237,7 +265,8 @@ export class LlamaManager {
     }
   }
 
-  async start(baseUrl: string): Promise<boolean> {
+  async start(rawBaseUrl: string): Promise<boolean> {
+    const baseUrl = normalizeBaseUrl(rawBaseUrl)
     const e = this.entries.get(baseUrl)
     if (!e || !e.spec.model) return false
     e.state = 'starting'
@@ -285,24 +314,41 @@ export class LlamaManager {
     if (ready) {
       e.state = 'running'
       e.lastUsed = Date.now()
+      // When this backend came up, so the `stopped` event can report how long the MODEL
+      // was resident. `startedAt` is seeded at registration (host boot), and reporting
+      // that on a stop would answer "how long has the server been running" in the one
+      // place someone reads to ask whether the idle window is too aggressive.
+      e.startedAt = startedAt
       this.emit(baseUrl, 'ready', { pid: proc.pid, model: e.spec.model, wallMs: Date.now() - startedAt })
       return true
     }
 
     proc.kill('SIGKILL')
     e.state = 'failed'
+    // A child that reported neither code nor signal never ran: `realSpawn` resolves the
+    // exit that way when the spawn itself failed, and the reason is on the stderr tail.
     e.error = exited
-      ? `llama-server exited (code ${exited.code ?? ''}${exited.signal ? `, ${exited.signal}` : ''}): ${proc.stderr().slice(-400)}`
+      ? exited.code === null && exited.signal === null
+        ? `llama-server could not be started: ${proc.stderr().slice(-400).trim()}`
+        : `llama-server exited (code ${exited.code ?? ''}${exited.signal ? `, ${exited.signal}` : ''}): ${proc.stderr().slice(-400)}`
       : `llama-server did not answer /health within ${Math.round(this.options.startTimeoutMs / 1000)}s`
     this.emit(baseUrl, 'failed', { error: e.error, wallMs: Date.now() - startedAt })
     return false
   }
 
-  async stop(baseUrl: string, reason: 'idle' | 'shutdown' = 'shutdown'): Promise<void> {
+  async stop(rawBaseUrl: string, reason: 'idle' | 'shutdown' = 'shutdown'): Promise<void> {
+    const baseUrl = normalizeBaseUrl(rawBaseUrl)
     const e = this.entries.get(baseUrl)
     if (!e || !e.proc) return
     const proc = e.proc
+    const startedAt = e.startedAt
     e.state = 'stopped'
+    // Let the child go before the first await. The process this entry owns is the only
+    // thing that makes a stop meaningful, so releasing it here is what makes a second
+    // stop a no-op: shutdown used to SIGTERM a pid that idle-stop had killed minutes
+    // earlier and emit a duplicate `stopped` event naming it.
+    e.proc = undefined
+    e.pid = undefined
     if (!proc.kill('SIGTERM')) {
       // Already dead — the exit is our signal either way.
     }
@@ -311,7 +357,7 @@ export class LlamaManager {
       sleep(5000).then(() => 'timeout' as const),
     ])
     if (outcome === 'timeout') proc.kill('SIGKILL')
-    this.emit(baseUrl, 'stopped', { pid: proc.pid, reason, wallMs: Date.now() - e.startedAt })
+    this.emit(baseUrl, 'stopped', { pid: proc.pid, reason, wallMs: Date.now() - startedAt })
   }
 
   /** Stop every backend idle longer than the timeout and not mid-request. Runs on a host timer. */

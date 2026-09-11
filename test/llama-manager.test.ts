@@ -189,6 +189,100 @@ test('a workflow reservation keeps a later backend alive between long pipeline s
   fake.stopAll()
 })
 
+test('a binary that does not exist is a reported failure, not an uncaught exception', async () => {
+  // The one test here that uses the REAL spawn, because the fake cannot reproduce what
+  // this covers: a child that fails to spawn reports ENOENT on 'error', asynchronously,
+  // and never emits 'exit'. Unhandled, that error is rethrown by the EventEmitter and the
+  // host dies on the first prompt for a dormant backend. A regression fails this test by
+  // killing the test process, which is the honest way to notice it.
+  const m = new LlamaManager({
+    idleMs: 10_000,
+    spawnArgs: [],
+    pollMs: 10,
+    startTimeoutMs: 5000,
+    binary: 'llama-server-that-does-not-exist',
+  })
+  m.register({ baseUrl: 'http://127.0.0.1:18120', model: '~/models/q.gguf' })
+
+  assert.equal(await m.ensure('http://127.0.0.1:18120'), false)
+  assert.equal(m.status('http://127.0.0.1:18120').state, 'failed')
+  assert.match(m.describe('http://127.0.0.1:18120'), /ENOENT/, 'the reason names the missing binary')
+})
+
+test('a trailing slash names the same backend as the URL without one', async () => {
+  const { fake, spawn } = makeWorld()
+  const m = new LlamaManager({ idleMs: 10_000, spawnArgs: [], pollMs: 10, startTimeoutMs: 2000, spawn })
+  // Registered the way the host derives it; used the way a profile spelled it in TOML.
+  m.register({ baseUrl: 'http://127.0.0.1:18121', model: '~/models/q.gguf' })
+  const spelled = 'http://127.0.0.1:18121/'
+
+  assert.equal(m.canSpawn(spelled), true, 'a configured model is spawnable under either spelling')
+  assert.equal(await m.ensure(spelled), true)
+  assert.equal(m.status(spelled).state, 'running')
+  assert.equal(fake.args.length, 1, 'one backend, not one per spelling')
+
+  // And the sweep guard reaches the same entry, so a long generation keeps it alive.
+  const reservation = m.track(spelled)
+  reservation.acquire()
+  ;(m as any).entries.get('http://127.0.0.1:18121').lastUsed = Date.now() - 60_000
+  await m.sweep()
+  assert.equal(m.status(spelled).state, 'running', 'in-flight work registered under either spelling')
+  reservation.release()
+  fake.stopAll()
+})
+
+test('a stop reports how long the model was up, not how long the host has been up', async () => {
+  const { fake, spawn } = makeWorld()
+  const url = 'http://127.0.0.1:18122'
+  const stops: number[] = []
+  const m = new LlamaManager({
+    idleMs: 10_000,
+    spawnArgs: [],
+    pollMs: 10,
+    startTimeoutMs: 2000,
+    spawn,
+    emit: (e) => {
+      if (e.state === 'stopped') stops.push(e.wallMs ?? -1)
+    },
+  })
+  m.register({ baseUrl: url, model: '~/models/q.gguf' })
+  // A host that has been up for an hour before anything needed this backend.
+  ;(m as any).entries.get(url).startedAt = Date.now() - 3_600_000
+
+  assert.equal(await m.ensure(url), true)
+  ;(m as any).entries.get(url).lastUsed = Date.now() - 60_000
+  await m.sweep()
+
+  assert.equal(stops.length, 1)
+  assert.ok(stops[0]! < 60_000, `stopped wallMs is the model's residency, got ${stops[0]}`)
+  fake.stopAll()
+})
+
+test('shutdown does not stop a backend the idle sweep already stopped', async () => {
+  const { fake, spawn } = makeWorld()
+  const url = 'http://127.0.0.1:18123'
+  const stops: string[] = []
+  const m = new LlamaManager({
+    idleMs: 10_000,
+    spawnArgs: [],
+    pollMs: 10,
+    startTimeoutMs: 2000,
+    spawn,
+    emit: (e) => {
+      if (e.state === 'stopped') stops.push(e.reason ?? 'unknown')
+    },
+  })
+  m.register({ baseUrl: url, model: '~/models/q.gguf' })
+
+  assert.equal(await m.ensure(url), true)
+  ;(m as any).entries.get(url).lastUsed = Date.now() - 60_000
+  await m.sweep()
+  await m.dispose()
+
+  assert.deepEqual(stops, ['idle'], 'one stop per backend that was actually running')
+  fake.stopAll()
+})
+
 test('withTouching bumps in-flight around a call so a long generation is not swept', async () => {
   let released = false
   const gate = new Promise<void>((r) => setTimeout(r, 20))
