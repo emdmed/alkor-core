@@ -2,9 +2,14 @@
 node_modules/
 *.log
 
-# Generated eval outputs & reports
+# Generated eval outputs & reports.
+#
+# ROOT ONLY. A bare `*.html` also caught web/index.html — Vite's entry point, and the one
+# file without which `npm run web` cannot start — so the browser dashboard did not build on
+# a clean clone while every other file under web/ was tracked. Reports are written here, at
+# the top level; source HTML lives in an app directory and is not this pattern's business.
 eval/
-*.html
+/*.html
 shock_eval.txt
 
 # Workspace / planning scratch files
