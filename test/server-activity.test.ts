@@ -360,14 +360,14 @@ test('closing the server ends attached SSE streams instead of hanging', async ()
 
 // --- Pipeline handoff edge ------------------------------------------------------------------
 
-test('pipeline run emits step.started with handoff edge', async () => {
+test('workflow run emits step.started with handoff edge', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'medextract-activity-test-'))
   const tomlPath = join(dir, 'profiles.toml')
   const profilePath = join(dir, 'profile.ts')
   writeFileSync(
     tomlPath,
     `[pipeline-test]
-mode = "pipeline"
+mode = "workflow"
 module = "profile.ts"
 steps = [
   { name = "extract", profile = "router" },
@@ -382,7 +382,7 @@ mode = "router"
     profilePath,
     `export const PROFILE = {
   name: 'pipeline-test',
-  mode: 'pipeline',
+  mode: 'workflow',
   needsPack: false,
   async runEval() { return { pass: true, summary: 'test' } },
 }

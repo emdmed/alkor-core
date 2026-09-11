@@ -93,7 +93,7 @@
   --ev-llm: #3b78a8;
   --ev-run: #32856e;
   --ev-http: #657985;
-  --ev-pipeline: #8c6b24;
+  --ev-workflow: #8c6b24;
   --ev-session: #b35f66;
   --ev-stage: #327d8e;
   --ev-route: #9a6a27;
@@ -184,7 +184,7 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
 .health-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .health-state.tone-ok { color: var(--success); }
 .health-state.tone-ok .health-dot { background: var(--success); }
-.health-state.tone-warn { color: var(--ev-pipeline); }
+.health-state.tone-warn { color: var(--ev-workflow); }
 .health-state.tone-warn .health-dot { background: var(--caution); }
 .health-state.tone-err { color: var(--destructive); }
 .health-state.tone-err .health-dot { background: var(--destructive); }
@@ -323,7 +323,7 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
 .ev-llm { color: var(--ev-llm); }
 .ev-run { color: var(--ev-run); }
 .ev-http { color: var(--ev-http); }
-.ev-pipeline { color: var(--ev-pipeline); }
+.ev-workflow { color: var(--ev-workflow); }
 .ev-session { color: var(--ev-session); }
 .ev-stage { color: var(--ev-stage); }
 .ev-route { color: var(--ev-route); }
@@ -557,6 +557,67 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
   overflow: auto;
 }
 .chat-msg-error { color: var(--destructive); }
+
+/* The ending: the one part of a run written to be read rather than inspected. It earns its
+   prominence from the reading size, the room, and the quiet mint surface — not from an accent
+   rule down its edge, which this system reserves Clinical Sky for actions and never for state. */
+.chat-msg-ending {
+  margin: 6px 0 0;
+  padding: 12px 14px;
+  background: color-mix(in oklab, var(--secondary) 45%, var(--card));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--foreground);
+  font-size: 0.74rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 420px;
+  overflow: auto;
+}
+.chat-msg-steps { margin-top: 6px; }
+.chat-msg-steps > summary {
+  cursor: pointer;
+  font-size: 0.68rem;
+  color: var(--muted-foreground);
+  padding: 2px 0;
+}
+.chat-msg-steps > summary:hover { color: var(--foreground); }
+
+/* The run log: a diagnostic transcript, so it is monospaced, scrolls on both axes (a padded
+   event line must not wrap into unreadable ragged columns), and stays visually subordinate to
+   the ending above it until a failure opens it. */
+.chat-msg-log { margin-top: 6px; }
+.chat-msg-log > summary {
+  cursor: pointer;
+  font-size: 0.68rem;
+  color: var(--muted-foreground);
+  padding: 2px 0;
+}
+.chat-msg-log > summary:hover { color: var(--foreground); }
+.chat-msg-log-body {
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  overflow: hidden;
+}
+.chat-msg-log-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 4px 4px 0;
+}
+.chat-msg-log-text {
+  margin: 0;
+  padding: 6px 8px 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.66rem;
+  line-height: 1.45;
+  color: var(--foreground);
+  white-space: pre;
+  max-height: 320px;
+  overflow: auto;
+}
 
 .chat-foot {
   border-top: 1px solid var(--border);
@@ -1209,7 +1270,7 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
 .g-work-badge svg { width: 9px; height: 9px; }
 .g-work-badge-model { background: color-mix(in oklab, var(--primary) 9%, var(--card)); color: var(--primary); }
 .g-work-badge-code { background: color-mix(in oklab, var(--muted-foreground) 13%, var(--card)); color: var(--secondary-foreground); }
-.g-work-badge-decision { background: color-mix(in oklab, var(--caution) 22%, var(--card)); color: var(--ev-pipeline); }
+.g-work-badge-decision { background: color-mix(in oklab, var(--caution) 22%, var(--card)); color: var(--ev-workflow); }
 .g-terminal-icon {
   position: absolute;
   right: 10px;
@@ -1273,7 +1334,7 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
   padding: 0 6px;
   font-size: 0.7rem;
 }
-.g-conf { color: var(--ev-pipeline); font-weight: 700; }
+.g-conf { color: var(--ev-workflow); font-weight: 700; }
 .g-decide {
   display: flex;
   align-items: center;
@@ -1539,6 +1600,42 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
   text-overflow: ellipsis;
 }
 
+/* Collapsed to its header: a workflow the run did not take, keeping its place in the
+   catalogue without spending the board's height on steps nobody is reading. */
+.g-compact.is-collapsed .c-header { border-bottom: 0; }
+.g-compact.is-collapsed:hover { opacity: 1; }
+
+.c-header-toggle {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.c-header-toggle:hover { background: color-mix(in oklab, var(--primary) 12%, transparent); color: var(--primary); }
+.c-header-toggle:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+
+/* The second half of a workflow that was cut open at its branch. Quiet: the label beside it
+   already names the workflow, and this only says which piece of it you are looking at. */
+.c-header-cont {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
 /* What the card holds, where a repeated "Queued" chip would have gone. */
 .c-header-summary {
   flex: none;
@@ -1754,7 +1851,7 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
 .c-step-router-info svg { width: 10px; height: 10px; flex: none; opacity: 0.7; }
 .c-step-route-label { font-weight: 600; }
 .c-step-chosen { color: color-mix(in oklab, var(--success) 52%, var(--foreground)); font-weight: 700; }
-.c-step-conf { color: var(--ev-pipeline); font-weight: 700; font-variant-numeric: tabular-nums; }
+.c-step-conf { color: var(--ev-workflow); font-weight: 700; font-variant-numeric: tabular-nums; }
 .c-step-rule {
   font-size: 0.7rem;
   border: 1px solid var(--border);
@@ -1947,7 +2044,7 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
 }
 .g-gateway .g-work-badge {
   background: color-mix(in oklab, var(--caution) 20%, var(--card));
-  color: var(--ev-pipeline);
+  color: var(--ev-workflow);
   font-size: 0.66rem;
 }
 .g-gateway .g-meta { font-size: 0.68rem; }

@@ -38,7 +38,7 @@ const WIDE = '(min-width: 1360px)'
 const NARROW = '(max-width: 759px)'
 
 export const App = () => {
-  const { state, serverUrl, setServerUrl, connect, paused, setPaused, clear, run, models } = useMedextract(DEFAULT_URL)
+  const { state, serverUrl, activeUrl, setServerUrl, connect, paused, setPaused, clear, run, models } = useMedextract(DEFAULT_URL)
   const isWide = useMedia(WIDE)
   const isNarrow = useMedia(NARROW)
 
@@ -53,7 +53,7 @@ export const App = () => {
   const [rightTab, setRightTab] = useState<'activity' | 'inspector'>('activity')
   const [logOpen, setLogOpen] = useState(false)
   const [inspected, setInspected] = useState<GraphNodeData | null>(null)
-  const [selectedPipeline, setSelectedPipeline] = useState('')
+  const [selectedWorkflow, setSelectedWorkflow] = useState('')
   const lastFocus = useRef<HTMLElement | null>(null)
 
   // Live values of panel/drawer/width state kept behind stable callbacks so the graph
@@ -65,10 +65,10 @@ export const App = () => {
   isNarrowRef.current = isNarrow
 
   useEffect(() => {
-    const pipelines = state.topology.pipelines
-    if (pipelines.some((pipeline) => pipeline.name === selectedPipeline)) return
-    setSelectedPipeline(pipelines[0]?.name ?? '')
-  }, [selectedPipeline, state.topology.pipelines])
+    const pipelines = state.topology.workflows
+    if (pipelines.some((pipeline) => pipeline.name === selectedWorkflow)) return
+    setSelectedWorkflow(pipelines[0]?.name ?? '')
+  }, [selectedWorkflow, state.topology.workflows])
 
   // The run panel can no longer lean on the graph once the viewport stops being wide.
   useEffect(() => {
@@ -171,14 +171,15 @@ export const App = () => {
           onToggle={toggleChat}
           state={state}
           run={run}
+          serverUrl={activeUrl}
           onOpenActivity={isNarrow ? toggleActivity : undefined}
         />
         <div className="graph-area">
           <Suspense fallback={<GraphLoadingSurface />}>
             <PipelineGraph
               state={state}
-              selectedPipeline={selectedPipeline}
-              onSelectedPipelineChange={setSelectedPipeline}
+              selectedWorkflow={selectedWorkflow}
+              onSelectedWorkflowChange={setSelectedWorkflow}
               onInspect={openInspector}
               onToggleActivity={toggleActivity}
               onToggleLog={onToggleLog}

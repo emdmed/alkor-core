@@ -14,8 +14,15 @@ error. Always run `npm run check` (test + typecheck) before committing.
 - `src/core/` — the harness: config, pack loading, transport, tracing, verification,
   assembly, bench, activity. **Core must never mention a clinical concept, vital sign, or consuming
   project.** Domain arrives as a pack (data) and a profile (code that reads it).
-- `src/modes/` — execution shapes: `extract`, `agentic`, `session`, `router`, `pipeline`.
-  These are generic; they know about the mode, not the domain.
+- `src/modes/` — execution shapes: `extract`, `agentic`, `session`, `router`, `workflow`.
+  These are generic; they know about the mode, not the domain. A profile may also declare
+  `mode = "code"`, which calls no model and runs through the same `review` call as `router`;
+  it is a declaration, not a module here.
+- **A workflow ends with an assessment, and an assessment computes nothing.** The step marked
+  `final = true` runs on every exit — including a refusal — and renders only values earlier
+  steps produced and a verifier checked. Never add a computation, a re-read of the input, or a
+  model call to it: that is what makes the ending gradeable by exact match with no GPU, and a
+  refused run must end stating no verdict at all. See `spec/nomenclature.md`.
 - `src/profiles/` — domain-specific implementations. Each profile exports a `ProfileModule`
   that satisfies the interface in `src/core/profile.ts`. The reference `clinical/` profile
   is the worked example; it is not special to core.

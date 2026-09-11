@@ -75,8 +75,8 @@ export interface ProfileModule {
   chatSystemPrompt?: string | ((pack?: Pack) => string)
   /** Agentic profiles only: the toolset the loop is handed. */
   tools?: ToolDef[]
-  /** Agentic profiles only: default step cap, overridable with --steps. */
-  maxSteps?: number
+  /** Agentic profiles only: default iteration cap, overridable with --iterations. */
+  maxIterations?: number
   /**
    * Static execution shape for dashboards and other topology clients. Optional so existing
    * out-of-tree profiles remain compatible; the server supplies a conservative mode-level
@@ -115,7 +115,20 @@ export interface ProfileModule {
   documentNames?(pack: Pack, options?: Record<string, unknown>): string[]
   /** Extract profiles only: one interactive document review. */
   review?(ctx: ReviewContext): Promise<ReviewResult>
-  runEval(ctx: EvalContext): Promise<EvalVerdict>
+  /**
+   * How this profile measures itself, when it has a measurement to offer.
+   *
+   * Optional, because "no eval" is a true thing for a profile to say and the required form
+   * gave it no way to say it. A workflow whose steps are declared in profiles.toml has
+   * nothing of its own to measure until someone writes a corpus for it, and under the
+   * required form it still had to return a verdict — so the stub asserted what `loadConfig`
+   * had already enforced and reported `pass: true`. A green PASS for a workflow nobody has
+   * measured is worse than no eval at all, because it is indistinguishable from one that was.
+   *
+   * A profile with neither this nor `review` is refused at load: it is a module that can
+   * be named but never run.
+   */
+  runEval?(ctx: EvalContext): Promise<EvalVerdict>
 }
 
 /**
@@ -298,8 +311,16 @@ export const loadProfileModule = async (name: string, module?: string): Promise<
     )
   }
   const profile = mod.PROFILE as ProfileModule | undefined
-  if (!profile?.runEval) {
-    throw new ProfileError(`${where} must export a PROFILE with a runEval function`)
+  if (!profile) {
+    throw new ProfileError(`${where} must export a PROFILE`)
+  }
+  // Either way of being runnable will do, but one of them is required. `runEval` alone is an
+  // eval-only profile, `review` alone is a workflow step or an interactive specialist that has
+  // no corpus yet; neither is an object that can be named in profiles.toml and never executed.
+  if (!profile.runEval && !profile.review) {
+    throw new ProfileError(
+      `${where} exports a PROFILE with neither runEval nor review — it declares a profile that cannot be run`,
+    )
   }
   return profile
 }

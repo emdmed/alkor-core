@@ -174,10 +174,11 @@ export {
   type RouterOptions,
 } from './modes/router.ts'
 export {
-  runPipeline,
-  buildPipeline,
-  type PipelineOptions,
-  type PipelineResult,
-  type PipelineStep,
-  type PipelineStepResult,
-} from './modes/pipeline.ts'
+  runWorkflow,
+  buildWorkflow,
+  type WorkflowOptions,
+  type WorkflowResult,
+  type WorkflowStep,
+  type WorkflowStepResult,
+  type WorkflowContext,
+} from './modes/workflow.ts'

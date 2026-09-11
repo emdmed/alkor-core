@@ -21,14 +21,14 @@ import { createServer as httpCreateServer, type IncomingMessage, type ServerResp
 import { randomUUID, createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
-import { loadConfig, requireProfile, ConfigError } from './core/config.ts'
+import { loadConfig, requireProfile, ConfigError, callsModel } from './core/config.ts'
 import { loadPack, resolvePackRoot, PackError } from './core/pack.ts'
 import { loadProfileModule, resolveProfileModule, ProfileError } from './core/profile.ts'
 import { nullTrace } from './core/trace.ts'
 import { route, type RouteResult, type RouteRule, type RouterOptions } from './modes/router.ts'
 import { runAgent } from './modes/agentic.ts'
 import { createSession, type Session, type TurnResult } from './modes/session.ts'
-import { runPipeline, buildPipeline } from './modes/pipeline.ts'
+import { runWorkflow, buildWorkflow } from './modes/workflow.ts'
 import { defaultProvider } from './core/client.ts'
 import { createActivity, withActivity, withActivityScope, LLM_CALL_STAGE, ACTIVITY_INSTANCE_HEADER, type Activity, type ActivityEvent } from './core/activity.ts'
 import { EXTRACT_STAGES } from './modes/extract.ts'
@@ -223,7 +223,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
   // simply kept resident, never consulted by /route. `/route` without explicit rules or a
   // model runs through this profile: its rules first, then its model, with the backend
   // guaranteed reachable before the routing call.
-  const gatewayProfiles = Object.values(cfg.profiles).filter(
+  const pinnedRouters = Object.values(cfg.profiles).filter(
     (p) => p.mode === 'router' && Boolean(p.pinned),
   )
 
@@ -307,6 +307,9 @@ export const createServer = async (configPath?: string, options: ServerOptions =
       }
     }
     if (mode === 'router') return { stages: [{ name: 'route', kind: 'decision', operation: 'decision' }] }
+    // A `code` profile computes; it does not decide. The operation is what a view reads, so
+    // describing one as a decision would draw a branch where there is none.
+    if (mode === 'code') return { stages: [{ name: 'compute', operation: 'code' }] }
     return { stages: [] }
   }
   const topologyForProfile = async (name: string, mode: string): Promise<ProfileTopology> => {
@@ -451,11 +454,15 @@ export const createServer = async (configPath?: string, options: ServerOptions =
 
     // CORS policy is per-request: loopback origins by default (see the helpers above).
     const cors = corsHeaders(corsAllowedOrigin(req.headers.origin))
+    // `extra` exists for one fact: the run id. An error that omits it tells a dashboard
+    // that something failed but not WHICH run failed, so the feed cannot be searched for
+    // what led up to it. Every refusal raised after a run id is minted carries it.
+    type ErrorExtra = Record<string, unknown> | undefined
     const ok = (res: ServerResponse, data: unknown) => json(res, 200, data, cors)
-    const bad = (res: ServerResponse, message: string) => json(res, 400, { error: message }, cors)
+    const bad = (res: ServerResponse, message: string, extra?: ErrorExtra) => json(res, 400, { error: message, ...extra }, cors)
     const notFound = (res: ServerResponse, message: string) => json(res, 404, { error: message }, cors)
-    const serverError = (res: ServerResponse, message: string) => json(res, 500, { error: message }, cors)
-    const serviceUnavailable = (res: ServerResponse, message: string) => json(res, 503, { error: message }, cors)
+    const serverError = (res: ServerResponse, message: string, extra?: ErrorExtra) => json(res, 500, { error: message, ...extra }, cors)
+    const serviceUnavailable = (res: ServerResponse, message: string, extra?: ErrorExtra) => json(res, 503, { error: message, ...extra }, cors)
 
     // Preflight for cross-origin PUT-ish requests (the dashboard's POSTs to /run, /session).
     // Resolved before the activity emit so the feed does not log browser noise.
@@ -490,8 +497,8 @@ export const createServer = async (configPath?: string, options: ServerOptions =
           topology: {
             pipeline: cfg.pipeline,
             profiles: topologyProfiles,
-            pipelines: Object.values(cfg.profiles)
-              .filter((profile) => profile.mode === 'pipeline')
+            workflows: Object.values(cfg.profiles)
+              .filter((profile) => profile.mode === 'workflow')
               .map((profile) => ({
                 name: profile.name,
                 steps: Array.isArray(profile.steps)
@@ -508,6 +515,10 @@ export const createServer = async (configPath?: string, options: ServerOptions =
                               .map(([name, ref]) => ({ name, ref }))
                           : undefined,
                       field: typeof step.field === 'string' ? step.field : undefined,
+                      // The terminal step, so a view can draw the ending as the ending rather
+                      // than as one more link in the chain. It is reached from every step
+                      // above it, not only from the one before.
+                      final: step.final === true ? true : undefined,
                     }
                   })
                   : [],
@@ -611,42 +622,42 @@ export const createServer = async (configPath?: string, options: ServerOptions =
         const explicitModel = body?.model as RouterOptions['model'] | undefined
 
         // The front-door path: a request that carries no explicit rules or model is routed
-        // by the pinned gateway profile — its rules catch what rules catch, and its model
+        // by the pinned router profile — its rules catch what rules catch, and its model
         // catches the rest. The backend is brought up here, loudly refusing when it cannot:
         // an initial prompt that needs classification must not silently fall to the default
         // because the classifier was never started.
         let result: RouteResult
-        const gateway = gatewayProfiles[0]
-        if (!rules && !explicitModel && gateway) {
-          const { profile, config: profileConfig } = await loadProfile(gateway.name)
-          const gatewayUrl = profileConfig.url?.replace(/\/+$/, '')
+        const pinned = pinnedRouters[0]
+        if (!rules && !explicitModel && pinned) {
+          const { profile, config: profileConfig } = await loadProfile(pinned.name)
+          const routerUrl = profileConfig.url?.replace(/\/+$/, '')
 
-          // No URL means this gateway is intentionally rules-only. A configured URL opts
+          // No URL means this router is intentionally rules-only. A configured URL opts
           // the router into model fallback and therefore into managed-backend preflight.
-          if (gatewayUrl) {
-            const ready = await manager.ensure(gatewayUrl)
+          if (routerUrl) {
+            const ready = await manager.ensure(routerUrl)
             if (!ready) {
-              backendReachability.set(gatewayUrl, false)
+              backendReachability.set(routerUrl, false)
               serviceUnavailable(
                 res,
-                `no model backend is reachable at ${gatewayUrl} — ${manager.describe(gatewayUrl)}. ` +
+                `no model backend is reachable at ${routerUrl} — ${manager.describe(routerUrl)}. ` +
                   'Start llama-server on it first (scripts/llama-server.sh), or check MEDEXTRACT_MANAGE_MODELS.',
               )
               done(503)
               return
             }
-            backendReachability.set(gatewayUrl, true)
-            await emitModelIdentified(gatewayUrl)
+            backendReachability.set(routerUrl, true)
+            await emitModelIdentified(routerUrl)
           }
 
           if (!profile.review) {
-            serverError(res, `pinned gateway profile '${gateway.name}' exposes no review (mode ${profile.mode})`)
+            serverError(res, `pinned router profile '${pinned.name}' exposes no review (mode ${profile.mode})`)
             done(500)
             return
           }
           const review = await profile.review({
             pack: undefined,
-            baseUrl: gatewayUrl,
+            baseUrl: routerUrl,
             trace: nullTrace(),
             input: { kind: 'text', text: input, label: 'server-input' },
             options: {},
@@ -654,7 +665,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
             activity,
           })
           if (!review.report || typeof review.report !== 'object') {
-            serverError(res, `gateway profile '${gateway.name}' produced no route report`)
+            serverError(res, `pinned router profile '${pinned.name}' produced no route report`)
             done(500)
             return
           }
@@ -695,45 +706,46 @@ export const createServer = async (configPath?: string, options: ServerOptions =
         const runId = randomUUID()
         if (automatic) {
           if (!cfg.pipeline) {
-            bad(res, 'no product pipeline is configured')
+            bad(res, 'no product pipeline is configured', { runId })
             done(400)
             return
           }
           const forcedWorkflow = typeof body?.workflow === 'string' ? body.workflow : undefined
           if (forcedWorkflow) {
             if (!cfg.pipeline.workflows.includes(forcedWorkflow)) {
-              bad(res, `workflow '${forcedWorkflow}' is not in the pipeline catalogue`)
+              bad(res, `workflow '${forcedWorkflow}' is not in the pipeline catalogue`, { runId })
               done(400)
               return
             }
             pipelineRoute = { profile: forcedWorkflow, confidence: 1, reason: 'manual workflow override' }
           } else {
-            const gateway = await loadProfile(cfg.pipeline.router)
-            if (!gateway.profile.review) {
-              serverError(res, `pipeline router '${cfg.pipeline.router}' exposes no review`)
+            const router = await loadProfile(cfg.pipeline.router)
+            if (!router.profile.review) {
+              serverError(res, `pipeline router '${cfg.pipeline.router}' exposes no review`, { runId })
               done(500)
               return
             }
             // A workflow router without a URL is deliberately rules-only. Supplying a URL
             // opts it into the same model fallback lifecycle as any other router profile.
-            const gatewayUrl = gateway.config.url as string | undefined
-            if (gatewayUrl) {
-              const ready = await manager.ensure(gatewayUrl)
-              backendReachability.set(gatewayUrl, ready)
+            const routerUrl = router.config.url as string | undefined
+            if (routerUrl) {
+              const ready = await manager.ensure(routerUrl)
+              backendReachability.set(routerUrl, ready)
               if (!ready) {
                 serviceUnavailable(
                   res,
-                  `no model backend is reachable at ${gatewayUrl} — ${manager.describe(gatewayUrl)}. ` +
+                  `no model backend is reachable at ${routerUrl} — ${manager.describe(routerUrl)}. ` +
                     'Start llama-server on it first (scripts/llama-server.sh), or check MEDEXTRACT_MANAGE_MODELS.',
+                  { runId },
                 )
                 done(503)
                 return
               }
-              await emitModelIdentified(gatewayUrl)
+              await emitModelIdentified(routerUrl)
             }
-            const review = await withActivityScope({ runId }, () => gateway.profile.review!({
+            const review = await withActivityScope({ runId }, () => router.profile.review!({
               pack: undefined,
-              baseUrl: gatewayUrl,
+              baseUrl: routerUrl,
               trace: nullTrace(),
               input: { kind: 'text', text: input, label: 'pipeline-input' },
               options: {},
@@ -741,14 +753,14 @@ export const createServer = async (configPath?: string, options: ServerOptions =
               activity,
             }))
             if (!review.report || typeof review.report !== 'object') {
-              serverError(res, `pipeline router '${cfg.pipeline.router}' produced no workflow route`)
+              serverError(res, `pipeline router '${cfg.pipeline.router}' produced no workflow route`, { runId })
               done(500)
               return
             }
             pipelineRoute = review.report as RouteResult
           }
           if (!cfg.pipeline.workflows.includes(pipelineRoute.profile)) {
-            serverError(res, `pipeline router selected workflow '${pipelineRoute.profile}' outside its catalogue`)
+            serverError(res, `pipeline router selected workflow '${pipelineRoute.profile}' outside its catalogue`, { runId })
             done(500)
             return
           }
@@ -767,17 +779,20 @@ export const createServer = async (configPath?: string, options: ServerOptions =
         const pack = await loadPackForProfile(profileName, profile, profileConfig)
         const baseUrl = profileConfig.url as string | undefined
         const options = (body?.options ?? {}) as Record<string, unknown>
+        // `runId` is on the response for the same reason it is on every event this run
+        // emits: it is the only key that ties the answer a caller holds to the feed that
+        // explains how it was produced. A dashboard uses it to assemble the run's log.
         const respond = <T extends object>(result: T, output: unknown) => ok(
           res,
           automatic
-            ? { ...runResult(result, output), workflow: profileName, route: pipelineRoute }
-            : runResult(result, output),
+            ? { ...runResult(result, output), runId, workflow: profileName, route: pipelineRoute }
+            : { ...runResult(result, output), runId },
         )
 
         // A run that would need a model can see the check coming: a backend that can never
         // answer the FIRST step would fail with a buried "cannot reach server" message and
         // the dashboard would read as "nothing happened". Refuse loudly instead. A router
-        // run is rules-only and a pipeline whose every step is a router runs on rules too,
+        // run is rules-only and a workflow whose every step is a router runs on rules too,
         // so those keep working with no model at all. A backend the manager can spawn is
         // brought up here rather than refused.
         const neededBackends = new Set<string>()
@@ -788,14 +803,14 @@ export const createServer = async (configPath?: string, options: ServerOptions =
             neededBackends.add(profileUrl)
             return true
           }
-          if (profile.mode !== 'pipeline' || !hasSteps) return false
+          if (profile.mode !== 'workflow' || !hasSteps) return false
           for (const step of profileConfig.steps as Array<Record<string, unknown>>) {
             const stepName = String(step?.profile ?? '')
             if (!stepName) continue
             // Router steps run on compiled rules; only a step that might call a model
             // obligates a usable backend. Configs are cached, so this costs nothing.
             const stepEntry = await loadProfile(stepName)
-            if (stepEntry.config.mode !== 'router') {
+            if (callsModel(stepEntry.config.mode)) {
               neededBackends.add(stepEntry.config.url ?? process.env.LLAMA_URL ?? DEFAULT_URL)
             }
           }
@@ -803,7 +818,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
         })()
         if (needsModel) {
           // Keep the parsed request (including its prompt) in this handler while every
-          // backend starts. Pipeline models are independent, so load them concurrently;
+          // backend starts. Workflow models are independent, so load them concurrently;
           // only dispatch the run after all of them have answered their readiness probe.
           const readiness = await Promise.all(
             [...neededBackends].map(async (needed) => ({ needed, ready: await manager.ensure(needed) })),
@@ -815,6 +830,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
               res,
               `no model backend is reachable at ${unavailable.needed} — ${manager.describe(unavailable.needed)}. ` +
                 'Start llama-server on it first (scripts/llama-server.sh), or check MEDEXTRACT_MANAGE_MODELS.',
+              { runId },
             )
             done(503)
             return
@@ -834,10 +850,10 @@ export const createServer = async (configPath?: string, options: ServerOptions =
           const runStartedAt = performance.now()
 
           try {
-            // Extract / router
-            if (profile.mode === 'extract' || profile.mode === 'router') {
+            // Extract / router / code — one review call, three declared shapes.
+            if (profile.mode === 'extract' || profile.mode === 'router' || profile.mode === 'code') {
               if (!profile.review) {
-                serverError(res, `profile '${profileName}' has no review implementation`)
+                serverError(res, `profile '${profileName}' has no review implementation`, { runId })
                 done(500)
                 return
               }
@@ -863,7 +879,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
             // Agentic
             if (profile.mode === 'agentic') {
               if (!profile.tools) {
-                serverError(res, `profile '${profileName}' declares no tools`)
+                serverError(res, `profile '${profileName}' declares no tools`, { runId })
                 done(500)
                 return
               }
@@ -872,7 +888,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
                 task: input,
                 workspace: String(options.workspace ?? '/tmp'),
                 tools: profile.tools,
-                maxSteps: Number(options.steps ?? profile.maxSteps ?? 12),
+                maxIterations: Number(options.iterations ?? profile.maxIterations ?? 12),
                 baseUrl,
                 trace: nullTrace(),
                 provider: wrappedProvider,
@@ -888,22 +904,23 @@ export const createServer = async (configPath?: string, options: ServerOptions =
               return
             }
 
-            // Pipeline
-            if (profile.mode === 'pipeline') {
+            // Workflow
+            if (profile.mode === 'workflow') {
               const steps = profileConfig.steps as Array<Record<string, unknown>> | undefined
               if (!steps || !Array.isArray(steps)) {
-                serverError(res, `profile '${profileName}' has no 'steps' array in its config`)
+                serverError(res, `profile '${profileName}' has no 'steps' array in its config`, { runId })
                 done(500)
                 return
               }
 
-              const pipelineSteps = buildPipeline(
+              const workflowSteps = buildWorkflow(
                 steps.map((s) => ({
                   name: String(s.name ?? 'unnamed'),
                   profile: String(s.profile ?? ''),
                   input: s.input as string | Record<string, string> | undefined,
                   field: s.field as string | undefined,
                   options: s.options as Record<string, unknown> | undefined,
+                  final: s.final === true,
                 })),
               )
 
@@ -911,7 +928,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
               const packs = new Map<string, Pack | undefined>()
               const baseUrls = new Map<string, string | undefined>()
 
-              for (const step of pipelineSteps) {
+              for (const step of workflowSteps) {
                 if (!profiles.has(step.profile)) {
                   const stepProfile = await loadProfile(step.profile)
                   profiles.set(step.profile, stepProfile.profile)
@@ -933,15 +950,15 @@ export const createServer = async (configPath?: string, options: ServerOptions =
               // then wait longer than the idle window while an earlier model generates
               // (the clinical shock route takes >120s on the reference hardware). Reserve
               // the complete set for the workflow so the sweeper cannot stop step N+1
-              // before the pipeline reaches it. Individual provider calls still touch the
+              // before the workflow reaches it. Individual provider calls still touch the
               // backend and the reservations are released as soon as the workflow ends.
               const reservations = [...neededBackends].map((url) => manager.track(url))
               for (const reservation of reservations) reservation.acquire()
-              let result: Awaited<ReturnType<typeof runPipeline>>
+              let result: Awaited<ReturnType<typeof runWorkflow>>
               try {
-                result = await runPipeline({
+                result = await runWorkflow({
                   initialInput: input,
-                  steps: pipelineSteps,
+                  steps: workflowSteps,
                   profiles,
                   packs,
                   baseUrls,
@@ -959,12 +976,20 @@ export const createServer = async (configPath?: string, options: ServerOptions =
                 profile: profileName,
                 wallMs: performance.now() - runStartedAt,
               })
-              respond(result, result.final)
+              // The run's ending, named rather than left for a client to sniff out of the
+              // step list. A workflow with a terminal step has written the one part of the
+              // response meant for a person to read, and a client should not have to guess
+              // which step that was — nor fall back to shape-matching a report.
+              const terminalIndex = workflowSteps.findIndex((step) => step.final)
+              const ending = terminalIndex === -1
+                ? undefined
+                : result.steps.find((step) => step.step === terminalIndex)?.text
+              respond({ ...result, ending }, result.final)
               done(200)
               return
             }
 
-            serverError(res, `mode '${profile.mode}' is not supported by the server`)
+            serverError(res, `mode '${profile.mode}' is not supported by the server`, { runId })
             done(500)
           } catch (e) {
             activity.emit({
@@ -973,7 +998,14 @@ export const createServer = async (configPath?: string, options: ServerOptions =
               wallMs: performance.now() - runStartedAt,
               error: (e as Error).message,
             })
-            throw e
+            // Answered here rather than rethrown to the generic handler: that handler knows
+            // the request but not the run, so its response could not name the run id the
+            // caller needs to read the feed. The console line is kept for the operator.
+            console.error(`Run ${runId} (${profileName}) failed:`, e)
+            const status = e instanceof ConfigError || e instanceof PackError || e instanceof ProfileError ? 400 : 500
+            json(res, status, { error: (e as Error).message, runId, profile: profileName }, cors)
+            done(status)
+            return
           }
         })
       }
@@ -1079,7 +1111,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
                 sessionId: id,
                 turn,
                 stop: 'error',
-                steps: 0,
+                iterations: 0,
                 toolsUsed: [],
               })
               throw e
@@ -1089,7 +1121,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
               sessionId: id,
               turn,
               stop: result.stop,
-              steps: result.steps,
+              iterations: result.iterations,
               toolsUsed: result.toolsUsed,
               usage: result.usage
                 ? {

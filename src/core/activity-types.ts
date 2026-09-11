@@ -9,7 +9,7 @@
  * must trust `seq` monotonicity, ignore duplicates, and refuse a stream whose
  * `activitySpec` does not match `ACTIVITY_SPEC`.
  */
-export const ACTIVITY_SPEC = 1
+export const ACTIVITY_SPEC = 2
 
 /**
  * Request header carrying the stream identity a resuming client's `Last-Event-ID` belongs
@@ -178,12 +178,12 @@ export interface RunFailedEvent extends BaseActivityEvent {
   error: string
 }
 
-export interface PipelineStartedEvent extends BaseActivityEvent {
-  kind: 'pipeline.started'
+export interface WorkflowStartedEvent extends BaseActivityEvent {
+  kind: 'workflow.started'
 }
 
 /**
- * One mapping inside a COMPOSED step input: `name` is the field the pipeline hands the
+ * One mapping inside a COMPOSED step input: `name` is the field the workflow hands the
  * next step, `ref` is where it resolves from. Held as (name, ref) pairs rather than as the
  * template object itself so the event survives the banned-key walk — a template maps a
  * field named `document`, and a field NAME is exactly what `emit()` refuses.
@@ -195,16 +195,16 @@ export interface TemplateRefEntry {
   ref: string
 }
 
-export interface PipelineStepStartedEvent extends BaseActivityEvent {
-  kind: 'pipeline.step.started'
+export interface WorkflowStepStartedEvent extends BaseActivityEvent {
+  kind: 'workflow.step.started'
   step: number
   name: string
   profile: string
   input?: { ref: string | TemplateRefEntry[]; field?: string; fromProfile?: string }
 }
 
-export interface PipelineStepCompletedEvent extends BaseActivityEvent {
-  kind: 'pipeline.step.completed'
+export interface WorkflowStepCompletedEvent extends BaseActivityEvent {
+  kind: 'workflow.step.completed'
   step: number
   name: string
   profile: string
@@ -212,8 +212,8 @@ export interface PipelineStepCompletedEvent extends BaseActivityEvent {
   wallMs?: number
 }
 
-export interface PipelineCompletedEvent extends BaseActivityEvent {
-  kind: 'pipeline.completed'
+export interface WorkflowCompletedEvent extends BaseActivityEvent {
+  kind: 'workflow.completed'
   stoppedEarly: boolean
   totalMs: number
 }
@@ -235,7 +235,7 @@ export interface TurnCompletedEvent extends BaseActivityEvent {
   sessionId: string
   turn: number
   stop: string
-  steps: number
+  iterations: number
   toolsUsed: string[]
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number; cachedTokens?: number }
 }
@@ -289,10 +289,10 @@ export type ActivityEvent =
   | RunStartedEvent
   | RunCompletedEvent
   | RunFailedEvent
-  | PipelineStartedEvent
-  | PipelineStepStartedEvent
-  | PipelineStepCompletedEvent
-  | PipelineCompletedEvent
+  | WorkflowStartedEvent
+  | WorkflowStepStartedEvent
+  | WorkflowStepCompletedEvent
+  | WorkflowCompletedEvent
   | SessionCreatedEvent
   | TurnStartedEvent
   | TurnCompletedEvent

@@ -191,14 +191,81 @@ const isSummaryInput = (input: string): boolean => {
   return false
 }
 
-const DIALOGUE_PATTERN = /^(Doctor|Dr|Patient|Pt|D|P):\s/mi
+/**
+ * Who speaks in a clinical transcript, as the label is actually written at the head of a turn.
+ *
+ * A CLOSED SET, and the reason it is closed is the bug it fixes. `Patient:` used to be enough on
+ * its own — one line-initial match and the document was a dialogue at 0.95 — and `Patient: 71
+ * y/o F  MRN 4471982` is the demographics header of an ordinary admission note, not a turn. The
+ * generic fallback behind it was worse: two lines of `Word: ` anywhere in the document, which is
+ * `HPI:`, `Gen:`, `CV:`, `Resp:`, `Abd:`, `Neuro:`, `ABG:`, `CXR:` — the section headings and
+ * exam systems every note is laid out with. A septic-shock admission note matched both, was
+ * classified a transcript, and `skipsFrontDoor` therefore suppressed the vital-signs pass: no
+ * blood-pressure parse, no shock index, and neither syndrome arm ever asked.
+ */
+const SPEAKER_LABELS = new Set([
+  'doctor', 'dr', 'physician', 'clinician', 'consultant', 'registrar',
+  'nurse', 'interviewer', 'examiner', 'interpreter', 'speaker',
+  'patient', 'pt', 'caller', 'relative', 'carer',
+  // Initials only, and deliberately only these two. `A:` and `P:` are the assessment and the
+  // plan of a SOAP note, `S:` and `O:` its subjective and objective; admitting `a` here to catch
+  // a `Q:`/`A:` interview would classify every SOAP note as a conversation, which is the same
+  // family of mistake this set exists to stop. `P:` alone is one speaker, so a SOAP note is a
+  // monologue and stays a note.
+  'd', 'p',
+])
 
+/** `Speaker 1:`, `Dr Patel:` — a vocabulary label carrying a name or a number still speaks. */
+const isSpeakerLabel = (label: string): boolean =>
+  SPEAKER_LABELS.has(label) || SPEAKER_LABELS.has(label.split(/\s+/)[0]!)
+
+/**
+ * The `label:` prefixes a line opens with, outermost first.
+ *
+ * Plural because a marker can sit in front of a turn — `Dictation: Doctor: How are you?` is a
+ * dictated dialogue, and reading only the outermost label would see `Dictation` and stop. Capped
+ * at three so a line of prose containing colons cannot be walked indefinitely.
+ */
+const leadingLabels = (line: string): string[] => {
+  const labels: string[] = []
+  let rest = line
+  for (let i = 0; i < 3; i++) {
+    const m = /^\s*([A-Za-z][\w.]*(?: [\w.]+){0,2})\s*:[ \t]+/.exec(rest)
+    if (!m) break
+    labels.push(m[1]!.toLowerCase())
+    rest = rest.slice(m[0].length)
+  }
+  return labels
+}
+
+/**
+ * Is this document a conversation between two or more people?
+ *
+ * TWO DISTINCT SPEAKERS, because one is a monologue and a monologue is a dictation. That is the
+ * single test that separates a transcript from a note: an admission note may well carry
+ * `Patient:` at the top, but it does not also carry `Doctor:` — nothing in it takes a turn.
+ *
+ * The generic fallback stays, for transcripts labelled with names this file cannot know
+ * (`Smith:` / `Jones:`), but it now demands what a conversation actually looks like: a label
+ * that RECURS. Turn-taking means somebody speaks twice. Section headings are each written once,
+ * so a note of twelve distinct headings is twelve headings, and a dialogue of two speakers over
+ * four turns is a dialogue.
+ */
 const isDialogue = (input: string): boolean => {
-  // Named speaker labels
-  if (DIALOGUE_PATTERN.test(input)) return true
-  // Two or more speaker labels on separate lines (word followed by colon)
-  const matches = input.match(/^\w+:\s.*$/gm)
-  return matches !== null && matches.length >= 2
+  const speakers = new Set<string>()
+  const labels = new Set<string>()
+  let total = 0
+
+  for (const line of input.split('\n')) {
+    for (const label of leadingLabels(line)) {
+      total++
+      labels.add(label)
+      if (isSpeakerLabel(label)) speakers.add(label)
+    }
+  }
+
+  if (speakers.size >= 2) return true
+  return labels.size >= 2 && total > labels.size
 }
 
 const DICTATION_MARKERS = ['Dictation:', 'Transcribed:', 'Audio:', 'Speech-to-text:', 'Audio recording:']

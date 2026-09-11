@@ -5,9 +5,9 @@
  *   node src/cli.ts extract --profile NAME (--note FILE | --case NAME | -) [--task NAME] [--constrain] [--json]
  *   node src/cli.ts eval    --profile NAME [--runs N] [--constrain] [--repair] [--difficulty N|N-M] [--no-cache-prompt] [--url URL] [--pack DIR]
  *   node src/cli.ts eval    --profile NAME --from-trace FILE [--strip-fences]
- *   node src/cli.ts agent   --profile NAME --task "..." --workspace DIR [--url URL] [--steps N]
+ *   node src/cli.ts agent   --profile NAME --task "..." --workspace DIR [--url URL] [--iterations N]
  *   node src/cli.ts route   --profile NAME --input "..." [--json]
- *   node src/cli.ts pipeline --profile NAME --input "..." [--json]
+ *   node src/cli.ts workflow --profile NAME --input "..." [--json]
  *   node src/cli.ts profiles
  *
  * `extract` is the job and `eval` is how you know it works. They are two entries into one
@@ -27,7 +27,7 @@ import { loadPack, resolvePackRoot, PackError, type Pack } from './core/pack.ts'
 import { TraceError } from './core/trace-read.ts'
 import { loadProfileModule, redactor, requireDocumentName, resolveProfileModule, ProfileError } from './core/profile.ts'
 import { runAgent } from './modes/agentic.ts'
-import { runPipeline, buildPipeline } from './modes/pipeline.ts'
+import { runWorkflow, buildWorkflow } from './modes/workflow.ts'
 import { nullTrace, openTrace } from './core/trace.ts'
 
 const { values } = parseArgs({
@@ -40,7 +40,7 @@ const { values } = parseArgs({
     pack: { type: 'string' },
     task: { type: 'string' },
     workspace: { type: 'string' },
-    steps: { type: 'string' },
+    iterations: { type: 'string' },
     note: { type: 'string' },
     case: { type: 'string' },
     difficulty: { type: 'string' },
@@ -69,7 +69,7 @@ const { values } = parseArgs({
     repair: { type: 'boolean', default: false },
     json: { type: 'boolean', default: false },
     calculate: { type: 'boolean', default: false },
-    // Pipeline fidelity eval: run three arms (monolith, specialist, verified) against
+    // Workflow fidelity eval: run three arms (monolith, specialist, verified) against
     // the clinical corpus and compare. See src/profiles/clinical-verified/eval.ts.
     fidelity: { type: 'boolean', default: false },
     // Limit the fidelity eval to N cases (for quick iteration).
@@ -83,9 +83,9 @@ const usage = (msg?: string) => {
   console.error('  node src/cli.ts extract --profile NAME (--note FILE | --case NAME | --note -) [--task NAME] [--constrain] [--repair] [--no-medication-pass] [--calculate] [--json] [--url URL] [--pack DIR]')
   console.error('  node src/cli.ts eval    --profile NAME [--input "..."] [--runs N] [--constrain] [--task NAME] [--repair] [--difficulty N|N-M] [--no-cache-prompt] [--no-medication-pass] [--url URL] [--pack DIR]')
   console.error('  node src/cli.ts eval    --profile NAME --from-trace FILE [--strip-fences] [--pack DIR]   (re-score a recorded run, no server)')
-  console.error('  node src/cli.ts agent   --profile NAME --task "..." --workspace DIR [--url URL] [--steps N]')
+  console.error('  node src/cli.ts agent   --profile NAME --task "..." --workspace DIR [--url URL] [--iterations N]')
   console.error('  node src/cli.ts route   --profile NAME --input "..." [--json] [--url URL]')
-  console.error('  node src/cli.ts pipeline --profile NAME --input "..." [--json] [--url URL] [--pack DIR] [--context-dir DIR] [--step N]')
+  console.error('  node src/cli.ts workflow --profile NAME --input "..." [--json] [--url URL] [--pack DIR] [--context-dir DIR] [--step N]')
   console.error('  node src/cli.ts profiles')
   process.exit(2)
 }
@@ -99,8 +99,12 @@ const die = (e: unknown): never => {
   throw e
 }
 
-const [command] = process.argv.slice(2).filter((a) => !a.startsWith('-'))
-if (!command) usage()
+const [typed] = process.argv.slice(2).filter((a) => !a.startsWith('-'))
+if (!typed) usage()
+// `pipeline` is the retired spelling of `workflow`, still accepted so existing scripts run.
+// See spec/nomenclature.md: the PIPELINE is the deployment's front door, and this command
+// runs one WORKFLOW directly.
+const command = typed === 'pipeline' ? 'workflow' : typed
 
 let cfg
 try {
@@ -121,7 +125,7 @@ if (command === 'profiles') {
   process.exit(0)
 }
 
-if (command !== 'eval' && command !== 'agent' && command !== 'extract' && command !== 'route' && command !== 'pipeline') usage(`unknown command '${command}'`)
+if (command !== 'eval' && command !== 'agent' && command !== 'extract' && command !== 'route' && command !== 'workflow') usage(`unknown command '${command}'`)
 if (!values.profile) usage('--profile is required')
 
 let profileConfig
@@ -156,7 +160,7 @@ if (profile!.needsPack || values.pack || profileConfig!.pack) {
 }
 
 if (command === 'extract') {
-  if (profile!.mode !== 'extract' && profile!.mode !== 'router' && profile!.mode !== 'pipeline') usage(`profile '${profile!.name}' is mode '${profile!.mode}', which extracts nothing`)
+  if (profile!.mode !== 'extract' && profile!.mode !== 'router' && profile!.mode !== 'code' && profile!.mode !== 'workflow') usage(`profile '${profile!.name}' is mode '${profile!.mode}', which extracts nothing`)
   if (!profile!.review) usage(`profile '${profile!.name}' does not implement review, so it cannot read a single document`)
   if (Boolean(values.note) === Boolean(values.case)) usage('extract needs exactly one of --note FILE and --case NAME')
 
@@ -248,15 +252,15 @@ if (command === 'agent') {
     task: values.task!,
     workspace: values.workspace!,
     tools: profile!.tools!,
-    maxSteps: Number(values.steps ?? profile!.maxSteps ?? 12),
+    maxIterations: Number(values.iterations ?? profile!.maxIterations ?? 12),
     baseUrl,
     trace,
   })
   trace.close()
-  console.log(`\nstop: ${res.stop}  steps: ${res.steps}  tools: ${res.toolsUsed.join(' → ') || '(none)'}`)
+  console.log(`\nstop: ${res.stop}  iterations: ${res.iterations}  tools: ${res.toolsUsed.join(' → ') || '(none)'}`)
   if (res.answer) console.log(`\n${res.answer}`)
   if (res.error) console.error(`\nerror: ${res.error}`)
-  // A step cap or a loop that never called a tool is a failure, not a quiet success.
+  // An iteration cap or a loop that never called a tool is a failure, not a quiet success.
   process.exit(res.stop === 'done' ? 0 : 1)
 }
 
@@ -294,34 +298,35 @@ if (command === 'route') {
   process.exit(result!.ok ? 0 : 1)
 }
 
-if (command === 'pipeline') {
-  if (!values.input) usage('pipeline needs --input')
-  if (profile!.mode !== 'pipeline') usage(`profile '${profile!.name}' is mode '${profile!.mode}', which is not a pipeline`)
+if (command === 'workflow') {
+  if (!values.input) usage('workflow needs --input')
+  if (profile!.mode !== 'workflow') usage(`profile '${profile!.name}' is mode '${profile!.mode}', which is not a workflow`)
 
   const stepNumber = values.step !== undefined ? Number(values.step) : undefined
   if (stepNumber !== undefined && (Number.isNaN(stepNumber) || stepNumber < 0 || !Number.isInteger(stepNumber))) {
     usage(`--step must be a non-negative integer, got '${values.step}'`)
   }
   if (stepNumber !== undefined && stepNumber > 0 && !values['context-dir']) {
-    usage('--step > 0 requires --context-dir to load state from previous steps')
+    usage('--step > 0 requires --context-dir to load the context from previous steps')
   }
 
-  // Pipeline steps are read from the profile config (profiles.toml extra keys).
+  // Workflow steps are read from the profile config (profiles.toml extra keys).
   const steps = profileConfig!.steps as Array<Record<string, unknown>> | undefined
   if (!steps || !Array.isArray(steps)) usage(`profile '${profile!.name}' has no 'steps' array in its config`)
 
-  const pipelineSteps = buildPipeline(
+  const workflowSteps = buildWorkflow(
     steps!.map((s) => ({
       name: String(s.name ?? 'unnamed'),
       profile: String(s.profile ?? ''),
       input: s.input as string | Record<string, string> | undefined,
       field: s.field as string | undefined,
       options: s.options as Record<string, unknown> | undefined,
+      final: s.final === true,
     })),
   )
 
-  if (stepNumber !== undefined && stepNumber >= pipelineSteps.length) {
-    usage(`--step ${stepNumber} is out of range (pipeline has ${pipelineSteps.length} steps)`)
+  if (stepNumber !== undefined && stepNumber >= workflowSteps.length) {
+    usage(`--step ${stepNumber} is out of range (workflow has ${workflowSteps.length} steps)`)
   }
 
   // Load all referenced profiles and packs.
@@ -329,7 +334,7 @@ if (command === 'pipeline') {
   const packs = new Map<string, Pack | undefined>()
   const baseUrls = new Map<string, string | undefined>()
 
-  for (const step of pipelineSteps) {
+  for (const step of workflowSteps) {
     if (!profiles.has(step.profile)) {
       const stepProfileConfig = requireProfile(cfg!, step.profile)
       const stepProfile = await loadProfileModule(
@@ -358,9 +363,9 @@ if (command === 'pipeline') {
   }
 
   const trace = openTrace(profile!.name, redactor(profile!, pack))
-  const result = await runPipeline({
+  const result = await runWorkflow({
     initialInput: values.input!,
-    steps: pipelineSteps,
+    steps: workflowSteps,
     profiles,
     packs,
     baseUrls,
@@ -370,9 +375,16 @@ if (command === 'pipeline') {
   })
   trace.close()
 
+  // The ending first, the machinery under it. A workflow with a terminal step has already
+  // said what the run concluded, and printing the step table above it would bury the one part
+  // of the output written to be read by a person.
+  const terminalIndex = workflowSteps.findIndex((s) => s.final)
+  const ending = terminalIndex === -1 ? undefined : result.steps.find((s) => s.step === terminalIndex)
+
   const lines = [
-    `=== pipeline · ${profile!.name} ===`,
-    stepNumber !== undefined ? `running step: ${stepNumber + 1} / ${pipelineSteps.length}` : `steps: ${result.steps.length}`,
+    ...(ending?.text ? [ending.text, ''] : []),
+    `=== workflow · ${profile!.name} ===`,
+    stepNumber !== undefined ? `running step: ${stepNumber + 1} / ${workflowSteps.length}` : `steps: ${result.steps.length}`,
     `total time: ${(result.totalMs / 1000).toFixed(1)}s`,
     `stopped early: ${result.stoppedEarly ? 'yes' : 'no'}`,
     ...(values['context-dir'] ? [`context dir: ${values['context-dir']}`] : []),
@@ -380,20 +392,35 @@ if (command === 'pipeline') {
   for (const step of result.steps) {
     lines.push(`  ${step.step + 1}. ${step.name} (${step.profile}) — ${step.ok ? 'ok' : 'failed'}${step.error ? ` — ${step.error}` : ''}${step.wallMs ? ` — ${(step.wallMs / 1000).toFixed(1)}s` : ''}`)
   }
-  if (result.final) {
+  // `final` is the terminal step's own report when there is one, and it has already been
+  // rendered above. Dumping the same content twice, once as prose and once as JSON, makes the
+  // page look like a preamble to the real answer rather than the answer.
+  if (result.final && !ending?.text) {
     lines.push(`\nfinal output:`)
     lines.push(JSON.stringify(result.final, null, 2))
   }
 
   const text = lines.join('\n')
   if (values.json) {
-    console.log(JSON.stringify({ pipeline: result }, null, 2))
+    console.log(JSON.stringify({ workflow: result }, null, 2))
   } else {
     console.log(text)
   }
   process.exit(result.stoppedEarly ? 1 : 0)
 }
 
+// Refused before the trace is opened, for the reason the next comment gives: a profile that
+// declares no eval would otherwise leave a dated empty recording behind on every attempt.
+// Exit 2 rather than 1 — nothing was measured, so this is a mistake about what to run, not a
+// measurement that came back short.
+if (!profile!.runEval) {
+  die(
+    new ProfileError(
+      `profile '${profile!.name}' declares no eval — ` +
+        `run it with 'node src/cli.ts ${profile!.mode === 'workflow' ? 'workflow' : profile!.mode === 'router' ? 'route' : 'extract'} --profile ${profile!.name}'`,
+    ),
+  )
+}
 // `--from-trace` re-scores a recording and contacts no server, so it opens no trace of its
 // own: a dated empty file per re-score is litter in the one directory where the real
 // recordings live.
@@ -403,7 +430,7 @@ const trace = values['from-trace'] ? nullTrace() : openTrace(profile!.name, reda
 // stack trace. Anything else still throws.
 let verdict
 try {
-  verdict = await profile!.runEval({
+  verdict = await profile!.runEval!({
     config: profileConfig!,
     pack,
     baseUrl,

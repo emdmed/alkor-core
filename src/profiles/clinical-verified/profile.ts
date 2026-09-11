@@ -1,37 +1,37 @@
 /**
- * The clinical-verified profile: mode `pipeline`, no pack, no tools.
+ * The clinical-verified profile: mode `workflow`, no pack, no tools.
  *
- * A pipeline is a composition of other profiles: the clinical specialist routes and
+ * A workflow is a composition of other profiles: the clinical specialist routes and
  * extracts the input, and the verifier checks the result. This profile does not run models
  * itself; it is a configuration surface that
- * the CLI and the pipeline mode read to know which steps exist and in what order.
+ * the CLI and the workflow mode read to know which steps exist and in what order.
  *
- * The pipeline definition lives in `profiles.toml` under the `[clinical-verified]` table,
+ * The workflow definition lives in `profiles.toml` under the `[clinical-verified]` table,
  * as a `steps` array. Each step names a profile and describes what input it reads. The
  * harness loads the profiles, resolves their packs, and runs the steps in order.
  *
- * This profile exists so the pipeline can be evaluated (`eval`) and so it has a name in
- * the profile list. Its `runEval` runs a smoke test of the pipeline construction by default,
- * and a full pipeline fidelity eval when called with `--fidelity` (which requires a GPU and
+ * This profile exists so the workflow can be evaluated (`eval`) and so it has a name in
+ * the profile list. Its `runEval` runs a smoke test of the workflow construction by default,
+ * and a full workflow fidelity eval when called with `--fidelity` (which requires a GPU and
  * several minutes).
  */
 
 import type { EvalContext, EvalVerdict, ProfileModule } from '../../core/profile.ts'
 import { loadConfig, requireProfile } from '../../core/config.ts'
 import { loadPack, resolvePackRoot } from '../../core/pack.ts'
-import { runPipelineCaseEval, runPipelineFidelityEval } from './eval.ts'
+import { runWorkflowCaseEval, runWorkflowFidelityEval } from './eval.ts'
 
 export const PROFILE: ProfileModule = {
   name: 'clinical-verified',
-  mode: 'pipeline',
+  mode: 'workflow',
   needsPack: false,
 
   async runEval(ctx: EvalContext): Promise<EvalVerdict> {
-    // One ad-hoc input through the production pipeline. Unlike --fidelity, this performs no
+    // One ad-hoc input through the production workflow. Unlike --fidelity, this performs no
     // shape transform between steps: it exists to catch integration failures hidden by an
     // experimental arm that calls the same profiles manually.
     if (typeof ctx.options.input === 'string' && ctx.options.input.length > 0) {
-      return (await runPipelineCaseEval({
+      return (await runWorkflowCaseEval({
         input: ctx.options.input,
         trace: ctx.trace,
         provider: ctx.provider,
@@ -42,7 +42,7 @@ export const PROFILE: ProfileModule = {
       })).verdict
     }
 
-    // Full pipeline fidelity eval: run all three arms against the clinical corpus.
+    // Full workflow fidelity eval: run all three arms against the clinical corpus.
     // Requires a GPU and takes several minutes.
     if (ctx.options.fidelity) {
       const cfg = loadConfig()
@@ -56,7 +56,7 @@ export const PROFILE: ProfileModule = {
             base: cfg.base,
           }),
         )
-      return runPipelineFidelityEval({
+      return runWorkflowFidelityEval({
         pack,
         baseUrl: ctx.baseUrl ?? clinicalConfig.url,
         trace: ctx.trace,
@@ -65,10 +65,10 @@ export const PROFILE: ProfileModule = {
       })
     }
 
-    // Default: smoke test of the pipeline definition.
+    // Default: smoke test of the workflow definition.
     const steps = ctx.config.steps as Array<Record<string, unknown>> | undefined
     if (!steps || !Array.isArray(steps)) {
-      return { pass: false, summary: 'pipeline config has no steps array' }
+      return { pass: false, summary: 'workflow config has no steps array' }
     }
 
     const errors: string[] = []
@@ -79,12 +79,12 @@ export const PROFILE: ProfileModule = {
     }
 
     if (errors.length > 0) {
-      return { pass: false, summary: `pipeline validation failed: ${errors.join(', ')}` }
+      return { pass: false, summary: `workflow validation failed: ${errors.join(', ')}` }
     }
 
     return {
       pass: true,
-      summary: `${steps.length} pipeline steps validated successfully (add --fidelity for full eval)`,
+      summary: `${steps.length} workflow steps validated successfully (add --fidelity for full eval)`,
     }
   },
 }

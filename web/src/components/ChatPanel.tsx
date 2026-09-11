@@ -13,10 +13,13 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { List, Send, Sparkles, X } from 'lucide-react'
 import {
-  type PipelineDefinition,
+  type WorkflowDefinition,
   type ProjectState,
 } from '../../../src/tui/state.ts'
 import { Button } from './ui/button'
+import { CopyButton } from './CopyButton'
+import { formatRunLog } from '../lib/runlog.ts'
+import { RunFailure } from '../hooks/useMedextract.ts'
 import { cn } from '../lib/utils'
 
 export interface ChatMessage {
@@ -27,6 +30,14 @@ export interface ChatMessage {
   result?: unknown
   error?: string
   wallMs?: number
+  /** The server's name for this run; the key its events are filtered by. */
+  runId?: string
+  /** Feed watermark when the run was sent — the lower bound of its slice of the log. */
+  fromSeq: number
+  startedAt: string
+  endedAt?: string
+  /** Set when the run bypassed the router. */
+  forcedWorkflow?: string
 }
 
 interface ChatPanelProps {
@@ -34,6 +45,8 @@ interface ChatPanelProps {
   onToggle: () => void
   state: ProjectState
   run: (input: string, workflow?: string) => Promise<unknown>
+  /** Where the run was sent — recorded in the log so a pasted one names its server. */
+  serverUrl: string
   /** Narrow-shell coordination: jump straight from the run console to the drawer. */
   onOpenActivity?: () => void
 }
@@ -44,17 +57,19 @@ const PRESETS = [
   'Extract allergies and prior surgeries',
 ]
 
-export const ChatPanel = memo(({ open, onToggle, state, run, onOpenActivity }: ChatPanelProps) => {
+export const ChatPanel = memo(({ open, onToggle, state, run, serverUrl, onOpenActivity }: ChatPanelProps) => {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [pending, setPending] = useState(false)
   const [forcedWorkflow, setForcedWorkflow] = useState('')
+  /** Which run logs are expanded. Kept here so a failure can open its own without a click. */
+  const [openLogs, setOpenLogs] = useState<ReadonlySet<string>>(new Set())
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // The workflow catalogue from the topology snapshot. It appears only in the explicit
   // diagnostic override; the normal path asks the pipeline router to choose.
-  const pipelines: PipelineDefinition[] = state.topology.pipelines
+  const pipelines: WorkflowDefinition[] = state.topology.workflows
 
   // Auto-scroll the message list whenever the message count or status changes.
   useEffect(() => {
@@ -74,12 +89,31 @@ export const ChatPanel = memo(({ open, onToggle, state, run, onOpenActivity }: C
     el.style.height = `${Math.min(el.scrollHeight, 120)}px`
   }
 
+  const setLogOpen = (id: string, open: boolean) =>
+    setOpenLogs((prev) => {
+      if (prev.has(id) === open) return prev
+      const next = new Set(prev)
+      if (open) next.add(id)
+      else next.delete(id)
+      return next
+    })
+
   const handleSend = async () => {
     const text = input.trim()
     if (!text || pending) return
 
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    const msg: ChatMessage = { id, input: text, workflow: forcedWorkflow || 'routing…', status: 'pending' }
+    // The watermark is taken BEFORE the request goes out, so the first event the run
+    // produces is already above it. Taking it after would race the feed on a fast run.
+    const msg: ChatMessage = {
+      id,
+      input: text,
+      workflow: forcedWorkflow || 'routing…',
+      status: 'pending',
+      fromSeq: state.lastSeq,
+      startedAt: new Date().toISOString(),
+      forcedWorkflow: forcedWorkflow || undefined,
+    }
     setMessages((prev) => [...prev, msg])
     setInput('')
     setPending(true)
@@ -93,15 +127,22 @@ export const ChatPanel = memo(({ open, onToggle, state, run, onOpenActivity }: C
       const wallMs = typeof result === 'object' && result !== null && 'totalMs' in (result as Record<string, unknown>)
         ? Number((result as Record<string, unknown>)['totalMs'])
         : undefined
+      const runId = typeof result === 'object' && result !== null && typeof (result as Record<string, unknown>)['runId'] === 'string'
+        ? String((result as Record<string, unknown>)['runId'])
+        : undefined
       setMessages((prev) =>
         prev.map((m) =>
-          m.id === id ? { ...m, workflow, status: 'done', result, wallMs } : m,
+          m.id === id ? { ...m, workflow, status: 'done', result, wallMs, runId, endedAt: new Date().toISOString() } : m,
         ),
       )
     } catch (e) {
+      // A refusal names its run when the server got far enough to mint one; that id is what
+      // makes the log below show the steps that led to the failure rather than the message alone.
+      const runId = e instanceof RunFailure ? e.runId : undefined
+      setLogOpen(id, true)
       setMessages((prev) =>
         prev.map((m) =>
-          m.id === id ? { ...m, status: 'error', error: (e as Error).message } : m,
+          m.id === id ? { ...m, status: 'error', error: (e as Error).message, runId, endedAt: new Date().toISOString() } : m,
         ),
       )
     } finally {
@@ -122,7 +163,10 @@ export const ChatPanel = memo(({ open, onToggle, state, run, onOpenActivity }: C
     requestAnimationFrame(fitTextarea)
   }
 
-  const clearMessages = () => setMessages([])
+  const clearMessages = () => {
+    setMessages([])
+    setOpenLogs(new Set())
+  }
 
   if (!open) {
     return (
@@ -185,7 +229,7 @@ export const ChatPanel = memo(({ open, onToggle, state, run, onOpenActivity }: C
 
       {/* Transcript */}
       <div className="chat-scroll" ref={scrollRef}>
-        {messages.map((msg) => (
+        {messages.map((msg, index) => (
           <div key={msg.id} className={cn('chat-msg', msg.status === 'error' && 'chat-msg-err')}>
             <div className="chat-msg-head">
               <span className="chat-msg-profile">{msg.workflow}</span>
@@ -196,13 +240,51 @@ export const ChatPanel = memo(({ open, onToggle, state, run, onOpenActivity }: C
             </div>
             <div className="chat-msg-input">{msg.input}</div>
             {msg.status === 'done' && msg.result != null && (
-              <pre className="chat-msg-result">
-                {formatResult(msg.result)}
-              </pre>
+              // The ending is the reply; the step dump is the working. A run that put both at
+              // the same level made the reader scroll three JSON objects to find the sentence
+              // the run was for.
+              endingOf(msg.result) ? (
+                <>
+                  <pre className="chat-msg-ending">{endingOf(msg.result)}</pre>
+                  <details className="chat-msg-steps">
+                    <summary>run detail</summary>
+                    <pre className="chat-msg-result">{formatResult(msg.result)}</pre>
+                  </details>
+                </>
+              ) : (
+                <pre className="chat-msg-result">{formatResult(msg.result)}</pre>
+              )
             )}
             {msg.status === 'error' && (
               <pre className="chat-msg-error">{msg.error}</pre>
             )}
+
+            {/* The run log. Opened for you on a failure — that is the moment it exists for —
+                and one click away otherwise. The next run's watermark closes this one's window,
+                so a run that is still working keeps filling its log in while you watch it.
+
+                Formatted only while open: the feed re-renders this panel on every batch of
+                events, and re-rendering a thousand of them into text for a transcript nobody
+                has opened is work the busiest moment of a run cannot spare. */}
+            <details
+              className="chat-msg-log"
+              open={openLogs.has(msg.id)}
+              onToggle={(e) => setLogOpen(msg.id, e.currentTarget.open)}
+            >
+              <summary>run log</summary>
+              {openLogs.has(msg.id) && (
+                <div className="chat-msg-log-body">
+                  <div className="chat-msg-log-actions">
+                    <CopyButton
+                      label="Copy log"
+                      title="Copy this run's full log to the clipboard"
+                      text={() => buildLog(msg, messages[index + 1]?.fromSeq, state, serverUrl)}
+                    />
+                  </div>
+                  <pre className="chat-msg-log-text">{buildLog(msg, messages[index + 1]?.fromSeq, state, serverUrl)}</pre>
+                </div>
+              )}
+            </details>
           </div>
         ))}
         {pending && (
@@ -246,6 +328,45 @@ export const ChatPanel = memo(({ open, onToggle, state, run, onOpenActivity }: C
 })
 
 /* ------------------------------------------------------------------ helpers */
+
+/**
+ * One message's log, joined from what the POST returned and what the feed carried.
+ *
+ * `toSeq` is the NEXT run's watermark: it bounds this run's window so a later run's events
+ * cannot be read as part of this one. The newest run has no upper bound, which is what
+ * lets a pending run's log fill in live while it is still working.
+ */
+const buildLog = (msg: ChatMessage, toSeq: number | undefined, state: ProjectState, serverUrl: string): string =>
+  formatRunLog(
+    {
+      input: msg.input,
+      workflow: msg.workflow,
+      forcedWorkflow: msg.forcedWorkflow,
+      runId: msg.runId,
+      startedAt: msg.startedAt,
+      endedAt: msg.endedAt,
+      status: msg.status,
+      result: msg.result,
+      error: msg.error,
+      serverUrl,
+      fromSeq: msg.fromSeq,
+      toSeq,
+    },
+    state.eventLog,
+  )
+
+/**
+ * The run's ending, when the workflow declared a terminal step that produced one.
+ *
+ * Read from the `ending` field the server sets rather than recognised by shape: a client that
+ * shape-matched a report would start rendering any step that happened to look similar, and
+ * would stop rendering this one the day a field is added to it.
+ */
+const endingOf = (r: unknown): string | undefined => {
+  if (r == null || typeof r !== 'object' || Array.isArray(r)) return undefined
+  const ending = (r as Record<string, unknown>)['ending']
+  return typeof ending === 'string' && ending.trim().length > 0 ? ending : undefined
+}
 
 const formatResult = (r: unknown): string => {
   if (r == null) return ''

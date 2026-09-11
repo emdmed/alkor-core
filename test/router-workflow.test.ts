@@ -19,7 +19,7 @@ import { join } from 'node:path'
 import { route, type RouteRule, type RouterOptions } from '../src/modes/router.ts'
 import { ROUTER_RULES as CLINICAL_RULES } from '../src/profiles/router/profile.ts'
 import { PROFILE as WORKFLOW_ROUTER } from '../src/profiles/workflow-router/profile.ts'
-import { runPipeline, buildPipeline, type PipelineStep, type PipelineOptions } from '../src/modes/pipeline.ts'
+import { runWorkflow, buildWorkflow, type WorkflowStep, type WorkflowOptions } from '../src/modes/workflow.ts'
 import { createActivity, withActivityScope } from '../src/core/activity.ts'
 import { nullTrace } from '../src/core/trace.ts'
 import type { ProfileModule, ReviewResult, EvalVerdict } from '../src/core/profile.ts'
@@ -169,7 +169,7 @@ const mockFailingProfile = (name: string): ProfileModule => ({
   },
 })
 
-test('pipeline runs all steps and returns final output', async () => {
+test('workflow runs all steps and returns final output', async () => {
   const profiles = new Map<string, ProfileModule>([
     ['extractor', mockExtractProfile('extractor', { value: 'extracted' })],
     ['verifier', mockExtractProfile('verifier', { verified: true })],
@@ -177,9 +177,9 @@ test('pipeline runs all steps and returns final output', async () => {
   const packs = new Map<string, undefined>([['extractor', undefined], ['verifier', undefined]])
   const baseUrls = new Map<string, undefined>([['extractor', undefined], ['verifier', undefined]])
 
-  const result = await runPipeline({
+  const result = await runWorkflow({
     initialInput: 'test document',
-    steps: buildPipeline([
+    steps: buildWorkflow([
       { name: 'extract', profile: 'extractor' },
       { name: 'verify', profile: 'verifier', input: 'step-0' },
     ]),
@@ -195,7 +195,7 @@ test('pipeline runs all steps and returns final output', async () => {
   assert.equal((result.final as any)?.verified, true)
 })
 
-test('pipeline stops early on step failure', async () => {
+test('workflow stops early on step failure', async () => {
   const profiles = new Map<string, ProfileModule>([
     ['extractor', mockFailingProfile('extractor')],
     ['verifier', mockExtractProfile('verifier', { verified: true })],
@@ -203,9 +203,9 @@ test('pipeline stops early on step failure', async () => {
   const packs = new Map<string, undefined>([['extractor', undefined], ['verifier', undefined]])
   const baseUrls = new Map<string, undefined>([['extractor', undefined], ['verifier', undefined]])
 
-  const result = await runPipeline({
+  const result = await runWorkflow({
     initialInput: 'test document',
-    steps: buildPipeline([
+    steps: buildWorkflow([
       { name: 'extract', profile: 'extractor' },
       { name: 'verify', profile: 'verifier', input: 'step-0' },
     ]),
@@ -221,7 +221,7 @@ test('pipeline stops early on step failure', async () => {
   assert.equal(result.final, 'error')
 })
 
-test('pipeline preserves the last produced output when a later step throws', async () => {
+test('workflow preserves the last produced output when a later step throws', async () => {
   const throwing: ProfileModule = {
     name: 'throwing',
     mode: 'extract',
@@ -238,9 +238,9 @@ test('pipeline preserves the last produced output when a later step throws', asy
     ['throwing', throwing],
   ])
 
-  const result = await runPipeline({
+  const result = await runWorkflow({
     initialInput: 'test document',
-    steps: buildPipeline([
+    steps: buildWorkflow([
       { name: 'extract', profile: 'extractor' },
       { name: 'verify', profile: 'throwing', input: 'step-0' },
     ]),
@@ -253,7 +253,7 @@ test('pipeline preserves the last produced output when a later step throws', asy
   assert.deepEqual(result.final, { value: 'extracted' })
 })
 
-test('pipeline passes initial input to first step', async () => {
+test('workflow passes initial input to first step', async () => {
   let receivedInput: unknown
   const profile: ProfileModule = {
     name: 'echo',
@@ -272,9 +272,9 @@ test('pipeline passes initial input to first step', async () => {
   const packs = new Map<string, undefined>([['echo', undefined]])
   const baseUrls = new Map<string, undefined>([['echo', undefined]])
 
-  await runPipeline({
+  await runWorkflow({
     initialInput: 'hello world',
-    steps: buildPipeline([{ name: 'echo', profile: 'echo' }]),
+    steps: buildWorkflow([{ name: 'echo', profile: 'echo' }]),
     profiles,
     packs,
     baseUrls,
@@ -283,7 +283,7 @@ test('pipeline passes initial input to first step', async () => {
   assert.equal(receivedInput, 'hello world')
 })
 
-test('pipeline resolves input references across steps', async () => {
+test('workflow resolves input references across steps', async () => {
   const profiles = new Map<string, ProfileModule>([
     ['step1', mockExtractProfile('step1', { data: 'step1-output' })],
     ['step2', mockExtractProfile('step2', { data: 'step2-output' })],
@@ -306,9 +306,9 @@ test('pipeline resolves input references across steps', async () => {
   }
   profiles.set('step2', step2WithCapture)
 
-  await runPipeline({
+  await runWorkflow({
     initialInput: 'initial',
-    steps: buildPipeline([
+    steps: buildWorkflow([
       { name: 'step1', profile: 'step1' },
       { name: 'step2', profile: 'step2', input: 'step-0' },
     ]),
@@ -322,7 +322,7 @@ test('pipeline resolves input references across steps', async () => {
   assert.equal(parsed.data, 'step1-output')
 })
 
-test('pipeline resolves input.field references', async () => {
+test('workflow resolves input.field references', async () => {
   let capturedInput: unknown
   const profile: ProfileModule = {
     name: 'step2',
@@ -344,9 +344,9 @@ test('pipeline resolves input.field references', async () => {
   const packs = new Map<string, undefined>([['step1', undefined], ['step2', undefined]])
   const baseUrls = new Map<string, undefined>([['step1', undefined], ['step2', undefined]])
 
-  await runPipeline({
+  await runWorkflow({
     initialInput: 'initial',
-    steps: buildPipeline([
+    steps: buildWorkflow([
       { name: 'step1', profile: 'step1' },
       { name: 'step2', profile: 'step2', input: 'step-0', field: 'report' },
     ]),
@@ -359,7 +359,7 @@ test('pipeline resolves input.field references', async () => {
   assert.equal(parsed.data, 'step1-data')
 })
 
-test('pipeline composes step input from a template of refs', async () => {
+test('workflow composes step input from a template of refs', async () => {
   let capturedInput: unknown
   const profile: ProfileModule = {
     name: 'step2',
@@ -381,9 +381,9 @@ test('pipeline composes step input from a template of refs', async () => {
   const packs = new Map<string, undefined>([['step1', undefined], ['step2', undefined]])
   const baseUrls = new Map<string, undefined>([['step1', undefined], ['step2', undefined]])
 
-  await runPipeline({
+  await runWorkflow({
     initialInput: 'the original document',
-    steps: buildPipeline([
+    steps: buildWorkflow([
       { name: 'step1', profile: 'step1' },
       { name: 'step2', profile: 'step2', input: { document: 'initial', extraction: 'step-0.report' } },
     ]),
@@ -428,9 +428,9 @@ test('template refs resolve strictly: a missing field is dropped, not substitute
   const packs = new Map<string, undefined>([['step1', undefined], ['step2', undefined]])
   const baseUrls = new Map<string, undefined>([['step1', undefined], ['step2', undefined]])
 
-  await runPipeline({
+  await runWorkflow({
     initialInput: 'the original document',
-    steps: buildPipeline([
+    steps: buildWorkflow([
       { name: 'step1', profile: 'step1' },
       { name: 'step2', profile: 'step2', input: { document: 'initial', extraction: 'step-0.report' } },
     ]),
@@ -446,14 +446,14 @@ test('template refs resolve strictly: a missing field is dropped, not substitute
   assert.equal('extraction' in parsed, false)
 })
 
-test('pipeline reports missing profile as failure', async () => {
+test('workflow reports missing profile as failure', async () => {
   const profiles = new Map<string, ProfileModule>()
   const packs = new Map<string, undefined>()
   const baseUrls = new Map<string, undefined>()
 
-  const result = await runPipeline({
+  const result = await runWorkflow({
     initialInput: 'test',
-    steps: buildPipeline([{ name: 'missing', profile: 'nonexistent' }]),
+    steps: buildWorkflow([{ name: 'missing', profile: 'nonexistent' }]),
     profiles,
     packs,
     baseUrls,
@@ -464,16 +464,16 @@ test('pipeline reports missing profile as failure', async () => {
   assert.ok(result.steps[0]!.error!.includes('not found'))
 })
 
-test('pipeline reports total wall time', async () => {
+test('workflow reports total wall time', async () => {
   const profiles = new Map<string, ProfileModule>([
     ['fast', mockExtractProfile('fast', { ok: true })],
   ])
   const packs = new Map<string, undefined>([['fast', undefined]])
   const baseUrls = new Map<string, undefined>([['fast', undefined]])
 
-  const result = await runPipeline({
+  const result = await runWorkflow({
     initialInput: 'test',
-    steps: buildPipeline([{ name: 'fast', profile: 'fast' }]),
+    steps: buildWorkflow([{ name: 'fast', profile: 'fast' }]),
     profiles,
     packs,
     baseUrls,
@@ -484,7 +484,7 @@ test('pipeline reports total wall time', async () => {
   assert.ok(result.totalMs < 1000, 'mock profile should be nearly instant')
 })
 
-test('pipeline emits a decision-tree stage tree: root, steps nested under it, sub-work under each step', async () => {
+test('workflow emits a decision-tree stage tree: root, steps nested under it, sub-work under each step', async () => {
   const a = createActivity()
   const profiles = new Map<string, ProfileModule>([
     ['step1', mockExtractProfile('step1', { data: 'x' })],
@@ -494,9 +494,9 @@ test('pipeline emits a decision-tree stage tree: root, steps nested under it, su
   const baseUrls = new Map<string, undefined>([['step1', undefined], ['step2', undefined]])
 
   await withActivityScope({ runId: 'run-7' }, () =>
-    runPipeline({
+    runWorkflow({
       initialInput: 'initial',
-      steps: buildPipeline([
+      steps: buildWorkflow([
         { name: 'extract', profile: 'step1' },
         { name: 'verify', profile: 'step2', input: 'step-0' },
       ]),
@@ -512,14 +512,14 @@ test('pipeline emits a decision-tree stage tree: root, steps nested under it, su
   const started = new Map(stages.filter((e: any) => e.status === 'started').map((e: any) => [e.name, e]))
   const completed = new Map(stages.filter((e: any) => e.status === 'completed').map((e: any) => [e.name, e]))
   // pipeline, extract, verify — one started + one completed each.
-  assert.deepEqual([...started.keys()].sort(), ['extract', 'pipeline', 'verify'])
-  assert.deepEqual([...completed.keys()].sort(), ['extract', 'pipeline', 'verify'])
+  assert.deepEqual([...started.keys()].sort(), ['extract', 'verify', 'workflow'])
+  assert.deepEqual([...completed.keys()].sort(), ['extract', 'verify', 'workflow'])
 
-  const root = started.get('pipeline') as any
+  const root = started.get('workflow') as any
   assert.equal(root.status, 'started')
   assert.equal(root.runId, 'run-7')
   assert.equal(root.parentId, undefined)
-  const rootDone = completed.get('pipeline') as any
+  const rootDone = completed.get('workflow') as any
   assert.equal(rootDone.stageId, root.stageId, 'started and completed share one stageId')
   assert.deepEqual(rootDone.detail, { stoppedEarly: false })
 
@@ -549,9 +549,9 @@ test('pipeline emits a decision-tree stage tree: root, steps nested under it, su
   }
   const a2 = createActivity()
   await withActivityScope({ runId: 'run-8' }, () =>
-    runPipeline({
+    runWorkflow({
       initialInput: 'initial',
-      steps: buildPipeline([{ name: 'noise', profile: 'noisy' }]),
+      steps: buildWorkflow([{ name: 'noise', profile: 'noisy' }]),
       profiles: new Map([['noisy', emittingProfile]]),
       packs: new Map([['noisy', undefined]]),
       baseUrls: new Map([['noisy', undefined]]),
@@ -563,8 +563,8 @@ test('pipeline emits a decision-tree stage tree: root, steps nested under it, su
   assert.equal(sub.parentId, noisyStep.stageId, 'a step sub-emit nests under the step node, not the root')
 })
 
-test('buildPipeline converts simple objects to PipelineSteps', () => {
-  const steps = buildPipeline([
+test('buildWorkflow converts simple objects to WorkflowSteps', () => {
+  const steps = buildWorkflow([
     { name: 'a', profile: 'A' },
     { name: 'b', profile: 'B', input: 'step-0', field: 'report' },
   ])
@@ -596,9 +596,9 @@ test('clinical pipeline routes vitals note to vital-signs via internal router', 
   const packs = new Map<string, undefined>([['clinical', undefined]])
   const baseUrls = new Map<string, undefined>([['clinical', undefined]])
 
-  const result = await runPipeline({
+  const result = await runWorkflow({
     initialInput: 'Patient BP 120/80, HR 72, feeling well.',
-    steps: buildPipeline([{ name: 'extract', profile: 'clinical' }]),
+    steps: buildWorkflow([{ name: 'extract', profile: 'clinical' }]),
     profiles,
     packs,
     baseUrls,
@@ -632,9 +632,9 @@ test('clinical pipeline routes dialogue transcript to transcript via internal ro
   const packs = new Map<string, undefined>([['clinical', undefined]])
   const baseUrls = new Map<string, undefined>([['clinical', undefined]])
 
-  const result = await runPipeline({
+  const result = await runWorkflow({
     initialInput: 'Doctor: How are you?\nPatient: I have chest pain.',
-    steps: buildPipeline([{ name: 'extract', profile: 'clinical' }]),
+    steps: buildWorkflow([{ name: 'extract', profile: 'clinical' }]),
     profiles,
     packs,
     baseUrls,
@@ -668,9 +668,9 @@ test('clinical pipeline explicit --task overrides internal router', async () => 
   const packs = new Map<string, undefined>([['clinical', undefined]])
   const baseUrls = new Map<string, undefined>([['clinical', undefined]])
 
-  const result = await runPipeline({
+  const result = await runWorkflow({
     initialInput: 'Patient BP 120/80, HR 72, feeling well.',
-    steps: buildPipeline([{ name: 'extract', profile: 'clinical', options: { task: 'transcript' } }]),
+    steps: buildWorkflow([{ name: 'extract', profile: 'clinical', options: { task: 'transcript' } }]),
     profiles,
     packs,
     baseUrls,
@@ -684,7 +684,7 @@ test('clinical pipeline explicit --task overrides internal router', async () => 
 
 test('router profile eval runs confusion matrix and reports accuracy', async () => {
   const { PROFILE } = await import('../src/profiles/router/profile.ts')
-  const verdict = await PROFILE.runEval({
+  const verdict = await PROFILE.runEval!({
     config: { name: 'router', mode: 'router' } as any,
     baseUrl: undefined,
     trace: { write: () => {}, close: () => {} } as any,
@@ -706,7 +706,7 @@ test('verifier profile eval detects missing quote', async () => {
   try {
     const { loadPack, resolvePackRoot } = await import('../src/core/pack.ts')
     const pack = loadPack(resolvePackRoot('verifier', { configured: 'packs/verifier', base: process.cwd() }))
-    const verdict = await PROFILE.runEval({
+    const verdict = await PROFILE.runEval!({
       config: { name: 'verifier', mode: 'extract', pack: 'packs/verifier' } as any,
       pack,
       baseUrl: undefined,
@@ -729,7 +729,7 @@ test('verifier profile eval detects missing quote', async () => {
 // Context directory / checkpoint tests
 // ---------------------------------------------------------------------------
 
-test('pipeline writes checkpoint to context directory after each step', async () => {
+test('workflow writes checkpoint to context directory after each step', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'medextract-pipeline-'))
   try {
     const profiles = new Map<string, ProfileModule>([
@@ -739,9 +739,9 @@ test('pipeline writes checkpoint to context directory after each step', async ()
     const packs = new Map<string, undefined>([['step1', undefined], ['step2', undefined]])
     const baseUrls = new Map<string, undefined>([['step1', undefined], ['step2', undefined]])
 
-    await runPipeline({
+    await runWorkflow({
       initialInput: 'initial',
-      steps: buildPipeline([
+      steps: buildWorkflow([
         { name: 'step1', profile: 'step1' },
         { name: 'step2', profile: 'step2', input: 'step-0', field: 'report' },
       ]),
@@ -759,14 +759,14 @@ test('pipeline writes checkpoint to context directory after each step', async ()
     assert.equal(context.completedStep, 1)
     assert.equal(context.initialInput, 'initial')
     assert.equal(context.results.length, 2)
-    assert.equal(context.state['initial'], 'initial')
-    assert.equal(context.state['step-0'].output.data, 'step1-data')
+    assert.equal(context.values['initial'], 'initial')
+    assert.equal(context.values['step-0'].output.data, 'step1-data')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
 })
 
-test('pipeline resumes from checkpoint and skips completed steps', async () => {
+test('workflow resumes from checkpoint and skips completed steps', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'medextract-pipeline-'))
   try {
     let step2Called = false
@@ -791,9 +791,9 @@ test('pipeline resumes from checkpoint and skips completed steps', async () => {
     const baseUrls = new Map<string, undefined>([['step1', undefined], ['step2', undefined]])
 
     // First run: only step 0 completes.
-    await runPipeline({
+    await runWorkflow({
       initialInput: 'initial',
-      steps: buildPipeline([
+      steps: buildWorkflow([
         { name: 'step1', profile: 'step1' },
         { name: 'step2', profile: 'step2', input: 'step-0', field: 'report' },
       ]),
@@ -807,9 +807,9 @@ test('pipeline resumes from checkpoint and skips completed steps', async () => {
     assert.ok(!step2Called, 'step 2 should not be called on first run')
 
     // Second run: resume from step 1.
-    const result = await runPipeline({
+    const result = await runWorkflow({
       initialInput: 'initial',
-      steps: buildPipeline([
+      steps: buildWorkflow([
         { name: 'step1', profile: 'step1' },
         { name: 'step2', profile: 'step2', input: 'step-0', field: 'report' },
       ]),
@@ -828,7 +828,7 @@ test('pipeline resumes from checkpoint and skips completed steps', async () => {
   }
 })
 
-test('pipeline runStep 0 overwrites existing checkpoint', async () => {
+test('workflow runStep 0 overwrites existing checkpoint', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'medextract-pipeline-'))
   try {
     const profiles = new Map<string, ProfileModule>([
@@ -838,9 +838,9 @@ test('pipeline runStep 0 overwrites existing checkpoint', async () => {
     const baseUrls = new Map<string, undefined>([['step1', undefined]])
 
     // First run.
-    await runPipeline({
+    await runWorkflow({
       initialInput: 'first-run',
-      steps: buildPipeline([{ name: 'step1', profile: 'step1' }]),
+      steps: buildWorkflow([{ name: 'step1', profile: 'step1' }]),
       profiles,
       packs,
       baseUrls,
@@ -853,9 +853,9 @@ test('pipeline runStep 0 overwrites existing checkpoint', async () => {
 
     // Re-run step 0 with different input.
     profiles.set('step1', mockExtractProfile('step1', { data: 'second' }))
-    await runPipeline({
+    await runWorkflow({
       initialInput: 'second-run',
-      steps: buildPipeline([{ name: 'step1', profile: 'step1' }]),
+      steps: buildWorkflow([{ name: 'step1', profile: 'step1' }]),
       profiles,
       packs,
       baseUrls,
@@ -865,13 +865,13 @@ test('pipeline runStep 0 overwrites existing checkpoint', async () => {
 
     const second = JSON.parse(readFileSync(join(dir, 'context.json'), 'utf8'))
     assert.equal(second.initialInput, 'second-run')
-    assert.equal(second.state['step-0'].output.data, 'second')
+    assert.equal(second.values['step-0'].output.data, 'second')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
 })
 
-test('pipeline runStep > 0 throws when no checkpoint exists', async () => {
+test('workflow runStep > 0 throws when no checkpoint exists', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'medextract-pipeline-'))
   try {
     const profiles = new Map<string, ProfileModule>([['step2', mockExtractProfile('step2', { data: 'x' })]])
@@ -879,23 +879,23 @@ test('pipeline runStep > 0 throws when no checkpoint exists', async () => {
     const baseUrls = new Map<string, undefined>([['step2', undefined]])
 
     await assert.rejects(
-      runPipeline({
+      runWorkflow({
         initialInput: 'initial',
-        steps: buildPipeline([{ name: 'step1', profile: 'step1' }, { name: 'step2', profile: 'step2' }]),
+        steps: buildWorkflow([{ name: 'step1', profile: 'step1' }, { name: 'step2', profile: 'step2' }]),
         profiles,
         packs,
         baseUrls,
         contextDir: dir,
         runStep: 1,
       }),
-      /no checkpoint/,
+      /no context/,
     )
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
 })
 
-test('pipeline re-running a step replaces the old result in the checkpoint', async () => {
+test('workflow re-running a step replaces the old result in the checkpoint', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'medextract-pipeline-'))
   try {
     let callCount = 0
@@ -920,9 +920,9 @@ test('pipeline re-running a step replaces the old result in the checkpoint', asy
     const baseUrls = new Map<string, undefined>([['step1', undefined], ['step2', undefined]])
 
     // Run full pipeline once.
-    await runPipeline({
+    await runWorkflow({
       initialInput: 'initial',
-      steps: buildPipeline([
+      steps: buildWorkflow([
         { name: 'step1', profile: 'step1' },
         { name: 'step2', profile: 'step2', input: 'step-0' },
       ]),
@@ -938,9 +938,9 @@ test('pipeline re-running a step replaces the old result in the checkpoint', asy
     assert.equal(first.results[1].text, 'call-1')
 
     // Re-run step 1 only (the second step, profile step2).
-    await runPipeline({
+    await runWorkflow({
       initialInput: 'initial',
-      steps: buildPipeline([
+      steps: buildWorkflow([
         { name: 'step1', profile: 'step1' },
         { name: 'step2', profile: 'step2', input: 'step-0' },
       ]),
@@ -962,7 +962,7 @@ test('pipeline re-running a step replaces the old result in the checkpoint', asy
   }
 })
 
-test('pipeline failure still writes checkpoint so resume can continue after a fix', async () => {
+test('workflow failure still writes checkpoint so resume can continue after a fix', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'medextract-pipeline-'))
   try {
     let secondAttempt = false
@@ -989,9 +989,9 @@ test('pipeline failure still writes checkpoint so resume can continue after a fi
     const baseUrls = new Map<string, undefined>([['step1', undefined], ['flaky', undefined]])
 
     // First run: step 1 fails.
-    const first = await runPipeline({
+    const first = await runWorkflow({
       initialInput: 'initial',
-      steps: buildPipeline([
+      steps: buildWorkflow([
         { name: 'step1', profile: 'step1' },
         { name: 'flaky', profile: 'flaky', input: 'step-0' },
       ]),
@@ -1006,15 +1006,15 @@ test('pipeline failure still writes checkpoint so resume can continue after a fi
     assert.ok(first.steps[1]!.error!.includes('server not ready'))
 
     // Checkpoint should exist with the failure recorded.
-    const checkpoint = JSON.parse(readFileSync(join(dir, 'context.json'), 'utf8'))
-    assert.equal(checkpoint.completedStep, 1)
-    assert.equal(checkpoint.results[1].ok, false)
+    const context = JSON.parse(readFileSync(join(dir, 'context.json'), 'utf8'))
+    assert.equal(context.completedStep, 1)
+    assert.equal(context.results[1].ok, false)
 
     // Fix the issue and resume.
     secondAttempt = true
-    const second = await runPipeline({
+    const second = await runWorkflow({
       initialInput: 'initial',
-      steps: buildPipeline([
+      steps: buildWorkflow([
         { name: 'step1', profile: 'step1' },
         { name: 'flaky', profile: 'flaky', input: 'step-0' },
       ]),
@@ -1032,7 +1032,7 @@ test('pipeline failure still writes checkpoint so resume can continue after a fi
   }
 })
 
-test('pipeline re-run truncates stale downstream results and state', async () => {
+test('workflow re-run truncates stale downstream results and state', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'medextract-pipeline-'))
   try {
     const profiles = new Map<string, ProfileModule>([
@@ -1044,9 +1044,9 @@ test('pipeline re-run truncates stale downstream results and state', async () =>
     const baseUrls = new Map<string, undefined>([['step1', undefined], ['step2', undefined], ['step3', undefined]])
 
     // Run full pipeline.
-    await runPipeline({
+    await runWorkflow({
       initialInput: 'initial',
-      steps: buildPipeline([
+      steps: buildWorkflow([
         { name: 'step1', profile: 'step1' },
         { name: 'step2', profile: 'step2', input: 'step-0' },
         { name: 'step3', profile: 'step3', input: 'step-1' },
@@ -1059,14 +1059,14 @@ test('pipeline re-run truncates stale downstream results and state', async () =>
 
     const first = JSON.parse(readFileSync(join(dir, 'context.json'), 'utf8'))
     assert.equal(first.results.length, 3)
-    assert.equal(first.state['step-1'].output.data, 'step2-v1')
-    assert.equal(first.state['step-2'].output.data, 'step3-v1')
+    assert.equal(first.values['step-1'].output.data, 'step2-v1')
+    assert.equal(first.values['step-2'].output.data, 'step3-v1')
 
     // Re-run step 1 with updated profile.
     profiles.set('step2', mockExtractProfile('step2', { data: 'step2-v2' }))
-    const result = await runPipeline({
+    const result = await runWorkflow({
       initialInput: 'initial',
-      steps: buildPipeline([
+      steps: buildWorkflow([
         { name: 'step1', profile: 'step1' },
         { name: 'step2', profile: 'step2', input: 'step-0' },
         { name: 'step3', profile: 'step3', input: 'step-1' },
@@ -1087,9 +1087,277 @@ test('pipeline re-run truncates stale downstream results and state', async () =>
 
     const second = JSON.parse(readFileSync(join(dir, 'context.json'), 'utf8'))
     assert.equal(second.results.length, 2)
-    assert.equal(second.state['step-1'].output.data, 'step2-v2')
-    assert.equal(second.state['step-2'], undefined)
+    assert.equal(second.values['step-1'].output.data, 'step2-v2')
+    assert.equal(second.values['step-2'], undefined)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+// ---------------------------------------------------------------------------
+// Terminal step
+// ---------------------------------------------------------------------------
+
+/**
+ * A step marked `final` runs on every exit from the chain.
+ *
+ * The interesting cases are the failures, not the success: before this existed, a workflow
+ * whose verifier refused ended with a step error and nothing written for a person to read,
+ * which is precisely the run where a person most needs a sentence. These tests pin that the
+ * ending runs anyway, that it runs once, and that running it revises no verdict.
+ */
+
+/** Records the `run` value it was handed, and reports the number of steps it could see. */
+const recordingEnding = (seen: { run?: any }): ProfileModule => ({
+  name: 'ending',
+  mode: 'code',
+  needsPack: false,
+  async review(ctx): Promise<ReviewResult> {
+    seen.run = JSON.parse(ctx.input.kind === 'text' ? ctx.input.text : '{}')
+    return { text: `ending saw ${seen.run.steps.length} step(s)`, ok: true, report: { ending: true } }
+  },
+})
+
+const withEnding = (steps: WorkflowStep[], profiles: Map<string, ProfileModule>): WorkflowOptions => ({
+  initialInput: 'test document',
+  steps,
+  profiles,
+  packs: new Map([...profiles.keys()].map((name) => [name, undefined])),
+  baseUrls: new Map([...profiles.keys()].map((name) => [name, undefined])),
+})
+
+test('terminal step runs after the chain completes and becomes the final output', async () => {
+  const seen: { run?: any } = {}
+  const profiles = new Map<string, ProfileModule>([
+    ['extractor', mockExtractProfile('extractor', { value: 'extracted' })],
+    ['ending', recordingEnding(seen)],
+  ])
+
+  const result = await runWorkflow(withEnding(buildWorkflow([
+    { name: 'extract', profile: 'extractor' },
+    { name: 'assess', profile: 'ending', input: 'run', final: true },
+  ]), profiles))
+
+  assert.equal(result.stoppedEarly, false)
+  assert.equal(result.steps.length, 2)
+  assert.equal(result.steps[1]!.name, 'assess')
+  assert.deepEqual(result.final, { ending: true })
+  // It sees the chain, and not itself.
+  assert.equal(seen.run.steps.length, 1)
+  assert.equal(seen.run.steps[0].profile, 'extractor')
+  assert.equal(seen.run.stoppedEarly, false)
+  assert.equal(seen.run.initialInput, 'test document')
+})
+
+test('terminal step still runs when a step refuses, and does not revise the verdict', async () => {
+  const seen: { run?: any } = {}
+  const profiles = new Map<string, ProfileModule>([
+    ['extractor', mockExtractProfile('extractor', { value: 'extracted' })],
+    ['verifier', mockFailingProfile('verifier')],
+    ['ending', recordingEnding(seen)],
+  ])
+
+  const result = await runWorkflow(withEnding(buildWorkflow([
+    { name: 'extract', profile: 'extractor' },
+    { name: 'verify', profile: 'verifier', input: 'step-0' },
+    { name: 'assess', profile: 'ending', input: 'run', final: true },
+  ]), profiles))
+
+  // The ending ran and succeeded; the run is still a refused run.
+  assert.equal(result.stoppedEarly, true)
+  assert.equal(result.steps.map((s) => [s.name, s.ok]).length, 3)
+  assert.equal(result.steps.find((s) => s.name === 'assess')?.ok, true)
+  assert.equal(seen.run.stoppedEarly, true)
+  assert.equal(seen.run.steps.length, 2)
+  assert.equal(seen.run.steps[1].ok, false)
+  // The reason the chain stopped reaches the ending, which is what lets it name what refused.
+  assert.equal(seen.run.steps[1].error, 'mock verifier')
+})
+
+test('terminal step still runs when a step throws', async () => {
+  const seen: { run?: any } = {}
+  const throwing: ProfileModule = {
+    name: 'throwing',
+    mode: 'extract',
+    needsPack: false,
+    async review(): Promise<ReviewResult> {
+      throw new Error('backend unavailable')
+    },
+  }
+  const profiles = new Map<string, ProfileModule>([
+    ['throwing', throwing],
+    ['ending', recordingEnding(seen)],
+  ])
+
+  const result = await runWorkflow(withEnding(buildWorkflow([
+    { name: 'extract', profile: 'throwing' },
+    { name: 'assess', profile: 'ending', input: 'run', final: true },
+  ]), profiles))
+
+  assert.equal(result.stoppedEarly, true)
+  assert.equal(result.steps.find((s) => s.name === 'assess')?.ok, true)
+  assert.equal(seen.run.steps[0].error, 'backend unavailable')
+})
+
+test('terminal step still runs when a step names a profile that does not exist', async () => {
+  const seen: { run?: any } = {}
+  const profiles = new Map<string, ProfileModule>([['ending', recordingEnding(seen)]])
+
+  const result = await runWorkflow(withEnding(buildWorkflow([
+    { name: 'extract', profile: 'absent' },
+    { name: 'assess', profile: 'ending', input: 'run', final: true },
+  ]), profiles))
+
+  assert.equal(result.stoppedEarly, true)
+  assert.equal(result.steps.find((s) => s.name === 'assess')?.ok, true)
+  assert.match(String(seen.run.steps[0].error), /not found in workflow profile map/)
+})
+
+test('terminal step runs exactly once', async () => {
+  let calls = 0
+  const counting: ProfileModule = {
+    name: 'ending',
+    mode: 'code',
+    needsPack: false,
+    async review(): Promise<ReviewResult> {
+      calls++
+      return { text: 'ending', ok: true, report: { calls } }
+    },
+  }
+  const profiles = new Map<string, ProfileModule>([
+    ['extractor', mockExtractProfile('extractor', { value: 'extracted' })],
+    ['ending', counting],
+  ])
+
+  const result = await runWorkflow(withEnding(buildWorkflow([
+    { name: 'extract', profile: 'extractor' },
+    { name: 'assess', profile: 'ending', input: 'run', final: true },
+  ]), profiles))
+
+  assert.equal(calls, 1)
+  assert.equal(result.steps.filter((s) => s.name === 'assess').length, 1)
+})
+
+test('a failing terminal step is recorded without changing the run verdict', async () => {
+  const profiles = new Map<string, ProfileModule>([
+    ['extractor', mockExtractProfile('extractor', { value: 'extracted' })],
+    ['ending', mockFailingProfile('ending')],
+  ])
+
+  const result = await runWorkflow(withEnding(buildWorkflow([
+    { name: 'extract', profile: 'extractor' },
+    { name: 'assess', profile: 'ending', input: 'run', final: true },
+  ]), profiles))
+
+  // The chain completed; an ending that could not be written does not retroactively refuse it.
+  assert.equal(result.stoppedEarly, false)
+  assert.equal(result.steps.find((s) => s.name === 'assess')?.ok, false)
+})
+
+test('--step N runs one chain step and appends no ending', async () => {
+  const seen: { run?: any } = {}
+  const profiles = new Map<string, ProfileModule>([
+    ['extractor', mockExtractProfile('extractor', { value: 'extracted' })],
+    ['ending', recordingEnding(seen)],
+  ])
+
+  const result = await runWorkflow({
+    ...withEnding(buildWorkflow([
+      { name: 'extract', profile: 'extractor' },
+      { name: 'assess', profile: 'ending', input: 'run', final: true },
+    ]), profiles),
+    runStep: 0,
+  })
+
+  // Inspecting one step is not running the workflow, and an ending appended to it would be a
+  // conclusion drawn from a chain that never ran.
+  assert.equal(result.steps.length, 1)
+  assert.equal(seen.run, undefined)
+})
+
+test('--step N naming the terminal step recomposes the ending from a checkpoint', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'medextract-ending-'))
+  try {
+    const seen: { run?: any } = {}
+    const profiles = new Map<string, ProfileModule>([
+      ['extractor', mockExtractProfile('extractor', { value: 'extracted' })],
+      ['ending', recordingEnding(seen)],
+    ])
+    const steps = buildWorkflow([
+      { name: 'extract', profile: 'extractor' },
+      { name: 'assess', profile: 'ending', input: 'run', final: true },
+    ])
+
+    await runWorkflow({ ...withEnding(steps, profiles), contextDir: dir })
+    seen.run = undefined
+
+    const again = await runWorkflow({ ...withEnding(steps, profiles), contextDir: dir, runStep: 1 })
+
+    // The chain is not re-run; the ending is rebuilt from what was saved.
+    assert.equal(seen.run.steps.length, 1)
+    assert.equal(seen.run.steps[0].profile, 'extractor')
+    assert.equal(again.steps.find((s) => s.name === 'assess')?.ok, true)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a resume after a refusal restarts at the step that refused, not after the ending', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'medextract-ending-resume-'))
+  try {
+    let attempts = 0
+    // Refuses once, then succeeds — so a resume that restarted in the wrong place would
+    // either skip the fix or re-run the step that was already fine.
+    const flaky: ProfileModule = {
+      name: 'flaky',
+      mode: 'extract',
+      needsPack: false,
+      async review(): Promise<ReviewResult> {
+        attempts++
+        return attempts === 1
+          ? { text: 'not yet', ok: false }
+          : { text: 'ok now', ok: true, report: { fixed: true } }
+      },
+    }
+    const seen: { run?: any } = {}
+    const profiles = new Map<string, ProfileModule>([
+      ['extractor', mockExtractProfile('extractor', { value: 'extracted' })],
+      ['flaky', flaky],
+      ['ending', recordingEnding(seen)],
+    ])
+    const steps = buildWorkflow([
+      { name: 'extract', profile: 'extractor' },
+      { name: 'verify', profile: 'flaky', input: 'step-0' },
+      { name: 'assess', profile: 'ending', input: 'run', final: true },
+    ])
+
+    const first = await runWorkflow({ ...withEnding(steps, profiles), contextDir: dir })
+    assert.equal(first.stoppedEarly, true)
+    assert.equal(first.steps.find((s) => s.name === 'assess')?.ok, true)
+
+    const second = await runWorkflow({ ...withEnding(steps, profiles), contextDir: dir })
+    assert.equal(second.stoppedEarly, false)
+    assert.equal(attempts, 2)
+    assert.equal(second.steps.find((s) => s.name === 'verify')?.ok, true)
+    assert.equal(seen.run.steps.length, 2)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('buildWorkflow refuses a final step that is not last, or two of them', async () => {
+  assert.throws(
+    () => buildWorkflow([
+      { name: 'assess', profile: 'ending', final: true },
+      { name: 'extract', profile: 'extractor' },
+    ]),
+    /must be last/,
+  )
+  assert.throws(
+    () => buildWorkflow([
+      { name: 'a', profile: 'ending', final: true },
+      { name: 'b', profile: 'ending', final: true },
+    ]),
+    /may mark one step/,
+  )
 })

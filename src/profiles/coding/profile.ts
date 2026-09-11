@@ -54,7 +54,7 @@ Use the tools to inspect and change files. Rules:
 - The conversation continues after you answer, so do not summarise everything you have ever done.
 - If the user declines a tool call, do not retry it. Ask what they would prefer.`
 
-export const CODING_MAX_STEPS = 12
+export const CODING_MAX_ITERATIONS = 12
 
 export const PROFILE: ProfileModule = {
   name: 'coding',
@@ -63,7 +63,7 @@ export const PROFILE: ProfileModule = {
   systemPrompt: CODING_SYSTEM_PROMPT,
   chatSystemPrompt: CODING_CHAT_PROMPT,
   tools: TOOLS,
-  maxSteps: CODING_MAX_STEPS,
+  maxIterations: CODING_MAX_ITERATIONS,
   topology: {
     stages: [
       { name: 'llm-call', repeatable: true },

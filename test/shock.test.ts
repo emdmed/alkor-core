@@ -219,7 +219,7 @@ test('a payload renders to exactly the bytes the prompt was measured on', () => 
       'blood_pressure: 80/52 mmHg (medprotocol: Low)\n' +
       'mean_arterial_pressure: 61.3 mmHg\n' +
       'heart_rate: 118 bpm (medprotocol: Elevated)\n' +
-      'shock_index: 1.475\n' +
+      'shock_index: 1.48\n' +
       'hypotension_duration: 60 minutes\n' +
       'in_studied_cohort: yes (systolic 80 is below 90 and it has lasted 60 minutes)\n' +
       'skin_temperature: warm\n' +
@@ -947,11 +947,11 @@ test('a medprotocol error is refused rather than read as a result', () => {
 
 /** Overt hypotension confirms regardless of shock index. */
 test('confirmShock: systolic below 90 confirms shock', () => {
-  // heart_rate 50 gives shock index 0.625 (< 0.7), so only the systolic criterion fires
+  // heart_rate 50 gives shock index 0.63 (< 0.7), so only the systolic criterion fires
   const c = confirmShock(exam({ hypotension: { systolic: 80, diastolic: 50, duration_minutes: 60 }, heart_rate: 50 }), mp, rule)
   assert.equal(c.confirmed, true)
   assert.equal(c.systolic, 80)
-  assert.equal(c.shockIndex, 0.625)
+  assert.equal(c.shockIndex, 0.63)
   assert.match(c.reason, /systolic 80 < 90 mmHg/)
 })
 
@@ -969,9 +969,9 @@ test('confirmShock: both criteria together name both in the reason', () => {
   const c = confirmShock(exam({ hypotension: { systolic: 80, diastolic: 50, duration_minutes: 60 }, heart_rate: 118 }), mp, rule)
   assert.equal(c.confirmed, true)
   assert.equal(c.systolic, 80)
-  assert.equal(c.shockIndex, 1.475)
+  assert.equal(c.shockIndex, 1.48)
   assert.match(c.reason, /systolic 80 < 90 mmHg/)
-  assert.match(c.reason, /shock index 1.475 > 0.7/)
+  assert.match(c.reason, /shock index 1.48 > 0.7/)
 })
 
 /** Neither criterion met: no shock. */

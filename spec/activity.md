@@ -6,7 +6,7 @@ The activity feed is an in-process bus of metadata-only operational events, expo
 
 `activitySpec` mirrors `traceSpec`: the unit of the stream is the event, and a reader must be able to refuse a future shape. A consumer that does not recognise the `activitySpec` version should drop the connection rather than parse events it cannot trust.
 
-Current value: `1` (`ACTIVITY_SPEC`).
+Current value: `2` (`ACTIVITY_SPEC`). Spec 2 renamed the `pipeline.*` event kinds to `workflow.*` and `turn.completed.steps` to `iterations`; see `spec/nomenclature.md`.
 
 ## Stream identity: `instanceId`
 
@@ -26,13 +26,13 @@ Rules for a reader:
 | "which model has started" | `server.ready`, `profile.loaded` (name, mode, url, pack), `model.identified` (baseUrl → served model id, ctx, slots — or `identified:false`) |
 | "managed backend spawned or stopped" | `model.lifecycle` (baseUrl, state `starting`/`ready`/`stopped`/`failed`, pid?, model?, reason? idle/shutdown, error?, wallMs?) — emitted only for backends the interactive server manages on demand |
 | "prompt is being processed" | `llm.request` (requestId, label, baseUrl, model?, constrained, message count) → `llm.response` (wallMs, prompt/predicted/cached tokens, finishReason, chunks) or `llm.error` (wallMs, message, truncated); the call also paints a `stage` `llm-call` node sharing the request id |
-| "pipeline is running as a tree of decisions" | `stage` `pipeline` root, one `<step name>` stage per step under it, and the step's internal `prompt-assembly` / `llm-call` / `parse` / `verify` stages nested beneath |
-| "model picks up a message left by another" | `pipeline.step.started` carries the edge `{ step, name, profile, input:{ ref:'step-1', field:'report', fromProfile:'clinical' } }` |
+| "a workflow is running as a tree of decisions" | `stage` `workflow` root, one `<step name>` stage per step under it, and the step's internal `prompt-assembly` / `llm-call` / `parse` / `verify` stages nested beneath |
+| "model picks up a message left by another" | `workflow.step.started` carries the edge `{ step, name, profile, input:{ ref:'step-1', field:'report', fromProfile:'clinical' } }` |
 | HTTP envelope | `http.request` / `http.completed` |
 | routing | `route.decided` (profile, confidence, reason, rule-vs-model) |
 | run lifecycle | `run.started` / `run.completed` / `run.failed` (inputChars + digest) |
-| pipeline | `pipeline.started` / `pipeline.step.started` / `pipeline.step.completed` / `pipeline.completed` |
-| sessions | `session.created` / `turn.started` / `turn.completed` (stop, steps, toolsUsed, usage) / `session.destroyed` |
+| workflow | `workflow.started` / `workflow.step.started` / `workflow.step.completed` / `workflow.completed` |
+| sessions | `session.created` / `turn.started` / `turn.completed` (stop, iterations, toolsUsed, usage) / `session.destroyed` |
 | tools | `tool.called` / `tool.completed` / `tool.declined` |
 | intra-profile flow | `stage` — see below |
 
@@ -76,13 +76,13 @@ Core and the modes paint the generic stages a decision tree is built from; a pro
 
 | Stage | Emitted by | `operation` | `detail` |
 |---|---|---|---|
-| `pipeline` | `pipeline.ts` | `orchestrator` | `{ steps }` · `{ stoppedEarly }`; the root of a pipeline run, with each step a child |
-| `<step name>` | `pipeline.ts` | `orchestrator` | `{ step, profile, input: { ref, field, fromProfile } }` · `{ step, ok }`; one per step, under the pipeline root, and every sub-emission from the step's own mode nests beneath it |
+| `workflow` | `workflow.ts` | `orchestrator` | `{ steps }` · `{ stoppedEarly }`; the root of a workflow run, with each step a child |
+| `<step name>` | `workflow.ts` | `orchestrator` | `{ step, profile, input: { ref, field, fromProfile } }` · `{ step, ok }`; one per step, under the workflow root, and every sub-emission from the step's own mode nests beneath it |
 | `prompt-assembly` | `extract.ts` | `code` | `{ constrained, messageCount, promptChars, documentChars, maxTokens? }` — the assembled request crossed into the transport |
 | `llm-call` | `withActivity` | `model` | `{ label, constrained }` · `{ ok }`; shares the request's id, so a dashboard joins the node to the `llm.request`/`llm.response` record |
 | `parse` | `extract.ts` | `code` | `{ ok }` · `{ ok: false, reason? }` — the completion's parse attempt |
 | `verify` | clinical reviews, verifier profile | `code` | the provenance verdicts: `{ ok, read, quoted, unverified }`, `{ ok, items, quotesVerified, quotesAbsent, derivationsOk, repaired }`, or the verifier's `{ ok, verified, issues, confidence }` |
-| `route` | router profile | `decision` | `{ profile, confidence, reason }` — the pipeline's first branch |
+| `route` | router profile | `decision` | `{ profile, confidence, reason }` — the run's first branch |
 | `shock-classification`, `shock-extraction`, `medication-pass`, `transcript-repair` | clinical reviews | `model` | brackets around a model pass; the bracket carries the operation, not the anonymous `llm-call` under it |
 | `gateway` | clinical extraction reviews | `code` | `{ via, ... }` — the deterministic rule check over an extracted payload |
 

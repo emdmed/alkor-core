@@ -8,7 +8,7 @@
  * `project.ts`, which reuses the trail builders for the selected lane.
  */
 import { stageTreeForRun } from '../../../../src/tui/state.ts'
-import type { PipelineDefinition, PipelineStepEntry, ProjectState, RunEntry, StageEntry } from '../../../../src/tui/state.ts'
+import type { WorkflowDefinition, WorkflowStepEntry, ProjectState, RunEntry, StageEntry } from '../../../../src/tui/state.ts'
 import type { ProfileTopologyRoute, ProfileTopologyStage } from '../../../../src/core/topology.ts'
 import type { NodeState } from '../format.ts'
 import {
@@ -20,6 +20,7 @@ import {
   columnX,
   detailTextOf,
   flowEdge,
+  isRoutableSpecialist,
   layoutHeightOf,
   layoutWidthOf,
   llmOf,
@@ -133,8 +134,8 @@ function ifRouterProfile(d: Record<string, unknown>): string | undefined {
  *  3. Configured prefix of an in-progress run (executed steps are a prefix of a definition).
  *  4. Explicit fallback to the first configured definition (an unmatched direct run).
  */
-export const matchTopology = (state: ProjectState, entry?: { steps?: PipelineStepEntry[] }, runProfile?: string): PipelineDefinition | undefined => {
-  const defs = state.topology.pipelines
+export const matchTopology = (state: ProjectState, entry?: { steps?: WorkflowStepEntry[] }, runProfile?: string): WorkflowDefinition | undefined => {
+  const defs = state.topology.workflows
   if (defs.length === 0) return undefined
   const profiles = (entry?.steps ?? []).map((s) => s.profile).filter(Boolean)
   if (runProfile) {
@@ -166,7 +167,7 @@ interface StepRow {
 
 /** Activity keeps composed inputs as structured mappings. Never coerce that array: its
  * default string form leaks `[object Object]` into an operator-facing graph. */
-export const inputReference = (input: PipelineStepEntry['input'] | PipelineDefinition['steps'][number]['input']): string | undefined => {
+export const inputReference = (input: WorkflowStepEntry['input'] | WorkflowDefinition['steps'][number]['input']): string | undefined => {
   if (!input) return undefined
   if (typeof input === 'string') return input
   if (Array.isArray(input)) return input.map(({ name, ref }) => `${name} ← ${ref}`).join(' · ')
@@ -174,7 +175,7 @@ export const inputReference = (input: PipelineStepEntry['input'] | PipelineDefin
   return input.ref.map(({ name, ref }) => `${name} ← ${ref}`).join(' · ')
 }
 
-const mergeSteps = (executed: PipelineStepEntry[], def?: PipelineDefinition): StepRow[] => {
+const mergeSteps = (executed: WorkflowStepEntry[], def?: WorkflowDefinition): StepRow[] => {
   const defSteps = def?.steps ?? []
   const n = Math.max(executed.length, defSteps.length)
   const rows: StepRow[] = []
@@ -298,7 +299,7 @@ const routerCandidates = (state: ProjectState, routerProfile: string, chosen?: s
   // but never mix unrelated profiles into a router that declares exact targets.
   if (declared.length === 0) {
     for (const p of state.topology.profiles) {
-      if (p.mode !== 'pipeline' && p.mode !== 'router' && p.name !== routerProfile) seen.add(p.name)
+      if (isRoutableSpecialist(p.mode) && p.name !== routerProfile) seen.add(p.name)
     }
     for (const r of state.routes) if (r.profile !== routerProfile) seen.add(r.profile)
   }
@@ -583,9 +584,9 @@ const stepTreeRouteDecision = (root?: StageEntry): { profile?: string; confidenc
   return visit(root) ?? {}
 }
 
-const buildPipeline = (state: ProjectState, run: RunEntry, tree: StageEntry[], userExpanded: Set<string>): GraphBuild => {
-  const pipelineRoot = tree.find((n) => n.name === 'pipeline' && n.parentId === undefined)
-  const entry = state.pipelines.get(run.runId)
+const buildWorkflowGraph = (state: ProjectState, run: RunEntry, tree: StageEntry[], userExpanded: Set<string>): GraphBuild => {
+  const workflowRoot = tree.find((n) => n.name === 'workflow' && n.parentId === undefined)
+  const entry = state.workflows.get(run.runId)
   const def = matchTopology(state, entry, run.profile)
   const rows = mergeSteps(entry?.steps ?? [], def)
   const ctx: BuildCtx = {
@@ -599,7 +600,7 @@ const buildPipeline = (state: ProjectState, run: RunEntry, tree: StageEntry[], u
   const chain: ChainItem[] = [{ node: buildInput(run), children: [] }]
 
   rows.forEach((row, i) => {
-    const stage = pipelineRoot?.children.find((c) => stepIndexOf(c) === i)
+    const stage = workflowRoot?.children.find((c) => stepIndexOf(c) === i)
     // A step is a router only when ITS OWN stage subtree observed a routing decision
     // that named a destination, or when the step's profile itself publishes routing
     // topology (a declared router). A profile merely implemented with router mode is
@@ -693,16 +694,16 @@ export const buildGraph = (state: ProjectState, runId: string, expanded: Set<str
   // Internal router stages always show their chosen chip, so a routing decision is
   // visible even before the user expands anything else.
   const tree = stageTreeForRun(state.stages, runId)
-  const pipelineRoot = tree.find((n) => n.name === 'pipeline' && n.parentId === undefined)
-  const pipelineEntry = state.pipelines.get(runId)
-  const isPipeline = Boolean(pipelineRoot || (pipelineEntry && pipelineEntry.steps.length > 0))
-  const graph = isPipeline ? buildPipeline(state, run, tree, expanded) : buildStages(state, run, tree, expanded)
+  const workflowRoot = tree.find((n) => n.name === 'workflow' && n.parentId === undefined)
+  const workflowEntry = state.workflows.get(runId)
+  const isWorkflow = Boolean(workflowRoot || (workflowEntry && workflowEntry.steps.length > 0))
+  const graph = isWorkflow ? buildWorkflowGraph(state, run, tree, expanded) : buildStages(state, run, tree, expanded)
   markCurrentOperation(graph.nodes)
   return graph
 }
 
 /** Build an idle pipeline from configuration alone, before its first activity event. */
-export const buildConfiguredPipeline = (state: ProjectState, def: PipelineDefinition): GraphBuild => {
+export const buildConfiguredWorkflow = (state: ProjectState, def: WorkflowDefinition): GraphBuild => {
   const run: RunEntry = { runId: `configured-${def.name}`, profile: def.name, status: 'started' }
   const ctx: BuildCtx = {
     state,
@@ -748,10 +749,10 @@ export const buildProgressGraph = (
   previewProfile?: string,
 ): GraphBuild => {
   if (runId) return buildGraph(state, runId, expanded)
-  const pipeline = state.topology.pipelines.find((candidate) => candidate.name === previewProfile)
-    ?? state.topology.pipelines[0]
+  const pipeline = state.topology.workflows.find((candidate) => candidate.name === previewProfile)
+    ?? state.topology.workflows[0]
   if (!pipeline) return { nodes: [], edges: [], title: '' }
-  const graph = buildConfiguredPipeline(state, pipeline)
+  const graph = buildConfiguredWorkflow(state, pipeline)
   return {
     ...graph,
     title: `${pipeline.name} · ${pipeline.steps.length} step${pipeline.steps.length === 1 ? '' : 's'} · ready`,

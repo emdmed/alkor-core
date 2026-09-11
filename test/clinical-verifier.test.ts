@@ -26,7 +26,7 @@ const extraction = (category = 'cardiogenic') => ({
           pulse_volume: 'thready',
           lung_exam: 'bilateral_crackles',
         },
-        confirmation: { confirmed: true, systolic: 68, shockIndex: 115 / 68 },
+        confirmation: { confirmed: true, systolic: 68, shockIndex: Math.round((115 / 68) * 100) / 100 },
       },
     },
     shock: {
@@ -72,6 +72,35 @@ test('clinical verifier checks derivations and emits source observations only', 
     },
   })
   assert.doesNotMatch(JSON.stringify(result.report), /shockIndex|shock_category|discordant_findings/)
+})
+
+/**
+ * A note that records a blood pressure but never says how long it has been low. The extraction
+ * contract answers that with 0, and the model verifier downstream reads absence only in `null` —
+ * so the sentinel is translated here rather than handed on as a claim of "zero minutes". The
+ * DERIVED half still sees the real 0: the cohort gate must fail on an unstated duration.
+ */
+test('the extraction contract\'s numeric sentinels reach the source verifier as null', async () => {
+  const value = extraction()
+  const exam = value.results['shock-extraction'].output.exam
+  exam.hypotension.duration_minutes = 0
+  exam.heart_rate = 0
+  value.results['shock-extraction'].output.confirmation = { confirmed: true, systolic: 68, shockIndex: 0 }
+  // Outside the cohort on the duration, so the deterministic rule's category moves with it.
+  const shock = value.results.shock.output as Record<string, unknown>
+  shock.shock_category = 'indeterminate'
+  shock.indeterminate_reason = 'the duration is not stated'
+  shock.supporting_findings = []
+  shock.discordant_findings = []
+
+  const result = await review(value)
+  assert.equal(result.ok, true)
+  const sent = (result.report as { extraction: Record<string, { exam: Record<string, unknown> }> }).extraction
+  const sentExam = sent['shock-extraction']!.exam
+  assert.equal((sentExam.hypotension as { duration_minutes: unknown }).duration_minutes, null)
+  assert.equal(sentExam.heart_rate, null)
+  // A real reading is never rewritten.
+  assert.equal((sentExam.hypotension as { systolic: unknown }).systolic, 68)
 })
 
 test('clinical verifier rejects a classification that disagrees with the deterministic rule', async () => {
@@ -221,7 +250,7 @@ const bothArms = () => ({
           pulse_volume: 'bounding',
           lung_exam: 'not_assessed',
         },
-        confirmation: { confirmed: true, systolic: 82, shockIndex: 124 / 82 },
+        confirmation: { confirmed: true, systolic: 82, shockIndex: Math.round((124 / 82) * 100) / 100 },
       },
     },
     shock: {
@@ -318,4 +347,44 @@ test('a sepsis route with no payload anywhere is still refused', async () => {
   const result = await reviewWith(septicShockNote, plan)
   assert.equal(result.ok, false)
   assert.match(result.text, /no qSOFA payload/)
+})
+
+/**
+ * `indeterminate_reason` is graded on PRESENCE, not on wording, and these two tests pin both
+ * directions of the pairing `prompts/shock.md` states: indeterminate is answered with a reason,
+ * anything else with null.
+ *
+ * The check used to be `reply.indeterminate_reason !== truth.reason` — a string equality between
+ * the model's sentence and one of the rule's three closed tokens. `shock.schema.json` types the
+ * field free text and records that it is "NOT graded automatically"; every worked example in the
+ * prompt fills it with a sentence. So the old check could only pass if the model ignored its own
+ * prompt and emitted `outside_studied_cohort` verbatim, and a real septic-shock note that
+ * correctly declined to categorise failed verification for having explained why.
+ */
+test('a declining answer verifies on the presence of a reason, not its wording', async () => {
+  const plan = extraction('indeterminate')
+  const exam = plan.results['shock-extraction'].output.exam as Record<string, unknown>
+  // Cool skin with an unassessable JVP is the square the published table leaves empty.
+  exam.jugular_venous_pressure = 'not_assessed'
+  const shock = plan.results.shock.output as Record<string, unknown>
+  shock.jugular_venous_pressure = 'not_assessed'
+  shock.shock_category = 'indeterminate'
+  shock.supporting_findings = []
+  shock.discordant_findings = []
+  shock.indeterminate_reason =
+    'Step 2: the jugular venous pressure was not assessable, and it is the finding that separates ' +
+    'cardiogenic from hypovolemic shock in a cool patient.'
+
+  const result = await review(plan)
+  assert.doesNotMatch(result.text, /indeterminate_reason/, result.text)
+})
+
+test('a reason attached to a decided category is still an accusation', async () => {
+  const plan = extraction('cardiogenic')
+  const shock = plan.results.shock.output as Record<string, unknown>
+  shock.indeterminate_reason = 'The neck veins were hard to see.'
+
+  const result = await review(plan)
+  assert.equal(result.ok, false)
+  assert.match(result.text, /a reason was given for a category that is not indeterminate/)
 })

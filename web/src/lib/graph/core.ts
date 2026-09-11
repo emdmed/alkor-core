@@ -46,6 +46,17 @@ export const operationFor = (name: string, decision = false, declared?: GraphOpe
   return 'orchestrator'
 }
 
+/**
+ * Can a router send an input to this profile?
+ *
+ * A `workflow` is a recipe rather than a destination, a `router` is the thing doing the
+ * sending, and a `code` profile is a step inside a recipe — a deterministic composer or
+ * checker that nothing routes TO. Drawing any of them as a candidate branch invents a choice
+ * the deployment does not offer.
+ */
+export const isRoutableSpecialist = (mode?: string): boolean =>
+  mode !== 'workflow' && mode !== 'router' && mode !== 'code'
+
 export const shortDigest = (d?: string): string => (d ? d.slice(0, 8) : '')
 
 /** The `{ step }` the pipeline stamps on each per-step stage, to join stage ↔ step. */
@@ -179,7 +190,7 @@ const COLUMN_PITCH = STEP_W + GAP
 export const ROW_GAP = 60
 export const columnX = (rank: number): number => MAIN_X + rank * COLUMN_PITCH
 
-/* Compact-card geometry contract. A CompactPipelineNode card is rendered by the browser
+/* Compact-card geometry contract. A CompactWorkflowNode card is rendered by the browser
    with natural height, so these constants must stay aligned with the `.g-compact`/`.c-*`
    CSS block in styles.css; the deterministic sibling layout advances by this model and
    nothing measures the DOM first. */
@@ -190,8 +201,26 @@ export const COMPACT_STEP_H = 36 /* .c-step-main min-height, border-box */
 export const COMPACT_ROUTER_H = 27 /* .c-step-router-info min-height, border-box */
 export const COMPACT_STAGE_H = 20 /* one .c-stage row: 2px pad top/bottom + 16px nowrap line */
 export const COMPACT_STAGES_EXTRAS_H = 13 /* .c-stages pad-top 3 + pad-bottom 6 + margin-bottom 4 */
-const COMPACT_BASE_H = COMPACT_HEADER_H + COMPACT_PROGRESS_H + COMPACT_TERMINAL_H * 2
 export const COMPACT_ROUTE_NOTE_H = 22 /* .c-route-note min-height, border-box */
+
+/**
+ * Which chrome rows one compact card draws.
+ *
+ * A card that owns the document draws both terminals; a route card nested in a workflow
+ * draws neither; a workflow split across a branch draws the Input on its first segment and
+ * the Output on its last. The note row takes the place of the Input row, so a card without
+ * one still has somewhere to say what it is — which is the only place a route card's
+ * "not raised by this note" has ever lived.
+ *
+ * Both the layout model here and `CompactWorkflowNode` read this, so the reserved height and
+ * the rendered height cannot drift apart.
+ */
+export const compactChrome = (d: GraphNodeData): { input: boolean; output: boolean; note: boolean } => {
+  const both = d.terminals !== false
+  const input = d.showInput ?? both
+  const output = d.showOutput ?? both
+  return { input, output, note: !input && Boolean(d.detailText || d.reason) }
+}
 /** One compact card's rendered width; route cards sit side by side on this pitch. */
 export const COMPACT_W = 360
 /** Gap between two route cards of the same workflow, across and down. */
@@ -205,6 +234,15 @@ export const CHIP_GAP = 12
  * reuses the same key, and a step's key never depends on DOM or ordering.
  */
 export const compactStepKey = (nodeId: string, stepNo: number): string => `${nodeId}/step-${stepNo}`
+
+/**
+ * Stable disclosure key for a whole compact card, in the same namespace as its steps.
+ *
+ * A workflow the run did not take is collapsed to its header, and the only way back to its
+ * steps is on the canvas — the inspector shows what a node IS, never what it contains. So the
+ * card is a disclosure like any other, and it shares the one set the view already prunes.
+ */
+export const compactCardKey = (nodeId: string): string => `${nodeId}/card`
 
 /**
  * Reserved card heights, rather than a generic height per node type: a router or an
@@ -227,18 +265,26 @@ export const layoutHeightOf = (n: GraphNode): number => {
     case 'group': return 0
     // The front door grows a line once it has a decision to report.
     case 'gateway': return d.chosenProfile ? 76 : 56
-    case 'compact-pipeline': {
+    case 'compact-workflow': {
+      // Collapsed to its header: the card still says what it is and how much it holds, and
+      // nothing more. Its steps are still in the data, waiting to be disclosed. A card whose
+      // note row IS its explanation — "not raised by this note" — keeps that one line, or
+      // collapsing it would turn a stated reason into a silent absence.
+      if (d.collapsed === true) return COMPACT_HEADER_H + (compactChrome(d).note ? COMPACT_ROUTE_NOTE_H : 0)
       const steps = (n.data.steps as CompactStepData[] | undefined) ?? []
       const routerCount = steps.filter((step) => step.router && step.chosenProfile).length
       // Each expanded step paints its own `.c-stages` container, so its padding and
       // margin land once per disclosed step, and each disclosed stage owns one row.
       const disclosed = steps.filter((step) => (step.stageRowCount ?? (step.expanded ? step.stages.length : 0)) > 0)
       const stageRows = disclosed.reduce((total, step) => total + (step.stageRowCount ?? step.stages.length), 0)
-      // A route card inside a workflow renders no Input/Output rows: the workflow's own
-      // card already owns the document that arrived and the output that left.
-      const base = d.terminals === false
-        ? COMPACT_BASE_H - COMPACT_TERMINAL_H * 2 + (d.detailText || d.reason ? COMPACT_ROUTE_NOTE_H : 0)
-        : COMPACT_BASE_H
+      // A route card inside a workflow renders no Input/Output rows, and a workflow segment
+      // renders only the terminal at its end of the chain: the document arrives once and
+      // leaves once, however many cards the workflow is drawn across.
+      const chrome = compactChrome(d)
+      const base = COMPACT_HEADER_H + COMPACT_PROGRESS_H
+        + (chrome.input ? COMPACT_TERMINAL_H : 0)
+        + (chrome.output ? COMPACT_TERMINAL_H : 0)
+        + (chrome.note ? COMPACT_ROUTE_NOTE_H : 0)
       return base
         + steps.length * COMPACT_STEP_H
         + routerCount * COMPACT_ROUTER_H
@@ -259,7 +305,7 @@ export const layoutWidthOf = (n: GraphNode): number => {
     case 'profile': return 196
     case 'group': return 0
     case 'gateway': return 340
-    case 'compact-pipeline': return 360
+    case 'compact-workflow': return 360
   }
 }
 
@@ -272,7 +318,7 @@ export const graphBounds = (nodes: GraphNode[], includeGroups = false): { left: 
   for (const n of nodes) {
     if (n.data.kind === 'group' && !includeGroups) continue
     const width = typeof n.style?.width === 'number' ? n.style.width : n.measured?.width ?? (
-      n.data.kind === 'step' ? STEP_W : n.data.kind === 'stage' || n.data.kind === 'route' ? STAGE_W : n.data.kind === 'profile' ? 196 : n.data.kind === 'branch' ? CHIP_W : n.data.kind === 'compact-pipeline' ? 360 : n.data.kind === 'gateway' ? 340 : 240
+      n.data.kind === 'step' ? STEP_W : n.data.kind === 'stage' || n.data.kind === 'route' ? STAGE_W : n.data.kind === 'profile' ? 196 : n.data.kind === 'branch' ? CHIP_W : n.data.kind === 'compact-workflow' ? 360 : n.data.kind === 'gateway' ? 340 : 240
     )
     const height = typeof n.style?.height === 'number' ? n.style.height : layoutHeightOf(n)
     left = Math.min(left, n.position.x)

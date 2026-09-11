@@ -13,7 +13,7 @@
  * 2. **A terminal tool ends the TURN, not the run.** The conversation continues, with
  *    every tool result still in context.
  * 3. **Messages persist**, so turn two can refer to what turn one read.
- * 4. **The step cap is per turn**, since a long conversation is not a runaway loop.
+ * 4. **The iteration cap is per turn**, since a long conversation is not a runaway loop.
  *
  * And one addition with no counterpart in the eval: a `mutates` tool asks for consent
  * before it runs. That suspends the loop mid-turn, which is why `approve` is async — it
@@ -38,8 +38,8 @@ export interface SessionOptions {
   systemPrompt: string
   workspace: string
   tools: ToolDef[]
-  /** Steps allowed within a single turn. A conversation is not bounded by this. */
-  maxStepsPerTurn?: number
+  /** Iterations allowed within a single turn. A conversation is not bounded by this. */
+  maxIterationsPerTurn?: number
   baseUrl?: string
   trace?: Trace
   /** Stream tokens. Falls back to a single blocking request when false. */
@@ -67,20 +67,20 @@ export interface TurnResult {
    * Why the turn ended. 'answered' is prose, 'done' is a terminal tool call — both are
    * success. The rest are not.
    */
-  stop: 'answered' | 'done' | 'step_cap' | 'aborted' | 'error'
-  steps: number
+  stop: 'answered' | 'done' | 'iteration_cap' | 'aborted' | 'error'
+  iterations: number
   toolsUsed: string[]
   error?: string
   /**
    * What the conversation occupies now, from the LAST model call of the turn.
    *
-   * The last one and not a sum: every step re-sends the whole history, so adding the steps
-   * together would count the same context up to twelve times and report a conversation as
+   * The last one and not a sum: every iteration re-sends the whole history, so adding the
+   * iterations together would count the same context up to twelve times and report a conversation as
    * overflowing a window it comfortably fits in. Each call's `promptTokens` is already
    * cumulative; the final one is therefore the answer, and the earlier ones are prefixes
    * of it.
    *
-   * Undefined when no call completed — an error on the first step, or an abort, neither of
+   * Undefined when no call completed — an error on the first iteration, or an abort, neither of
    * which learned anything new about the size of the conversation.
    */
   usage?: Usage
@@ -115,7 +115,7 @@ export interface Session {
 }
 
 export const createSession = (o: SessionOptions): Session => {
-  const maxSteps = o.maxStepsPerTurn ?? 12
+  const maxIterations = o.maxIterationsPerTurn ?? 12
   const byName = new Map(o.tools.map((t) => [t.name, t]))
   const specs = toolSpecs(o.tools)
   const alwaysAllow = new Set<string>()
@@ -145,49 +145,49 @@ export const createSession = (o: SessionOptions): Session => {
     const toolsUsed: string[] = []
 
     /**
-     * The newest measurement of the conversation's size, carried across steps so that every
-     * exit below reports one — including the ones that end BADLY. A turn that hit the step
+     * The newest measurement of the conversation's size, carried across iterations so that every
+     * exit below reports one — including the ones that end BADLY. A turn that hit the iteration
      * cap is precisely when the user wants to know how much window is left, and returning
      * nothing there would blank the readout at the moment it matters most.
      *
-     * On a tool-bearing step it is a floor rather than an exact figure: the tool results are
+     * On a tool-bearing iteration it is a floor rather than an exact figure: the tool results are
      * appended after the call that measured it, so the true occupancy is this plus results
      * the next request will be the first to count.
      */
     let usage: Usage | undefined
 
-    for (let step = 0; step < maxSteps; step++) {
+    for (let iteration = 0; iteration < maxIterations; iteration++) {
       let reply: { content: string | null; toolCalls: ToolCall[]; usage?: Usage; aborted?: boolean }
       try {
         reply = await ask(signal)
       } catch (e) {
-        return { stop: 'error', steps: step, toolsUsed, error: (e as Error).message, usage }
+        return { stop: 'error', iterations: iteration, toolsUsed, error: (e as Error).message, usage }
       }
       usage = reply.usage ?? usage
 
-      o.trace?.write({ turn: 'assistant', step, content: reply.content, toolCalls: reply.toolCalls })
+      o.trace?.write({ turn: 'assistant', iteration, content: reply.content, toolCalls: reply.toolCalls })
 
       if (reply.aborted) {
         // Keep the partial reply in context. Dropping it would leave the conversation
         // claiming the model never spoke, which is not what the user just watched.
         if (reply.content) messages.push({ role: 'assistant', content: reply.content })
-        return { answer: reply.content ?? undefined, stop: 'aborted', steps: step + 1, toolsUsed, usage }
+        return { answer: reply.content ?? undefined, stop: 'aborted', iterations: iteration + 1, toolsUsed, usage }
       }
 
       if (!reply.toolCalls.length) {
         // The inversion. In an eval this is a failure to act; in a conversation it is the
         // model answering, which is the whole point of asking.
         messages.push({ role: 'assistant', content: reply.content ?? '' })
-        return { answer: reply.content ?? '', stop: 'answered', steps: step + 1, toolsUsed, usage }
+        return { answer: reply.content ?? '', stop: 'answered', iterations: iteration + 1, toolsUsed, usage }
       }
 
       messages.push({ role: 'assistant', content: reply.content ?? '', tool_calls: reply.toolCalls })
 
       for (const call of reply.toolCalls) {
-        // Checked per call, not just per step. A reply can carry several calls, and a turn
+        // Checked per call, not just per iteration. A reply can carry several calls, and a turn
         // interrupted at a consent prompt must not go on to run the ones behind it — the
         // user stopped the turn, and "stopped" has to mean before the next write.
-        if (signal?.aborted) return { stop: 'aborted', steps: step + 1, toolsUsed, usage }
+        if (signal?.aborted) return { stop: 'aborted', iterations: iteration + 1, toolsUsed, usage }
 
         toolsUsed.push(call.function.name)
         const d = dispatchCall(call, byName)
@@ -199,7 +199,7 @@ export const createSession = (o: SessionOptions): Session => {
         if (d.kind === 'terminal') {
           const answer = String(d.args.answer ?? '')
           messages.push({ role: 'tool', tool_call_id: call.id, content: answer })
-          return { answer, stop: 'done', steps: step + 1, toolsUsed, usage }
+          return { answer, stop: 'done', iterations: iteration + 1, toolsUsed, usage }
         }
 
         o.onToolCall?.(d.tool.name, d.args)
@@ -209,13 +209,13 @@ export const createSession = (o: SessionOptions): Session => {
           // The prompt itself can be interrupted — it is the one place a turn parks
           // indefinitely, waiting on a human rather than on the GPU, so it is exactly where
           // ctrl-c has to land. An abort is a refusal: nothing runs.
-          if (signal?.aborted) return { stop: 'aborted', steps: step + 1, toolsUsed, usage }
+          if (signal?.aborted) return { stop: 'aborted', iterations: iteration + 1, toolsUsed, usage }
           if (verdict === 'always') alwaysAllow.add(d.tool.name)
           if (verdict === 'no') {
             // A refusal is a tool RESULT, not an exception. The model gets to see it and
             // ask what to do instead; throwing would end a turn the user only wanted to
             // steer. The instruction not to retry matters — a small model will otherwise
-            // reissue the identical call and burn the step cap on it.
+            // reissue the identical call and burn the iteration cap on it.
             const content = `error: the user declined to run '${d.tool.name}'. Do not retry it; ask what to do instead.`
             messages.push({ role: 'tool', tool_call_id: call.id, content })
             o.onToolResult?.(d.tool.name, content)
@@ -231,7 +231,7 @@ export const createSession = (o: SessionOptions): Session => {
       }
     }
 
-    return { stop: 'step_cap', steps: maxSteps, toolsUsed, usage }
+    return { stop: 'iteration_cap', iterations: maxIterations, toolsUsed, usage }
   }
 
   return {

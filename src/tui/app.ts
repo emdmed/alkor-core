@@ -134,7 +134,7 @@ export const runApp = async (url: string): Promise<void> => {
     if (res.ok) {
       const data = (await res.json()) as Record<string, unknown>
       const topology = data.topology as TopologySnapshot | undefined
-      if (topology?.profiles && topology?.pipelines) {
+      if (topology?.profiles && topology?.workflows) {
         state = setTopology(state, topology)
         update()
       }
@@ -233,30 +233,30 @@ const nodeColor = (status: NodeState): string => ({
 
 const nodeMark = (status: NodeState): string => ({ active: '●', done: '✓', failed: '×', idle: '○' }[status])
 
-/** Render configured pipelines continuously; activity changes node state, never graph shape. */
+/** Render configured workflows continuously; activity changes node state, never graph shape. */
 const formatPathways = (state: ProjectState, opentui: any): any => {
   const chunks: any[] = []
   const add = (text: string, color = '#8b949e') => chunks.push(opentui.fg(color)(text))
   const newline = () => add('\n')
   const runStatus = (status: string): NodeState => status === 'started' ? 'active' : status === 'failed' ? 'failed' : 'done'
-  const pipelines = state.topology.pipelines
-  if (pipelines.length === 0) {
+  const workflows = state.topology.workflows
+  if (workflows.length === 0) {
     add('No topology yet', '#e6edf3'); newline(); newline()
     add('The server will publish its configured profiles here.\n', '#8b949e')
     add('Listening for the /health snapshot and live events…', '#6e7681')
     return new opentui.StyledText(chunks)
   }
 
-  for (const definition of pipelines) {
-    const pipelineRun = [...state.runs.values()].reverse().find((run) => run.profile === definition.name)
-    const execution = pipelineRun ? state.pipelines.get(pipelineRun.runId) : undefined
-    const pipelineStatus: NodeState = pipelineRun ? runStatus(pipelineRun.status) : 'idle'
-    add(`${nodeMark(pipelineStatus)} `, nodeColor(pipelineStatus))
+  for (const definition of workflows) {
+    const workflowRun = [...state.runs.values()].reverse().find((run) => run.profile === definition.name)
+    const execution = workflowRun ? state.workflows.get(workflowRun.runId) : undefined
+    const workflowStatus: NodeState = workflowRun ? runStatus(workflowRun.status) : 'idle'
+    add(`${nodeMark(workflowStatus)} `, nodeColor(workflowStatus))
     add(definition.name, '#e6edf3')
-    add(`  ${pipelineRun ? pipelineRun.status.toUpperCase() : 'READY'}`, pipelineStatus === 'idle' ? '#8b949e' : nodeColor(pipelineStatus))
-    if (pipelineRun?.wallMs != null) add(`  ·  ${(pipelineRun.wallMs / 1000).toFixed(1)}s`, '#8b949e')
+    add(`  ${workflowRun ? workflowRun.status.toUpperCase() : 'READY'}`, workflowStatus === 'idle' ? '#8b949e' : nodeColor(workflowStatus))
+    if (workflowRun?.wallMs != null) add(`  ·  ${(workflowRun.wallMs / 1000).toFixed(1)}s`, '#8b949e')
     newline()
-    add('  input', pipelineRun ? '#79c0ff' : '#6e7681')
+    add('  input', workflowRun ? '#79c0ff' : '#6e7681')
     for (let index = 0; index < definition.steps.length; index++) {
       const step = definition.steps[index]!
       const observed = execution?.steps.find((candidate) => candidate.step === index)
@@ -267,7 +267,7 @@ const formatPathways = (state: ProjectState, opentui: any): any => {
       add(`${nodeMark(status)} ${step.name}`, nodeColor(status))
     }
     add('  ──›  ', '#484f58')
-    const outputStatus: NodeState = pipelineRun?.status === 'completed' ? 'done' : pipelineRun?.status === 'failed' ? 'failed' : 'idle'
+    const outputStatus: NodeState = workflowRun?.status === 'completed' ? 'done' : workflowRun?.status === 'failed' ? 'failed' : 'idle'
     add(`${nodeMark(outputStatus)} output`, nodeColor(outputStatus)); newline(); newline()
 
     for (const [index, step] of definition.steps.entries()) {
@@ -281,7 +281,7 @@ const formatPathways = (state: ProjectState, opentui: any): any => {
     }
     newline()
   }
-  const independent = state.topology.profiles.filter((profile) => profile.mode !== 'pipeline')
+  const independent = state.topology.profiles.filter((profile) => profile.mode !== 'workflow')
   if (independent.length > 0) {
     add('AVAILABLE PROFILES  ', '#6e7681')
     add(independent.map((profile) => `${profile.name} / ${profile.mode}`).join('  ·  '), '#6e7681')
@@ -373,7 +373,7 @@ const eventColor = (kind: string): string | undefined => {
   if (kind.startsWith('llm.')) return '#a0c0ff'
   if (kind.startsWith('run.')) return '#a0ffa0'
   if (kind.startsWith('http.')) return '#c0c0c0'
-  if (kind.startsWith('pipeline.')) return '#ffffa0'
+  if (kind.startsWith('workflow.')) return '#ffffa0'
   if (kind.startsWith('session.')) return '#ffa0a0'
   if (kind.startsWith('turn.')) return '#ffa0a0'
   if (kind === 'stage') return '#a0ffff'

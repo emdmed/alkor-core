@@ -20,6 +20,14 @@ Apply these rules:
    require the normalized output to appear literally. For example, `two hours` supports
    `duration_minutes: 120`; `Skin cool` supports `skin_temperature: "cool"`; and `bilateral
    crackles` supports `lung_exam: "bilateral_crackles"`.
+
+   A MEASUREMENT SUPPORTS THE CATEGORY IT FALLS IN. When the document gives a number and the
+   field is a categorical label, the label is supported if the measurement lands in that
+   bucket — the document does not have to also say the word. A capillary refill above 3
+   seconds is `delayed` and 3 seconds or less is `brisk`, so `Cap refill 4 sec` supports
+   `capillary_refill: "delayed"`. A jugular venous pressure above 7 cmH2O is `elevated` and 7
+   or below is `normal_or_low`, so `JVP 12 cm` supports `jugular_venous_pressure: "elevated"`.
+   Flag the label only when the measurement falls in a DIFFERENT bucket than the one claimed.
 3. Absence sentinels such as `null`, `not_found`, `not_assessed`, and empty arrays make no
    positive claim. They are correct when the document supplies no value for that field. Never
    report an absent/not-assessed value as a hallucination merely because its field name is not
@@ -58,6 +66,11 @@ OUTPUT: {"verified":true,"confidence":1.0,"issues":[]}
 --- EXAMPLE 5 (normalized source observations) ---
 ORIGINAL DOCUMENT: Synthetic example. Hypotensive for two hours. BP 80/50. Heart rate 120 bpm. Skin cool. JVP elevated. Capillary refill brisk. Bilateral crackles.
 EXTRACTION: {"shock-extraction":{"exam":{"hypotension":{"systolic":80,"diastolic":50,"duration_minutes":120},"heart_rate":120,"skin_temperature":"cool","jugular_venous_pressure":"elevated","capillary_refill":"brisk","pulse_volume":"not_assessed","lung_exam":"bilateral_crackles"}}}
+OUTPUT: {"verified":true,"confidence":0.95,"issues":[]}
+
+--- EXAMPLE 6 (measured findings, unstated duration) ---
+ORIGINAL DOCUMENT: Synthetic example. On arrival BP 78/41, HR 124. Cap refill 4 sec. Cool extremities. Neck veins not examined. Lungs clear bilaterally. Pulse thready.
+EXTRACTION: {"shock-extraction":{"exam":{"hypotension":{"systolic":78,"diastolic":41,"duration_minutes":null},"heart_rate":124,"skin_temperature":"cool","jugular_venous_pressure":"not_assessed","capillary_refill":"delayed","pulse_volume":"thready","lung_exam":"clear"}}}
 OUTPUT: {"verified":true,"confidence":0.95,"issues":[]}
 
 --- NOW VERIFY ---

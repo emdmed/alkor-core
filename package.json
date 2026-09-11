@@ -24,7 +24,7 @@
     "eval": "node src/cli.ts eval",
     "agent": "node src/cli.ts agent",
     "route": "node src/cli.ts route",
-    "pipeline": "node src/cli.ts pipeline",
+    "workflow": "node src/cli.ts workflow",
     "server": "node src/server.ts",
     "tui": "node --experimental-ffi src/tui.ts",
     "web": "npm --prefix web run dev",

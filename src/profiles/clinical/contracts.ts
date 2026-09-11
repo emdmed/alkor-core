@@ -302,7 +302,7 @@ export const TASKS: Task[] = ['vital-signs', 'summary', 'note-format', 'transcri
  * than by falling off the end of its chain into whatever branch happens to be last.
  *
  * `sepsis-extraction` is the first and currently the only member. It ships a prompt, a schema
- * and a parser, and the routed pipeline runs it — but nobody has measured whether a small
+ * and a parser, and the routed task runs it — but nobody has measured whether a small
  * model reads three qSOFA numbers off prose correctly, so it reports no percentage. The day a
  * corpus arrives, it comes off this list in the same commit as its eval.
  */
@@ -345,7 +345,7 @@ export const NOTE_DEFAULT_TASKS: Task[] = ['note-format']
  * remains a valid entry of its own rather than being folded into its extraction.
  *
  * One statement, because the router walks it to expand a plan and the topology draws it as
- * an edge, and a graph that disagreed with the plan would be drawing a pipeline nobody runs.
+ * an edge, and a graph that disagreed with the plan would be drawing a chain nobody runs.
  */
 export const TASK_FEEDS: Partial<Record<Task, Task>> = {
   'shock-extraction': 'shock',

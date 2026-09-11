@@ -199,13 +199,13 @@ test('"always" stops the asking for that tool, for this session only', async () 
 })
 
 test('the step cap is per turn, so a long conversation is not a runaway loop', async () => {
-  const { session } = make([callsTool('read_file')], { maxStepsPerTurn: 3 })
+  const { session } = make([callsTool('read_file')], { maxIterationsPerTurn: 3 })
   const first = await session.send('keep reading')
-  assert.equal(first.stop, 'step_cap')
-  assert.equal(first.steps, 3)
+  assert.equal(first.stop, 'iteration_cap')
+  assert.equal(first.iterations, 3)
 
   const second = await session.send('again')
-  assert.equal(second.steps, 3, 'the next turn starts from a fresh budget')
+  assert.equal(second.iterations, 3, 'the next turn starts from a fresh budget')
 })
 
 test('an unknown tool is reported to the model rather than ending the turn', async () => {
@@ -251,7 +251,7 @@ test('an empty toolset is a plain conversation, not a broken loop', async () => 
   const session = createSession({ systemPrompt: 's', workspace: '/tmp', tools: [], chat })
   const res = await session.send('what does grade B mean?')
   assert.equal(res.stop, 'answered')
-  assert.equal(res.steps, 1, 'nothing to dispatch means nothing to loop over')
+  assert.equal(res.iterations, 1, 'nothing to dispatch means nothing to loop over')
   assert.deepEqual(res.toolsUsed, [])
   assert.equal(state.calls, 1)
   assert.equal(seen.length, 1)
@@ -342,9 +342,9 @@ test('a turn that ends badly still reports the size it last measured', async () 
   const { chat } = scripted([
     { ...callsTool('read_file'), usage: { promptTokens: 900, completionTokens: 15, totalTokens: 915 } },
   ])
-  const s = createSession({ systemPrompt: 'sys', workspace: '/tmp', tools: tools(), maxStepsPerTurn: 2, chat })
+  const s = createSession({ systemPrompt: 'sys', workspace: '/tmp', tools: tools(), maxIterationsPerTurn: 2, chat })
   const res = await s.send('loop forever')
-  assert.equal(res.stop, 'step_cap')
+  assert.equal(res.stop, 'iteration_cap')
   assert.equal(res.usage?.totalTokens, 915)
 })
 

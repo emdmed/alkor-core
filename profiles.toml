@@ -26,9 +26,11 @@
 # manual flow.
 
 # The product-level pipeline is the complete front door: its router chooses one workflow
-# from this catalogue, then the server executes that workflow under the same run id. The
-# `mode = "pipeline"` entries below are retained as the backwards-compatible storage shape
-# for workflow recipes; users do not choose among them during a normal run.
+# from this catalogue, then the server executes that workflow under the same run id. Each
+# entry below is a `mode = "workflow"` profile holding the recipe; users do not choose among
+# them during a normal run. `pipeline` names the front door and nothing else — see
+# spec/nomenclature.md, which also records that `mode = "pipeline"` is still accepted as the
+# retired spelling of `mode = "workflow"`.
 #
 # ONE WORKFLOW, because a syndrome is not a workflow. This catalogue used to carry a second
 # entry, `sepsis-verified`, and the shape of that entry is what argued against it: its first
@@ -81,7 +83,7 @@ ctx = 32768
 # minimum that preserves the 98.1% rule-based accuracy.
 #
 # This remains the measured specialist-classification example and can be run directly. The
-# product front door below is separate because its output vocabulary is workflows.
+# product front door above is separate because its output vocabulary is workflows.
 [router]
 mode = "router"
 url = "http://127.0.0.1:8080"
@@ -112,23 +114,37 @@ ctx = 8192
 # clinical—so this workflow starts directly with extraction.
 #
 # The verifier's contract is a JSON object with two fields — the ORIGINAL DOCUMENT and the
-# EXTRACTION TO VERIFY — which no single pipeline output holds, so the verify step composes
+# EXTRACTION TO VERIFY — which no single workflow output holds, so the verify step composes
 # its input as a template: `initial` for the document and the clinical step's normalized
 # structured output for the extraction. This resolves to a profile's reviewed `report` when
 # it has one and otherwise to its raw constrained completion. The distinction matters for a
 # multi-task clinical route: it has one combined report but no single raw completion.
 # The verifier decodes a JSON string before it builds its own prompt, and refuses plain text.
 [clinical-verified]
-mode = "pipeline"
-# The pipeline definition: a list of steps. Each step has a name, a profile, and an input
+mode = "workflow"
+# The workflow definition: a list of steps. Each step has a name, a profile, and an input
 # reference. Input references: `initial` for the original input, `step-N` for the output
 # of step N (0-indexed), `step-N.raw` for the raw completion, `step-N.text` for rendered
 # text, `step-N.report` for the structured report. An OBJECT composes refs into one JSON
-# input for a step that needs more than one file of state.
+# input for a step that needs more than one value from the workflow context.
+#
+# `constrain` is set on the extract step rather than left to a flag, because this workflow's
+# second step verifies "the constrained completion" and `workflow` has no `--constrain` of its
+# own — only `extract` and `eval` do. Unconstrained, the extractor is free to wrap its object in
+# a markdown fence, and the run then fails at the parse with a perfectly good reading inside it.
+# A grammar cannot emit a backtick outside the JSON, which is why the fix belongs here and not
+# in a more forgiving parser.
+#
+# The last step is marked `final`, which means it runs on EVERY exit — after the chain
+# completes and after either verifier refuses. Without that, the one run whose reader most
+# needs a sentence (the refused one) is the one run that ends in a step error and nothing
+# else. It reads `run`: the initial input, every step result including the error of whichever
+# step refused, and the verdict already reached. It cannot change that verdict.
 steps = [
-  { name = "extract", profile = "clinical", input = "initial" },
+  { name = "extract", profile = "clinical", input = "initial", options = { constrain = true } },
   { name = "verify-derived", profile = "clinical-verifier", input = { document = "initial", extraction = "step-0.output" } },
-  { name = "verify-source", profile = "verifier", input = "step-1.output" }
+  { name = "verify-source", profile = "verifier", input = "step-1.output" },
+  { name = "assess", profile = "clinical-assessment", input = "run", final = true }
 ]
 
 # The deterministic half of verification, for BOTH syndromes. It checks the shock echo,
@@ -141,5 +157,18 @@ steps = [
 # route returns and the bare completion a single-task route returns, which is why folding
 # that profile in here cost no coverage: this one already handled the shapes it did.
 [clinical-verifier]
-mode = "router"
+mode = "code"
+pack = "packs/clinical"
+
+# The ending: what the run established about this patient, on one page.
+#
+# It COMPUTES NOTHING. Every fact it prints was produced by a step above and checked by the
+# verifier below it; this profile renders those values and refuses to state a verdict the
+# checks did not license. That constraint is what makes the ending gradeable at all — the page
+# is a pure function of the run, so `eval --profile clinical-assessment` can hold it to exact
+# match on four gates with no GPU and no model.
+#
+# `mode = "code"` rather than `router` because it chooses nothing. See spec/nomenclature.md.
+[clinical-assessment]
+mode = "code"
 pack = "packs/clinical"

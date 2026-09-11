@@ -61,7 +61,7 @@ export interface LlmRequestEntry {
   startedAt?: number // epoch ms for in-flight age
 }
 
-export interface PipelineStepEntry {
+export interface WorkflowStepEntry {
   step: number
   name: string
   profile: string
@@ -71,9 +71,9 @@ export interface PipelineStepEntry {
   input?: { ref: string | TemplateRefEntry[]; field?: string; fromProfile?: string }
 }
 
-export interface PipelineEntry {
+export interface WorkflowEntry {
   runId: string
-  steps: PipelineStepEntry[]
+  steps: WorkflowStepEntry[]
   stoppedEarly?: boolean
   totalMs?: number
 }
@@ -88,7 +88,7 @@ export interface SessionEntry {
 export interface TurnEntry {
   turn: number
   stop?: string
-  steps?: number
+  iterations?: number
   toolsUsed?: string[]
   usage?: {
     promptTokens: number
@@ -136,14 +136,16 @@ export interface ToolEntry {
 }
 
 /** Static wiring read from the server once; activity events only paint its state. */
-export interface PipelineDefinition {
+export interface WorkflowDefinition {
   name: string
   steps: Array<{
     name: string
     profile: string
-    /** Plain state ref or the metadata-safe form of a composed input template. */
+    /** Plain context ref or the metadata-safe form of a composed input template. */
     input?: string | TemplateRefEntry[]
     field?: string
+    /** The terminal step: the ending, which runs on every exit including a refusal. */
+    final?: boolean
   }>
 }
 
@@ -151,8 +153,8 @@ export interface TopologySnapshot {
   /** The product-level front door that owns routing and the workflow catalogue. */
   pipeline?: { router: string; workflows: string[]; defaultWorkflow: string }
   profiles: ProfileEntry[]
-  /** Workflow recipes. The key remains `pipelines` for activity-spec-1 compatibility. */
-  pipelines: PipelineDefinition[]
+  /** Workflow recipes: the `mode = "workflow"` profiles the pipeline may select. */
+  workflows: WorkflowDefinition[]
 }
 
 export type ConnectionStatus =
@@ -166,7 +168,7 @@ export interface ProjectState {
   models: Map<string, ModelEntry>
   runs: Map<string, RunEntry>
   llmRequests: Map<string, LlmRequestEntry>
-  pipelines: Map<string, PipelineEntry>
+  workflows: Map<string, WorkflowEntry>
   sessions: Map<string, SessionEntry>
   stages: Map<string, StageEntry>
   httpLog: HttpEntry[]
@@ -186,13 +188,13 @@ export const emptyState = (): ProjectState => ({
   models: new Map(),
   runs: new Map(),
   llmRequests: new Map(),
-  pipelines: new Map(),
+  workflows: new Map(),
   sessions: new Map(),
   stages: new Map(),
   httpLog: [],
   routes: [],
   tools: [],
-  topology: { profiles: [], pipelines: [] },
+  topology: { profiles: [], workflows: [] },
   eventLog: [],
   connection: { kind: 'connecting' },
   lastSeq: 0,
@@ -447,44 +449,44 @@ export const applyEvent = (state: ProjectState, event: ActivityEvent): ProjectSt
       }
       return { ...next, runs }
     }
-    case 'pipeline.started': {
-      const runId = event.runId ?? `pipeline-${event.seq}`
-      const pipelines = new Map(next.pipelines)
-      pipelines.set(runId, { runId, steps: [] })
-      return { ...next, pipelines }
+    case 'workflow.started': {
+      const runId = event.runId ?? `workflow-${event.seq}`
+      const workflows = new Map(next.workflows)
+      workflows.set(runId, { runId, steps: [] })
+      return { ...next, workflows }
     }
-    case 'pipeline.step.started': {
-      const runId = event.runId ?? `pipeline-${event.seq}`
-      const pipelines = new Map(next.pipelines)
-      const pipeline = pipelines.get(runId) ?? { runId, steps: [] }
-      const steps = [...pipeline.steps, {
+    case 'workflow.step.started': {
+      const runId = event.runId ?? `workflow-${event.seq}`
+      const workflows = new Map(next.workflows)
+      const workflow = workflows.get(runId) ?? { runId, steps: [] }
+      const steps = [...workflow.steps, {
         step: event.step,
         name: event.name,
         profile: event.profile,
         status: 'started' as const,
         input: event.input,
       }]
-      pipelines.set(runId, { ...pipeline, steps })
-      return { ...next, pipelines }
+      workflows.set(runId, { ...workflow, steps })
+      return { ...next, workflows }
     }
-    case 'pipeline.step.completed': {
-      const runId = event.runId ?? `pipeline-${event.seq}`
-      const pipelines = new Map(next.pipelines)
-      const pipeline = pipelines.get(runId)
-      if (!pipeline) return next
-      const steps = pipeline.steps.map((s) =>
+    case 'workflow.step.completed': {
+      const runId = event.runId ?? `workflow-${event.seq}`
+      const workflows = new Map(next.workflows)
+      const workflow = workflows.get(runId)
+      if (!workflow) return next
+      const steps = workflow.steps.map((s) =>
         s.step === event.step && s.status === 'started' ? { ...s, status: 'completed' as const, ok: event.ok, wallMs: event.wallMs } : s,
       )
-      pipelines.set(runId, { ...pipeline, steps })
-      return { ...next, pipelines }
+      workflows.set(runId, { ...workflow, steps })
+      return { ...next, workflows }
     }
-    case 'pipeline.completed': {
-      const runId = event.runId ?? `pipeline-${event.seq}`
-      const pipelines = new Map(next.pipelines)
-      const pipeline = pipelines.get(runId)
-      if (!pipeline) return next
-      pipelines.set(runId, { ...pipeline, stoppedEarly: event.stoppedEarly, totalMs: event.totalMs })
-      return { ...next, pipelines }
+    case 'workflow.completed': {
+      const runId = event.runId ?? `workflow-${event.seq}`
+      const workflows = new Map(next.workflows)
+      const workflow = workflows.get(runId)
+      if (!workflow) return next
+      workflows.set(runId, { ...workflow, stoppedEarly: event.stoppedEarly, totalMs: event.totalMs })
+      return { ...next, workflows }
     }
     case 'session.created': {
       const sessions = new Map(next.sessions)
@@ -506,7 +508,7 @@ export const applyEvent = (state: ProjectState, event: ActivityEvent): ProjectSt
       const session = sessions.get(event.sessionId)
       if (!session) return next
       const turns = session.turns.map((t) =>
-        t.turn === event.turn ? { ...t, stop: event.stop, steps: event.steps, toolsUsed: event.toolsUsed, usage: event.usage } : t,
+        t.turn === event.turn ? { ...t, stop: event.stop, iterations: event.iterations, toolsUsed: event.toolsUsed, usage: event.usage } : t,
       )
       sessions.set(event.sessionId, { ...session, turns })
       return { ...next, sessions }
@@ -599,7 +601,7 @@ export const clearExecutionHistory = (state: ProjectState): ProjectState => ({
   ...state,
   runs: new Map(),
   llmRequests: new Map(),
-  pipelines: new Map(),
+  workflows: new Map(),
   sessions: new Map(),
   stages: new Map(),
   httpLog: [],

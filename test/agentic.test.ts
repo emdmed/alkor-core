@@ -59,16 +59,16 @@ test('a terminal tool call ends the run as done, carrying its answer', async () 
   const { res } = await run([callsTool('read_file'), callsTool('done', { answer: 'fixed it' })])
   assert.equal(res.stop, 'done')
   assert.equal(res.answer, 'fixed it')
-  assert.equal(res.steps, 2)
+  assert.equal(res.iterations, 2)
   assert.deepEqual(res.toolsUsed, ['read_file', 'done'])
 })
 
 test('two consecutive prose replies end the run instead of nudging to the step cap', async () => {
   // The bug this file exists for: the loop used to spend every remaining step re-nudging
   // a model that had already decided it was finished.
-  const { res, state } = await run([prose('done\nThe bug has been fixed.')], { maxSteps: 12 })
+  const { res, state } = await run([prose('done\nThe bug has been fixed.')], { maxIterations: 12 })
   assert.equal(res.stop, 'no_tool_call')
-  assert.equal(res.steps, 2, 'one reply, one nudged retry')
+  assert.equal(res.iterations, 2, 'one reply, one nudged retry')
   assert.equal(state.calls, 2, 'must not keep paying for inference after the nudge failed')
 })
 
@@ -97,9 +97,9 @@ test('the prose count is consecutive, so an isolated lapse never accumulates', a
 })
 
 test('a model that keeps calling tools hits the step cap, which is a failure', async () => {
-  const { res } = await run([callsTool('read_file')], { maxSteps: 4 })
-  assert.equal(res.stop, 'step_cap')
-  assert.equal(res.steps, 4)
+  const { res } = await run([callsTool('read_file')], { maxIterations: 4 })
+  assert.equal(res.stop, 'iteration_cap')
+  assert.equal(res.iterations, 4)
 })
 
 test('an invented tool is reported back to the model rather than ending the run', async () => {

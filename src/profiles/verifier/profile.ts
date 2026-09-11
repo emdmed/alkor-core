@@ -4,7 +4,7 @@
  * A verifier is a second model that checks the output of a first model. It takes an
  * original document and an extraction result, and it verifies that every quote is present
  * in the document, that every value is supported by the text, and that no information was
- * invented. This is the "trust but verify" layer of a multi-model pipeline: the extractor
+ * invented. This is the "trust but verify" layer of a multi-model workflow: the extractor
  * produces the reading, and the verifier grades it.
  *
  * The verifier is deliberately small — 1.8B parameters with a constrained schema — because
@@ -63,8 +63,8 @@ export const PROFILE: ProfileModule = {
       return { text: 'verifier input missing "document" field', ok: false }
     }
 
-    // Refuse a missing extraction rather than verifying the string "undefined": the pipeline
-    // used to hand a step's whole state blob under this name when the extraction step produced
+    // Refuse a missing extraction rather than verifying the string "undefined": the workflow
+    // used to hand a step's whole context blob under this name when the extraction step produced
     // no report, and a verifier that runs against the word "undefined" reports noise as a
     // finding. A wiring that forgot the extraction is the kind of call a loud refusal fixes.
     if (extraction === undefined || extraction === null) {
@@ -76,7 +76,7 @@ export const PROFILE: ProfileModule = {
 
     // Some extract profiles intentionally expose their structured result as the original
     // constrained JSON completion, rather than a `report`: that keeps their public JSON
-    // output byte-for-byte what the model emitted. A pipeline passes that completion through
+    // output byte-for-byte what the model emitted. A workflow passes that completion through
     // as a string, so decode it here before handing the verifier a structure. Do not accept
     // arbitrary prose as an extraction — a loud refusal is safer than asking a model to
     // verify a quoted JSON string it cannot inspect field by field.

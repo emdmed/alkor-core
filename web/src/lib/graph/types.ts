@@ -11,7 +11,7 @@ import type { Edge, Node } from '@xyflow/react'
 import type { LlmRequestEntry, ProjectState, RunEntry } from '../../../../src/tui/state.ts'
 import type { NodeState } from '../format.ts'
 
-export type GraphNodeKind = 'input' | 'route' | 'step' | 'stage' | 'branch' | 'profile' | 'output' | 'group' | 'compact-pipeline' | 'gateway'
+export type GraphNodeKind = 'input' | 'route' | 'step' | 'stage' | 'branch' | 'profile' | 'output' | 'group' | 'compact-workflow' | 'gateway'
 
 export interface CompactStepData {
   name: string
@@ -75,6 +75,24 @@ export interface GraphNodeData {
   steps?: CompactStepData[]
   /** False on a card nested inside a workflow: its Input/Output belong to the workflow. */
   terminals?: boolean
+  /**
+   * Per-end terminal overrides, for a workflow card split across a branch.
+   *
+   * A workflow that fans out is drawn as a chain of segments, and only the ends of that
+   * chain own the document: the first segment takes the Input, the last takes the Output,
+   * and a middle segment takes neither. Both default to `terminals !== false`.
+   */
+  showInput?: boolean
+  showOutput?: boolean
+  /** A continuation segment: the same workflow, picked back up after its branch merged. */
+  continued?: boolean
+  /**
+   * Every step of the owning workflow, when this card holds only a slice of them.
+   *
+   * Progress is a property of the workflow, not of the piece of it a card happens to draw,
+   * so a segment reports how far the whole run is rather than how far its own slice is.
+   */
+  allSteps?: CompactStepData[]
   /** The profile whose own decision produced this card, when the card is one of its routes. */
   routeOf?: string
   router?: boolean
@@ -92,6 +110,10 @@ export interface GraphNodeData {
   configured?: boolean
   /** A visible-but-deemphasised alternative after a router has committed. */
   muted?: boolean
+  /** This card can be collapsed to its header; `expandKey` is the disclosure it holds. */
+  collapsible?: boolean
+  /** Collapsed right now: header only, steps withheld until disclosed. */
+  collapsed?: boolean
   /** The project's configured front-door routing decision. */
   entryPoint?: boolean
   /** Stable un-namespaced id used by expansion state in a composed project graph. */
@@ -145,5 +167,16 @@ export interface BuildCtx {
 }
 
 export interface ExpandedGraphBuild extends GraphBuild {
+  /** Disclosure keys this build drew OPEN. */
   expanded: Set<string>
+  /** Disclosure keys this build drew CLOSED. Compact view only. */
+  collapsed?: Set<string>
+  /**
+   * Every disclosure key on the canvas, open or closed.
+   *
+   * The compact view's default is derived from execution rather than from the last click, so
+   * the operator's intent is two sets — deliberately opened, deliberately closed — and both
+   * are pruned against what was actually drawn.
+   */
+  disclosures?: Set<string>
 }

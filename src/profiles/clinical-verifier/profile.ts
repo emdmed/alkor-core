@@ -37,6 +37,31 @@ type JsonObject = Record<string, unknown>
 const object = (value: unknown): JsonObject | undefined =>
   typeof value === 'object' && value !== null && !Array.isArray(value) ? value as JsonObject : undefined
 
+/**
+ * The shock exam as SOURCE ASSERTIONS, with the extraction contract's numeric sentinels
+ * rewritten to `null`.
+ *
+ * `prompts/shock-extraction.md` says to write 0 for a duration or a heart rate the note does not
+ * state, so on that contract a 0 is an ABSENCE and not a reading. The model verifier does not
+ * read that prompt — it is handed a payload and a document — and `packs/verifier/prompt.md`
+ * recognises absence only in `null`, `not_found`, `not_assessed` and empty arrays. A note that
+ * records a blood pressure without saying how long it has been low therefore arrived at the
+ * verifier as a positive claim of "zero minutes", and came back as `unsupported_value` on a
+ * field where the extractor had obeyed its contract exactly. Translating the sentinel here keeps
+ * the knowledge of what 0 means on this contract in the profile that owns the contract, rather
+ * than teaching the generic verifier that no number is ever allowed to be zero.
+ *
+ * The values that reach `classify` are untouched: the cohort gate ran on the real payload above.
+ */
+const sourceExam = (exam: ReturnType<typeof parseExam>): JsonObject => ({
+  ...exam,
+  hypotension: {
+    ...exam.hypotension,
+    duration_minutes: exam.hypotension.duration_minutes === 0 ? null : exam.hypotension.duration_minutes,
+  },
+  heart_rate: exam.heart_rate === 0 ? null : exam.heart_rate,
+})
+
 const sameNames = (actual: string[], expected: string[]): boolean =>
   actual.length === expected.length && [...actual].sort().every((value, i) => value === [...expected].sort()[i])
 
@@ -144,7 +169,7 @@ const prepare = (ctx: ReviewContext, document: string | JsonObject, extraction: 
       }
       try {
         shockExam = parseExam(JSON.stringify(examValue), 'clinical verifier input')
-        sourceExtraction[route] = { exam: shockExam }
+        sourceExtraction[route] = { exam: sourceExam(shockExam) }
 
         const mp = loadMedprotocolRule(ctx.pack!)
         checkMedprotocolVersion(mp, ctx.pack!.name)
@@ -240,8 +265,22 @@ const prepare = (ctx: ReviewContext, document: string | JsonObject, extraction: 
         if (!sameNames(reply.discordant_findings, citations.discordant)) {
           issues.push({ field: 'results.shock.output.discordant_findings', issue: `expected ${citations.discordant.join(', ') || 'none'}` })
         }
-        if (reply.indeterminate_reason !== truth.reason) {
-          issues.push({ field: 'results.shock.output.indeterminate_reason', issue: `expected ${truth.reason ?? 'null'}` })
+        // WHETHER a reason was given, never WHICH ONE, and the two vocabularies are the reason.
+        // `truth.reason` is one of three closed tokens the rule can return; the model's reason is
+        // a sentence, because `prompts/shock.md` asks for one in every worked example and
+        // `shock.schema.json` types the field free text and records that it is "NOT graded
+        // automatically". Comparing them with `!==` demanded the model emit `outside_studied_cohort`
+        // verbatim — which its own prompt forbids — so this check could only ever pass by the
+        // model disobeying the pack. What IS a contract, and is checked here, is the pairing the
+        // prompt states at shock.md:83-85: indeterminate is answered with a reason, anything else
+        // with null.
+        if ((truth.reason === null) !== (reply.indeterminate_reason === null)) {
+          issues.push({
+            field: 'results.shock.output.indeterminate_reason',
+            issue: truth.reason === null
+              ? 'a reason was given for a category that is not indeterminate'
+              : 'indeterminate was answered with no reason',
+          })
         }
       } catch (error) {
         issues.push({ field: 'results.shock.output', issue: (error as Error).message })
@@ -257,7 +296,9 @@ const prepare = (ctx: ReviewContext, document: string | JsonObject, extraction: 
 
 export const PROFILE: ProfileModule = {
   name: 'clinical-verifier',
-  mode: 'router',
+  // `code`, not `router`: it checks and prepares, and it chooses nothing. See
+  // spec/nomenclature.md, which reserves `router` for the thing that chooses.
+  mode: 'code',
   needsPack: true,
   topology: { stages: [{ name: 'verify-derived' }, { name: 'prepare-source-verification' }] },
 

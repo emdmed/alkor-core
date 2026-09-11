@@ -1,14 +1,14 @@
 /**
  * Project-map builders: the complete configured system on one canvas.
  *
- * `buildProjectGraph` shows every configured pipeline as a lane plus every profile as a
+ * `buildProjectGraph` shows every configured workflow as a lane plus every profile as a
  * blueprint row, so no possible route disappears after a decision — alternatives are
- * only de-emphasised. `buildPipelinesGraph` turns the same model into separately
- * readable per-pipeline lanes, and `buildExpandedPipelinesGraph` resolves the default
+ * only de-emphasised. `buildWorkflowsGraph` turns the same model into separately
+ * readable per-workflow lanes, and `buildExpandedWorkflowsGraph` resolves the default
  * disclosure (what opens before any user interaction) to a fixed point.
  */
 import { stageTreeForRun } from '../../../../src/tui/state.ts'
-import type { PipelineDefinition, ProfileEntry, ProjectState, RunEntry, StageEntry } from '../../../../src/tui/state.ts'
+import type { WorkflowDefinition, ProfileEntry, ProjectState, RunEntry, StageEntry } from '../../../../src/tui/state.ts'
 import type { ProfileTopologyStage } from '../../../../src/core/topology.ts'
 import {
   CHIP_W,
@@ -21,6 +21,7 @@ import {
   detailTextOf,
   flowEdge,
   graphBounds,
+  isRoutableSpecialist,
   layoutHeightOf,
   llmOf,
   muteEdge,
@@ -32,7 +33,7 @@ import {
   stageState,
   stepIndexOf,
 } from './core.ts'
-import { buildConfiguredPipeline, buildGraph, declaredRouteTargets, markCurrentOperation, matchTopology } from './run.ts'
+import { buildConfiguredWorkflow, buildGraph, declaredRouteTargets, markCurrentOperation, matchTopology } from './run.ts'
 import type { ExpandedGraphBuild, GraphBuild, GraphEdge, GraphNode } from './types.ts'
 
 /* ------------------------------------------------------------------ shared workspace */
@@ -77,7 +78,7 @@ interface BlueprintView {
   scopeRight: number
 }
 
-/** One lane of a project map: a configured or observed pipeline, kept separately readable. */
+/** One lane of a project map: a configured or observed workflow, kept separately readable. */
 const addLane = (
   surface: ProjectSurface,
   raw: GraphBuild,
@@ -85,7 +86,7 @@ const addLane = (
   label: string,
   alignOutput: boolean,
   laneY: number,
-  pipelineOutputRank: number,
+  workflowOutputRank: number,
 ): number => {
   // Route alternatives are represented once, as real configured profile nodes below.
   const branchIds = new Set(raw.nodes.filter((n) => n.data.kind === 'branch').map((n) => n.id))
@@ -112,7 +113,7 @@ const addLane = (
     const output = placed.nodes.find((candidate) => candidate.data.kind === 'output')
     // Align short configured lanes to the shared output column, but never pull an
     // expanded runtime output backward over the stages that now precede it.
-    if (output) output.position.x = Math.max(output.position.x, columnX(pipelineOutputRank))
+    if (output) output.position.x = Math.max(output.position.x, columnX(workflowOutputRank))
   }
 
   const bounds = graphBounds(placed.nodes)
@@ -132,7 +133,7 @@ const addLane = (
   return bounds.bottom + ROW_GAP
 }
 
-/** A single shared entry point serves every lane instead of one input per pipeline. */
+/** A single shared entry point serves every lane instead of one input per workflow. */
 const addSharedEntry = (surface: ProjectSurface, selected: RunEntry | undefined): void => {
   if (surface.laneFirstSteps.length === 0) return
   const sharedInput = node('input', 'input', 'Prompt input', selected ? 'done' : 'idle', {
@@ -178,7 +179,7 @@ const computeRoutedTargets = (state: ProjectState): Set<string> => {
   )
   if (state.topology.profiles.some((profile) => profile.mode === 'router' && topologyRoutes(state, profile.name).every((route) => !route.targetProfile))) {
     for (const profile of state.topology.profiles) {
-      if (profile.mode !== 'pipeline' && profile.mode !== 'router') routedTargets.add(profile.name)
+      if (isRoutableSpecialist(profile.mode)) routedTargets.add(profile.name)
     }
   }
   return routedTargets
@@ -219,12 +220,12 @@ const collectObservedActivity = (state: ProjectState, selected: RunEntry): Obser
   }
 
   const observedStagesByProfile = new Map<string, Map<string, StageEntry>>()
-  const pipelineEntry = state.pipelines.get(selected.runId)
-  const pipelineDefinition = matchTopology(state, pipelineEntry)
-  const directProfile = pipelineEntry ? undefined : selected.profile
+  const workflowEntry = state.workflows.get(selected.runId)
+  const workflowDefinition = matchTopology(state, workflowEntry)
+  const directProfile = workflowEntry ? undefined : selected.profile
   const profileForStep = (step: number): string | undefined =>
-    pipelineEntry?.steps.find((candidate) => candidate.step === step)?.profile
-    ?? pipelineDefinition?.steps[step]?.profile
+    workflowEntry?.steps.find((candidate) => candidate.step === step)?.profile
+    ?? workflowDefinition?.steps[step]?.profile
   const remember = (profile: string, stage: StageEntry): void => {
     const byName = observedStagesByProfile.get(profile) ?? new Map<string, StageEntry>()
     const previous = byName.get(stage.name)
@@ -235,7 +236,7 @@ const collectObservedActivity = (state: ProjectState, selected: RunEntry): Obser
     for (const stage of stages) {
       const step = stepIndexOf(stage)
       const profile = step == null ? inheritedProfile : profileForStep(step) ?? inheritedProfile
-      if (profile && stage.name !== 'pipeline') remember(profile, stage)
+      if (profile && stage.name !== 'workflow') remember(profile, stage)
       visitObserved(stage.children, profile)
     }
   }
@@ -431,13 +432,13 @@ const paintTrailOverlay = (nodes: GraphNode[], edges: GraphEdge[], selected: Run
 
 /**
  * Render the complete configured project continuously. A selected run paints one lane
- * with observed state and stages, while every other pipeline remains visible as idle
+ * with observed state and stages, while every other workflow remains visible as idle
  * topology. Router destinations remain in vertically stacked profile rows so no possible
  * route is removed after the decision; alternatives are only de-emphasised.
  */
 export const buildProjectGraph = (state: ProjectState, runId: string | undefined, expanded: Set<string>): GraphBuild => {
   const selected = runId ? state.runs.get(runId) : undefined
-  if (state.topology.pipelines.length === 0 && state.topology.profiles.length === 0) {
+  if (state.topology.workflows.length === 0 && state.topology.profiles.length === 0) {
     return selected ? buildGraph(state, selected.runId, expanded) : { nodes: [], edges: [], title: '' }
   }
 
@@ -450,19 +451,19 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
   }
   let laneY = MAIN_Y
   let selectedPlaced = false
-  const pipelineOutputRank = Math.max(0, ...state.topology.pipelines.map((pipeline) => pipeline.steps.length)) + 1
+  const workflowOutputRank = Math.max(0, ...state.topology.workflows.map((workflow) => workflow.steps.length)) + 1
 
-  for (const def of state.topology.pipelines) {
+  for (const def of state.topology.workflows) {
     const isSelected = selected?.profile === def.name
-    const raw = isSelected ? buildGraph(state, selected.runId, expanded) : buildConfiguredPipeline(state, def)
+    const raw = isSelected ? buildGraph(state, selected.runId, expanded) : buildConfiguredWorkflow(state, def)
     selectedPlaced ||= isSelected
-    laneY = addLane(surface, raw, `pipeline-${def.name}`, `${def.name} · workflow`, true, laneY, pipelineOutputRank)
+    laneY = addLane(surface, raw, `workflow-${def.name}`, `${def.name} · workflow`, true, laneY, workflowOutputRank)
   }
 
   // A direct profile run is still useful operational detail, but it sits alongside the
   // configured topology instead of replacing it.
   if (selected && !selectedPlaced) {
-    laneY = addLane(surface, buildGraph(state, selected.runId, expanded), `run-${selected.runId}`, `${selected.profile} · selected run`, false, laneY, pipelineOutputRank)
+    laneY = addLane(surface, buildGraph(state, selected.runId, expanded), `run-${selected.runId}`, `${selected.profile} · selected run`, false, laneY, workflowOutputRank)
   }
   addSharedEntry(surface, selected)
 
@@ -531,7 +532,7 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
     const sourceProfile = source.data.kind === 'step' ? source.data.profile : selected?.profile
     const declaredTargets = topologyRoutes(state, sourceProfile ?? '').flatMap((route) => route.targetProfile ? [route.targetProfile] : [])
     const fallbackTargets = state.topology.profiles
-      .filter((profile) => profile.mode !== 'pipeline' && profile.mode !== 'router' && profile.name !== sourceProfile)
+      .filter((profile) => isRoutableSpecialist(profile.mode) && profile.name !== sourceProfile)
       .map((profile) => profile.name)
     const targets = new Set(declaredTargets.length > 0 ? declaredTargets : fallbackTargets)
     for (const profile of profileNodes.filter((candidate) => targets.has(String(candidate.data.profile)))) {
@@ -571,7 +572,7 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
 
   paintTrailOverlay(surface.nodes, surface.edges, selected)
 
-  const count = state.topology.pipelines.length
+  const count = state.topology.workflows.length
   const runTitle = selected ? ` · selected run ${selected.profile} ${shortDigest(selected.runId)}` : ''
   const missingTitle = missingTargets.length > 0 ? ` · ${missingTargets.length} unresolved route target${missingTargets.length === 1 ? '' : 's'}` : ''
   return {
@@ -582,19 +583,19 @@ export const buildProjectGraph = (state: ProjectState, runId: string | undefined
 }
 
 /**
- * Keep the selected pipeline's complete static internals, but place each referenced
- * profile at the pipeline step that owns it. This turns the topology catalogue into
+ * Keep the selected workflow's complete static internals, but place each referenced
+ * profile at the workflow step that owns it. This turns the topology catalogue into
  * one readable process: summaries on the top row, implementation detail below them,
  * and every deeper stage advancing to the next column.
  */
 function buildConfiguredProgressTopology(
   state: ProjectState,
-  pipeline: PipelineDefinition,
+  workflow: WorkflowDefinition,
   expanded: Set<string>,
   runId?: string,
 ): GraphBuild {
   const profileRanks = new Map<string, number>()
-  pipeline.steps.forEach((step, index) => {
+  workflow.steps.forEach((step, index) => {
     if (!profileRanks.has(step.profile)) profileRanks.set(step.profile, index + 1)
   })
 
@@ -613,7 +614,7 @@ function buildConfiguredProgressTopology(
     ...state,
     topology: {
       profiles: state.topology.profiles.filter((profile) => profileRanks.has(profile.name)),
-      pipelines: [pipeline],
+      workflows: [workflow],
     },
   }
   const graph = buildProjectGraph(focusedState, runId, expanded)
@@ -631,8 +632,8 @@ function buildConfiguredProgressTopology(
     }
   }
 
-  pipeline.steps.forEach((step, index) => {
-    const source = graph.nodes.find((candidate) => candidate.id === `pipeline-${pipeline.name}/step-${index}`)
+  workflow.steps.forEach((step, index) => {
+    const source = graph.nodes.find((candidate) => candidate.id === `workflow-${workflow.name}/step-${index}`)
     const target = graph.nodes.find((candidate) => candidate.id === `profile-${step.profile}`)
     if (!source || !target || graph.edges.some((edge) => edge.source === source.id && edge.target === target.id)) return
     graph.edges.push(flowEdge(source, target, 'ghost', 'detail', 'detail', 'top'))
@@ -640,38 +641,38 @@ function buildConfiguredProgressTopology(
 
   return {
     ...graph,
-    title: `${pipeline.name} · ${pipeline.steps.length} step${pipeline.steps.length === 1 ? '' : 's'} · ready`,
+    title: `${workflow.name} · ${workflow.steps.length} step${workflow.steps.length === 1 ? '' : 's'} · ready`,
   }
 }
 
-/** Every configured pipeline as a complete, separately readable process lane. */
-export const buildPipelinesGraph = (
+/** Every configured workflow as a complete, separately readable process lane. */
+export const buildWorkflowsGraph = (
   state: ProjectState,
   runId: string | undefined,
   expanded: Set<string>,
 ): GraphBuild => {
   const selected = runId ? state.runs.get(runId) : undefined
-  if (state.topology.pipelines.length === 0) {
+  if (state.topology.workflows.length === 0) {
     return selected ? buildGraph(state, selected.runId, expanded) : { nodes: [], edges: [], title: '' }
   }
 
-  const selectedEntry = selected ? state.pipelines.get(selected.runId) : undefined
+  const selectedEntry = selected ? state.workflows.get(selected.runId) : undefined
   const selectedDefinition = selectedEntry ? matchTopology(state, selectedEntry) : undefined
   const nodes: GraphNode[] = []
   const edges: GraphEdge[] = []
   let nextY = MAIN_Y
 
-  for (const pipeline of state.topology.pipelines) {
-    const isSelected = Boolean(selected && selectedDefinition?.name === pipeline.name)
-    const raw = buildConfiguredProgressTopology(state, pipeline, expanded, isSelected ? selected!.runId : undefined)
+  for (const workflow of state.topology.workflows) {
+    const isSelected = Boolean(selected && selectedDefinition?.name === workflow.name)
+    const raw = buildConfiguredProgressTopology(state, workflow, expanded, isSelected ? selected!.runId : undefined)
     const rawBounds = graphBounds(raw.nodes, true)
-    const placed = placeGraph(raw, `pipeline-lane-${pipeline.name}`, nextY - rawBounds.top)
+    const placed = placeGraph(raw, `workflow-lane-${workflow.name}`, nextY - rawBounds.top)
     const bounds = graphBounds(placed.nodes, true)
     nodes.push(...placed.nodes)
     edges.push(...placed.edges)
 
     nodes.push({
-      ...node(`pipeline-lane-group-${pipeline.name}`, 'group', `${pipeline.name} · workflow`, isSelected ? 'active' : 'idle', {
+      ...node(`workflow-lane-group-${workflow.name}`, 'group', `${workflow.name} · workflow`, isSelected ? 'active' : 'idle', {
         current: isSelected,
       }),
       position: { x: bounds.left - 24, y: bounds.top - 34 },
@@ -697,19 +698,19 @@ export const buildPipelinesGraph = (
   // Composing lanes can duplicate the selected run's active operation in topology
   // overlays. Resolve those representations back to one visible NOW badge.
   markCurrentOperation(nodes)
-  const count = state.topology.pipelines.length
+  const count = state.topology.workflows.length
   return { nodes, edges, title: `1 pipeline · ${count} workflow${count === 1 ? '' : 's'} · full process detail` }
 }
 
 /** Resolve default-open graph disclosure to a fixed point while respecting closes. */
-export const buildExpandedPipelinesGraph = (
+export const buildExpandedWorkflowsGraph = (
   state: ProjectState,
   runId: string | undefined,
   requested: Set<string>,
   collapsed: Set<string>,
 ): ExpandedGraphBuild => {
   const expanded = new Set([...requested].filter((key) => !collapsed.has(key)))
-  let graph = buildPipelinesGraph(state, runId, expanded)
+  let graph = buildWorkflowsGraph(state, runId, expanded)
 
   while (true) {
     let changed = false
@@ -721,6 +722,6 @@ export const buildExpandedPipelinesGraph = (
       changed = true
     }
     if (!changed) return { ...graph, expanded }
-    graph = buildPipelinesGraph(state, runId, expanded)
+    graph = buildWorkflowsGraph(state, runId, expanded)
   }
 }

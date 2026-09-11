@@ -76,7 +76,7 @@ test('the CLI is asked once and its parse wins', () => {
   assert.equal(m.bloodPressureCategory, 'Low')
   assert.equal(m.heartRateCategory, 'Elevated')
   assert.equal(m.meanArterialPressure, 54.7)
-  assert.ok(Math.abs(m.shockIndex! - 128 / 76) < 1e-9, 'shock index is HR/SBP, unrounded')
+  assert.equal(m.shockIndex, 1.68, 'shock index is HR/SBP, rounded to two places')
   // Readings the CLI is not asked about still travel, because the router counts them.
   assert.equal(m.respiratoryRate, 26)
 })

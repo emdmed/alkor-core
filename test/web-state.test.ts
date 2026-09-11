@@ -31,7 +31,7 @@ const mkEvent = (partial: Record<string, unknown> & { seq: number }): ActivityEv
 const topology: TopologySnapshot = {
   profiles: [{ name: 'workflow-router', mode: 'router' }],
   pipeline: { router: 'workflow-router', workflows: ['wf'], defaultWorkflow: 'wf' },
-  pipelines: [{ name: 'wf', steps: [{ name: 'work', profile: 'worker' }] }],
+  workflows: [{ name: 'wf', steps: [{ name: 'work', profile: 'worker' }] }],
 }
 
 test('typing a draft URL never alters the active source', () => {
@@ -118,7 +118,7 @@ test('clear removes run history but keeps topology, models, and connection', () 
 
   const cleared = clearExecutionHistory(state)
   assert.equal(cleared.runs.size, 0)
-  assert.equal(cleared.pipelines.size, 0)
+  assert.equal(cleared.workflows.size, 0)
   assert.equal(cleared.stages.size, 0)
   assert.equal(cleared.llmRequests.size, 0)
   assert.equal(cleared.sessions.size, 0)

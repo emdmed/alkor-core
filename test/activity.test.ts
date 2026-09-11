@@ -29,10 +29,10 @@ const anyEvent = (kind: ActivityInput['kind']): ActivityInput & Record<string, u
     case 'run.started': return { kind: 'run.started', profile: 'clinical', inputChars: 100, inputDigest: 'abc123' }
     case 'run.completed': return { kind: 'run.completed', profile: 'clinical', wallMs: 200 }
     case 'run.failed': return { kind: 'run.failed', profile: 'clinical', wallMs: 200, error: 'something went wrong' }
-    case 'pipeline.started': return { kind: 'pipeline.started' }
-    case 'pipeline.step.started': return { kind: 'pipeline.step.started', step: 0, name: 'extract', profile: 'clinical', input: { ref: 'initial' } }
-    case 'pipeline.step.completed': return { kind: 'pipeline.step.completed', step: 0, name: 'extract', profile: 'clinical', ok: true, wallMs: 150 }
-    case 'pipeline.completed': return { kind: 'pipeline.completed', stoppedEarly: false, totalMs: 500 }
+    case 'workflow.started': return { kind: 'workflow.started' }
+    case 'workflow.step.started': return { kind: 'workflow.step.started', step: 0, name: 'extract', profile: 'clinical', input: { ref: 'initial' } }
+    case 'workflow.step.completed': return { kind: 'workflow.step.completed', step: 0, name: 'extract', profile: 'clinical', ok: true, wallMs: 150 }
+    case 'workflow.completed': return { kind: 'workflow.completed', stoppedEarly: false, totalMs: 500 }
     case 'session.created': return { kind: 'session.created', sessionId: 's1', profile: 'clinical' }
     case 'turn.started': return { kind: 'turn.started', sessionId: 's1', turn: 1 }
     case 'turn.completed': return { kind: 'turn.completed', sessionId: 's1', turn: 1, stop: 'answered', steps: 1, toolsUsed: [] }

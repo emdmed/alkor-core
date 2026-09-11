@@ -10,7 +10,7 @@ import { Check, Circle, ChevronsDownUp, ChevronsUpDown, Columns3, ListTree, Load
 import { Background, BackgroundVariant, Controls, ReactFlow, ReactFlowProvider, useReactFlow, useStore } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import type { GraphNode, GraphNodeData, CompactStepData } from '../../lib/graph/index.ts'
-import { buildCompactGraph, buildExpandedPipelinesGraph, layoutHeightOf } from '../../lib/graph/index.ts'
+import { buildCompactGraph, buildExpandedWorkflowsGraph, layoutHeightOf } from '../../lib/graph/index.ts'
 import { fmtSec } from '../../lib/format.ts'
 import { NODE_TYPES } from './nodes.tsx'
 import { Badge } from '../ui/badge'
@@ -19,8 +19,8 @@ import type { ProjectState } from '../../../../src/tui/state.ts'
 
 export interface PipelineGraphProps {
   state: ProjectState
-  selectedPipeline: string
-  onSelectedPipelineChange: (profile: string) => void
+  selectedWorkflow: string
+  onSelectedWorkflowChange: (profile: string) => void
   /** Inspector-side: what node the user last clicked (rendered into the drawer). */
   onInspect: (data: GraphNodeData) => void
   onToggleActivity: () => void
@@ -47,7 +47,7 @@ const miniNodeSize = (node: GraphNode): { width: number; height: number } => {
     case 'route': return { width: 248, height: 74 }
     case 'branch': return { width: 168, height: 44 }
     case 'profile': return { width: 196, height: 62 }
-    case 'compact-pipeline': return { width: 360, height: layoutHeightOf(node) }
+    case 'compact-workflow': return { width: 360, height: layoutHeightOf(node) }
     case 'gateway': return { width: 340, height: 56 }
     default: return { width: 240, height: 60 }
   }
@@ -123,7 +123,7 @@ const GraphMiniMap = ({ nodes }: { nodes: GraphNode[] }) => {
   )
 }
 
-const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspect, onToggleActivity, onToggleLog, activityOpen, logOpen }: PipelineGraphProps) => {
+const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspect, onToggleActivity, onToggleLog, activityOpen, logOpen }: PipelineGraphProps) => {
   const { fitView, getNodes, getViewport, setViewport } = useReactFlow()
   const canvasWidth = useStore((store) => store.width)
   const graphShellRef = useRef<HTMLDivElement>(null)
@@ -131,7 +131,11 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
   const [selectedId, setSelectedId] = useState<string>()
   const [userExpanded, setUserExpanded] = useState<Set<string>>(new Set())
   const [userCollapsed, setUserCollapsed] = useState<Set<string>>(new Set())
+  // Compact disclosure is derived from execution, not from the last click, so the operator's
+  // intent needs both directions: a card that opens itself when it runs must be closable, and
+  // a card that stays shut must be openable.
   const [compactExpanded, setCompactExpanded] = useState<Set<string>>(new Set())
+  const [compactCollapsed, setCompactCollapsed] = useState<Set<string>>(new Set())
   const [showLegend, setShowLegend] = useState(true)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [fullscreenFallback, setFullscreenFallback] = useState(false)
@@ -143,7 +147,7 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
   const [viewportPinned, setViewportPinned] = useState(false)
 
   const selected = runs.find((r) => r.runId === selectedId)
-    ?? [...runs].reverse().find((r) => r.profile === selectedPipeline)
+    ?? [...runs].reverse().find((r) => r.profile === selectedWorkflow)
     ?? runs[runs.length - 1]
 
   // A new run is the operator's strongest intent. Follow it immediately without
@@ -153,7 +157,7 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
     if (!latestRunId) return
     const latest = runs[runs.length - 1]!
     setSelectedId(latestRunId)
-    onSelectedPipelineChange(latest.profile)
+    onSelectedWorkflowChange(latest.profile)
   }, [latestRunId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -209,21 +213,27 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
     }
   }
 
-  // Compact view expands a step embedded in a workflow card, so its disclosure set is
-  // deliberately separate from Full view's node expansion set: neither mode mutates
-  // the other mode's state, and toggling between them preserves each mode's own state.
-  const toggleCompactStep = (key: string) => {
+  // Compact view expands a card, or a step embedded in one, so its disclosure state is
+  // deliberately separate from Full view's: neither mode mutates the other mode's state, and
+  // toggling between them preserves each mode's own state.
+  const toggleCompact = (key: string, isOpen: boolean) => {
     setCompactExpanded((prev) => {
       const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
+      if (isOpen) next.delete(key)
       else next.add(key)
+      return next
+    })
+    setCompactCollapsed((prev) => {
+      const next = new Set(prev)
+      if (isOpen) next.add(key)
+      else next.delete(key)
       return next
     })
   }
 
   const graphView = useMemo(() => {
     if (graphMode === 'compact') {
-      const graph = buildCompactGraph(state, selected?.runId, compactExpanded)
+      const graph = buildCompactGraph(state, selected?.runId, compactExpanded, compactCollapsed)
       const nodes: GraphNode[] = graph.nodes.map((n) => {
         const steps = (n.data.steps as CompactStepData[] | undefined) ?? []
         return {
@@ -233,16 +243,21 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
             steps: steps.map((step) => ({
               ...step,
               onToggle: step.stages.length > 0 && step.expandKey
-                ? () => toggleCompactStep(step.expandKey!)
+                ? () => toggleCompact(step.expandKey!, Boolean(step.expanded))
                 : undefined,
             })),
+            // A collapsible card shares the step disclosure state, so a workflow reopened by
+            // hand stays open while the run it is standing next to keeps updating.
+            onToggle: n.data.collapsible === true && n.data.expandKey
+              ? () => toggleCompact(n.data.expandKey!, n.data.collapsed !== true)
+              : undefined,
             onInspect: () => onInspect(n.data),
           },
         }
       })
-      return { nodes, edges: graph.edges, title: graph.title, expanded: graph.expanded }
+      return { nodes, edges: graph.edges, title: graph.title, expanded: graph.expanded, disclosures: graph.disclosures }
     }
-    const graph = buildExpandedPipelinesGraph(state, selected?.runId, userExpanded, userCollapsed)
+    const graph = buildExpandedWorkflowsGraph(state, selected?.runId, userExpanded, userCollapsed)
     const expandedKeys = graph.expanded
     // The model keeps the complete active lineage for navigation while identifying one
     // most-specific visible operation for the NOW badge.
@@ -261,25 +276,28 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
             },
           },
     )
-    return { nodes, edges: graph.edges, title: graph.title, expanded: expandedKeys }
-  }, [state, selected, userCollapsed, userExpanded, compactExpanded, onInspect, graphMode])
+    return { nodes, edges: graph.edges, title: graph.title, expanded: expandedKeys, disclosures: undefined }
+  }, [state, selected, userCollapsed, userExpanded, compactExpanded, compactCollapsed, onInspect, graphMode])
   const { nodes, edges, title, expanded } = graphView
 
   // Compact disclosure keys embed the workflow node identity and step number; when a
-  // key's owning workflow is no longer rendered (switch of selected run, catalogue
-  // change), prune it so stale run ids never accumulate across the session.
+  // key's owning card is no longer rendered (switch of selected run, catalogue change),
+  // prune it so stale run ids never accumulate across the session. Both directions of
+  // intent are pruned against everything the board actually drew — pruning against what
+  // is OPEN would erase every deliberate collapse on the next rebuild.
+  const disclosures = graphView.disclosures
   useEffect(() => {
-    if (graphMode !== 'compact') return
-    setCompactExpanded((prev) => {
-      if ([...prev].every((key) => graphView.expanded.has(key))) return prev
-      return new Set([...prev].filter((key) => graphView.expanded.has(key)))
-    })
-  }, [graphMode, graphView.expanded])
+    if (graphMode !== 'compact' || !disclosures) return
+    const keep = (prev: Set<string>): Set<string> =>
+      [...prev].every((key) => disclosures.has(key)) ? prev : new Set([...prev].filter((key) => disclosures.has(key)))
+    setCompactExpanded(keep)
+    setCompactCollapsed(keep)
+  }, [graphMode, disclosures])
 
   // Keep the current neighborhood readable. Fitting an arbitrarily long run into the
   // viewport recreates a minimap where the operator needs legible execution detail.
   const geometryKey = nodes
-    .map((n) => `${n.id}:${n.position.x}:${n.position.y}:${String(n.style?.width ?? '')}:${String(n.style?.height ?? '')}${n.data.kind === 'compact-pipeline' ? `:h${layoutHeightOf(n)}` : ''}`)
+    .map((n) => `${n.id}:${n.position.x}:${n.position.y}:${String(n.style?.width ?? '')}:${String(n.style?.height ?? '')}${n.data.kind === 'compact-workflow' ? `:h${layoutHeightOf(n)}` : ''}`)
     .join('|')
   useEffect(() => {
     if (nodes.length === 0 || viewportPinned) return
@@ -311,12 +329,24 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
   }, [fitView, getNodes, getViewport, setViewport, geometryKey, nodes.length, isFullscreen, canvasWidth, viewportPinned])
 
   const expandAll = () => {
+    // In compact mode the board's default is execution, so "expand" is the operator saying
+    // they want to see the whole catalogue and not only what ran.
+    if (graphMode === 'compact') {
+      setCompactExpanded(new Set(disclosures ?? []))
+      setCompactCollapsed(new Set())
+      return
+    }
     const all = new Set<string>()
     for (const n of nodes) if ((n.data.childCount ?? 0) > 0) all.add(n.data.expandKey ?? n.id)
     setUserExpanded(all)
     setUserCollapsed(new Set())
   }
   const collapseAll = () => {
+    if (graphMode === 'compact') {
+      setCompactExpanded(new Set())
+      setCompactCollapsed(new Set(disclosures ?? []))
+      return
+    }
     setUserExpanded(new Set())
     setUserCollapsed(new Set(nodes.filter((n) => (n.data.childCount ?? 0) > 0).map((n) => n.data.expandKey ?? n.id)))
   }
@@ -341,7 +371,7 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
               return (
                 <button key={run.runId} className={`run-chip${on ? ' run-chip-on' : ''}`} onClick={() => {
                   setSelectedId(run.runId)
-                  onSelectedPipelineChange(run.profile)
+                  onSelectedWorkflowChange(run.profile)
                   setViewportPinned(false)
                 }} title={run.runId}>
                   <span className={on ? 'text-primary' : 'text-muted-foreground'}><RunStatusIcon status={run.status === 'started' ? 'active' : run.status === 'failed' ? 'failed' : 'done'} /></span>
@@ -361,7 +391,7 @@ const GraphView = ({ state, selectedPipeline, onSelectedPipelineChange, onInspec
                 <Rows3 />Compact
               </Button>
             </div>
-            {graphMode === 'full' && nodes.some((n) => (n.data.childCount ?? 0) > 0) && (
+            {(graphMode === 'compact' ? (disclosures?.size ?? 0) > 0 : nodes.some((n) => (n.data.childCount ?? 0) > 0)) && (
               <div className="control-group">
                 <Button variant="ghost" size="sm" onClick={expandAll} title="Expand every step"><ChevronsUpDown />Expand</Button>
                 <Button variant="ghost" size="sm" onClick={collapseAll} title="Collapse every step"><ChevronsDownUp />Collapse</Button>

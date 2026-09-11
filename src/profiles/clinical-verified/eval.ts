@@ -1,5 +1,5 @@
 /**
- * Pipeline fidelity eval: does the multi-model pipeline beat the monolith?
+ * Workflow fidelity eval: does the multi-model workflow beat the monolith?
  *
  * Runs the same clinical corpus through three arms and compares:
  * 1. Monolith: Qwen3-4B free-form extraction (unconstrained)
@@ -7,17 +7,17 @@
  * 3. Verified: Clinical extraction → independent verification
  *
  * Metrics: detection recall, hallucination rate, value/unit/quote accuracy, latency per case.
- * Gates: pipeline recall ≥ monolith recall, pipeline hallucination ≤ monolith,
- *        pipeline latency ≤ 2x monolith.
+ * Gates: workflow recall ≥ monolith recall, workflow hallucination ≤ monolith,
+ *        workflow latency ≤ 2x monolith.
  *
  * The verified arm is run manually (internally routed extraction → verify) rather than
- * through the pipeline mode. The pipeline's verify step now composes both refs
+ * through the workflow mode. The workflow's verify step now composes both refs
  * (`{document = "initial", extraction = "step-0.output"}` in profiles.toml), and this
  * transform exists because the clinical step's report is NOT the flat {value, quote} shape
  * the verifier is graded on: the vital-signs task reports nothing, and shock-extraction
  * reports exam fields that carry no quotes. Until a report is verifier-shaped, feeding the
- * declared pipeline's output straight in would change the metrics this eval pins; when a
- * profile reports in that shape, the arm can switch to `runPipeline` unchanged.
+ * declared workflow's output straight in would change the metrics this eval pins; when a
+ * profile reports in that shape, the arm can switch to `runWorkflow` unchanged.
  */
 
 import type { Pack } from '../../core/pack.ts'
@@ -28,7 +28,7 @@ import { loadConfig, requireProfile } from '../../core/config.ts'
 import { loadPack, resolvePackRoot } from '../../core/pack.ts'
 import { loadProfileModule, resolveProfileModule } from '../../core/profile.ts'
 import { identifyServer, UNIDENTIFIED, type ServerIdentity } from '../../core/client.ts'
-import { buildPipeline, runPipeline, type PipelineResult } from '../../modes/pipeline.ts'
+import { buildWorkflow, runWorkflow, type WorkflowResult } from '../../modes/workflow.ts'
 import { HARNESS_VERSION } from '../../core/version.ts'
 import { vitalRequest } from '../../profiles/clinical/contracts.ts'
 import { parseVitalSigns } from '../../profiles/clinical/extraction.ts'
@@ -38,7 +38,7 @@ import { reviewVitalSigns } from '../../profiles/clinical/review.ts'
 import { routeClinicalShape } from '../../profiles/clinical/clinical-router.ts'
 import { loadSettings } from '../../profiles/clinical/settings.ts'
 
-export interface PipelineCaseEvalOptions {
+export interface WorkflowCaseEvalOptions {
   input: string
   trace: Trace
   provider?: Provider
@@ -46,28 +46,28 @@ export interface PipelineCaseEvalOptions {
   options?: Record<string, unknown>
 }
 
-export interface PipelineCaseEvalResult {
+export interface WorkflowCaseEvalResult {
   verdict: EvalVerdict
-  pipeline: PipelineResult
+  workflow: WorkflowResult
 }
 
 /**
- * Exercise the declared pipeline exactly as production does for one supplied input.
+ * Exercise the declared workflow exactly as production does for one supplied input.
  *
  * This is intentionally separate from the corpus fidelity comparison below. That comparison
  * measures three experimental arms and transforms the verified arm into the generic verifier's
  * flat `{value, quote}` vocabulary. A case eval answers a different and more operational
  * question: do the profiles and data shapes declared in `profiles.toml` actually compose?
  */
-export const runPipelineCaseEval = async (o: PipelineCaseEvalOptions): Promise<PipelineCaseEvalResult> => {
+export const runWorkflowCaseEval = async (o: WorkflowCaseEvalOptions): Promise<WorkflowCaseEvalResult> => {
   const cfg = loadConfig()
   const profileName = o.profileName ?? 'clinical-verified'
-  const pipelineConfig = requireProfile(cfg, profileName)
-  if (pipelineConfig.mode !== 'pipeline' || !Array.isArray(pipelineConfig.steps)) {
-    throw new Error(`profile '${profileName}' is not a configured pipeline`)
+  const workflowConfig = requireProfile(cfg, profileName)
+  if (workflowConfig.mode !== 'workflow' || !Array.isArray(workflowConfig.steps)) {
+    throw new Error(`profile '${profileName}' is not a configured workflow`)
   }
 
-  const steps = buildPipeline(pipelineConfig.steps as Parameters<typeof buildPipeline>[0])
+  const steps = buildWorkflow(workflowConfig.steps as Parameters<typeof buildWorkflow>[0])
   const profiles = new Map<string, ProfileModule>()
   const packs = new Map<string, Pack | undefined>()
   const baseUrls = new Map<string, string | undefined>()
@@ -92,7 +92,7 @@ export const runPipelineCaseEval = async (o: PipelineCaseEvalOptions): Promise<P
     }
   }
 
-  const pipeline = await runPipeline({
+  const workflow = await runWorkflow({
     initialInput: o.input,
     steps,
     profiles,
@@ -102,14 +102,14 @@ export const runPipelineCaseEval = async (o: PipelineCaseEvalOptions): Promise<P
     provider: o.provider,
     options: o.options,
   })
-  const failed = pipeline.steps.find((step) => !step.ok)
+  const failed = workflow.steps.find((step) => !step.ok)
   const verdict: EvalVerdict = {
-    pass: !pipeline.stoppedEarly,
+    pass: !workflow.stoppedEarly,
     summary: failed
       ? `stopped at step ${failed.step + 1} '${failed.name}' (${failed.profile}): ${failed.error ?? 'step failed'}`
-      : `${pipeline.steps.length}/${steps.length} configured steps completed`,
+      : `${workflow.steps.length}/${steps.length} configured steps completed`,
   }
-  return { verdict, pipeline }
+  return { verdict, workflow }
 }
 
 /**
@@ -356,7 +356,7 @@ const runVerifiedArm = async (opts: {
   }
 }
 
-export const runPipelineFidelityEval = async (o: FidelityEvalOptions): Promise<EvalVerdict> => {
+export const runWorkflowFidelityEval = async (o: FidelityEvalOptions): Promise<EvalVerdict> => {
   const req = vitalRequest(o.pack, true)
   const { fields } = req
   const { cases: allCases, fieldRecallFloor, valueFloor, unitFloor } = loadVitalCases(o.pack, fields)
@@ -398,7 +398,7 @@ export const runPipelineFidelityEval = async (o: FidelityEvalOptions): Promise<E
   if (identity.warning) console.error(`\nwarning: ${identity.warning}`)
   const served = identity.model ?? UNIDENTIFIED
 
-  console.log(`\n=== Pipeline Fidelity · ${cases.length} notes ===`)
+  console.log(`\n=== Workflow Fidelity · ${cases.length} notes ===`)
   console.log(`model '${served}' · pack '${o.pack.name}' spec ${o.pack.spec}`)
   console.log(`arms: monolith (unconstrained) → specialist (constrained) → verified (constrained + verify)`)
   console.log(verifierProfile ? 'verifier: loaded' : 'verifier: NOT AVAILABLE — verified arm will show extraction only')

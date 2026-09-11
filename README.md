@@ -64,6 +64,52 @@ a run comes back as `{}`.
 A pack that gets these wrong produces a number, not an error. That is the failure mode this
 repository exists to make visible.
 
+## Nomenclature
+
+One word per level, and one level per word. `spec/nomenclature.md` is the arbiter — a name
+that contradicts it is a bug, in code or in prose. The short version:
+
+| Term | Is | Where it lives |
+|---|---|---|
+| **Run** | one end-to-end execution for one input, carrying a `runId` | `run.started` / `run.completed` / `run.failed` |
+| **Pipeline** | the deployment's front door: a router, the catalogue of workflows it may select, and a default. **Exactly one per deployment** | `[pipeline]` in `profiles.toml`, `POST /pipeline` |
+| **Workflow** | one selectable recipe: an ordered list of steps. A *processing shape* | `mode = "workflow"` profiles, `src/modes/workflow.ts` |
+| **Step** | one entry in a workflow. Names a profile and what it reads | `steps = [...]`, `step-N` context keys |
+| **Assessment** | the run's ending: what it established about this input, rendered for a person | `final = true` in `steps`, `src/profiles/clinical-assessment/` |
+| **Profile** | what a step invokes: a name, a mode, a pack, a server | `profiles.toml`, `ProfileModule` |
+| **Task** | a profile-internal choice of contract (`vital-signs`, `transcript`, `shock`) | `src/profiles/clinical/contracts.ts` |
+| **Pass** | one model call or one deterministic code sweep a task makes | `TASK_PASSES` |
+
+Each level is contained by the one above: a run executes one pipeline decision and then one
+workflow; a workflow has steps; a step runs one profile; a profile picks a task; a task makes
+passes.
+
+**Stage is not a level.** It is the observability name for a unit of work at *any* level —
+`runWorkflow` emits a stage named `workflow`, each step emits a stage, and `extract()` emits
+`prompt-assembly → llm-call → parse` beneath it. They are nodes in one tree joined by
+`stageId`/`parentId`. What distinguishes them is `operation` (`model`, `code`,
+`orchestrator`, `decision`), not the name — a view must read that field rather than keep a
+list of stage names, which goes stale the moment a profile adds a pass.
+
+Words with exactly one meaning:
+
+- **Router** — the thing that chooses. Never `gateway`.
+- **Gateway** — the clinical profile's deterministic rule check over an extracted payload. Never a router.
+- **Gate** — a code pass that can **stop the run**, as distinct from a verify pass that annotates and lets it continue.
+- **Iteration** — one turn of the agentic tool-calling loop (`maxIterations`). Not a *step*.
+- **Context** — the state carried between steps and persisted as `context.json`. Not `state`, not `checkpoint`.
+- **Mode** — the execution shape a profile declares: `extract`, `agentic`, `router`, `code`, `workflow`. Eval is a *command*, not a mode.
+- **Code** (as a mode) — a profile that calls no model, reading structures other steps produced. Not a `router`: it chooses nothing.
+
+One exception, deliberate: the clinical task **`shock-pipeline`** is not a pipeline. It is two
+tasks chained under one `--task` flag, and the name survives because it is public surface — a
+`--task` value, a pack data key, a row in the eval tables. Read it as a fixed proper noun.
+
+`mode = "pipeline"` and the `medextract pipeline` command are still accepted as retired
+spellings of `workflow`, resolved at the edge so exactly one spelling exists downstream. The
+activity event kinds were renamed with them (`pipeline.*` → `workflow.*`), which is a wire
+change: `ACTIVITY_SPEC` is `2`.
+
 ## Layout
 
 ```
@@ -86,7 +132,7 @@ src/modes/    extract.ts   single-shot constrained extraction; one retry, transp
               agentic.ts   the tool loop, for one task run to completion
               session.ts   the same loop, multi-turn, with a consent gate
               router.ts    rule-based intent routing (clinical / coding / transcriptor / verifier)
-              pipeline.ts  generic multi-profile orchestration
+              workflow.ts  generic multi-profile orchestration
 src/profiles/ clinical/    the reference profile: four tasks, names no vital sign
                            settings.ts  what the pack declares, and the refusals that make
                                         a declaration worth trusting
@@ -117,7 +163,7 @@ src/tui/      state.ts     pure reducer over the activity event stream (tested, 
                app.ts       OpenTUI renderer — the only file that imports it; dynamic import
                tui.ts       entry guard: Node 26.4 + --experimental-ffi or Bun ≥ 1.3
 web/          the browser dashboard (own Vite + React app): same reducer, same SSE core
-src/cli.ts    extract, eval, agent, route, pipeline, profiles
+src/cli.ts    extract, eval, agent, route, workflow, profiles
 profiles.toml the only file that may name a project outside this repository
 ```
 
@@ -128,7 +174,7 @@ The swappable unit is the **execution mode**, not the toolset:
 - **`session`** — multi-turn conversation with tools, streaming, consent gates for
   mutating operations, and abort support.
 - **`router`** — rule-based classification with an optional model fallback.
-- **`pipeline`** — multi-model orchestration: chain profiles, pass outputs between steps.
+- **`workflow`** — multi-model orchestration: chain profiles, pass outputs between steps.
 
 Extraction and agentic work are different shapes. Forcing extraction into an agent loop
 would be slower, less reliable, and much harder to validate.
@@ -147,7 +193,7 @@ The harness talks to `llama-server` over the standard OpenAI-compatible API (`PO
 - **`streamChat()`** — SSE streaming for interactive sessions. Parses delta frames,
   accumulates content, reasoning and tool calls.
 
-Each profile declares its own server URL in `profiles.toml`, so a pipeline may talk to
+Each profile declares its own server URL in `profiles.toml`, so a workflow may talk to
 multiple llama-server instances on different ports, each loaded with a different model or
 quantisation.
 
@@ -274,7 +320,7 @@ node src/cli.ts extract --profile clinical --note ward-round.txt --constrain
 
 # multi-model orchestration
 node src/cli.ts route    --profile router --input "dictated: BP 120/80, HR 72"
-node src/cli.ts pipeline --profile clinical-verified --input "ward-round.txt"
+node src/cli.ts workflow --profile clinical-verified --input "ward-round.txt"
 
 # model manager — start/stop/status per profile
 node scripts/model-manager.ts status
@@ -385,15 +431,24 @@ argument for the schema.
 `no_tool_call` is worth its own outcome because it is the common small-model failure: a 4B
 model will edit the file correctly and then emit the literal text `done` rather than
 calling `done`. One nudge recovers an accidental omission; a second identical reply means
-it will not be recovered, so the loop stops instead of re-nudging until the step cap.
+it will not be recovered, so the loop stops instead of re-nudging until the iteration cap.
 
-### Routing and pipeline
+### Routing, pipeline and workflows
 
-The product-level **pipeline** is the complete path from input to output. Its router chooses
-one named **workflow**, and that workflow supplies the step-by-step recipe. A step invokes a
-profile; users do not choose profiles or workflows during a normal run. `POST /pipeline`
-performs routing and workflow execution under one run id. Passing `workflow` is a diagnostic
-override that deliberately bypasses routing.
+The product-level **pipeline** is the complete path from input to output, and there is
+exactly one per deployment. Its router chooses one named **workflow**, and that workflow
+supplies the step-by-step recipe. A step invokes a profile; users do not choose profiles or
+workflows during a normal run. `POST /pipeline` performs routing and workflow execution under
+one run id. Passing `workflow` is a diagnostic override that deliberately bypasses routing.
+
+That run id is on the response — on the answer *and* on every refusal, including one raised
+before the first step runs. It is what joins the value a caller holds to the activity events
+that explain how it was produced, and it is how the dashboard assembles a run's log: the
+error it saw, plus the events the feed carried while the run was in flight, as one block of
+text you can copy out of the run panel.
+
+See [Nomenclature](#nomenclature) for how these words nest, and `spec/nomenclature.md` for
+the full statement.
 
 The generic **router mode** (`src/modes/router.ts`) is a rule-based classifier with an
 optional model fallback. The deployed `workflow-router` uses it to choose a workflow. The
@@ -406,11 +461,11 @@ any GPU call, selecting the right sub-task (`vital-signs`, `transcript`, `summar
 prose, or plain note. It is purely rule-based, zero GPU cost, and measured at 100% on 60
 cases.
 
-Each **workflow recipe** is currently stored by the backwards-compatible `mode = "pipeline"`
-execution shape in `src/modes/pipeline.ts`. It chains profiles together: each step names a
-profile and an input reference, and the harness passes outputs from one step to the next.
-Every step is a **fresh LLM call** — no conversation history carries forward. The pipeline
-maintains a state map that accumulates results, and each step's input is resolved from it:
+Each **workflow recipe** is a `mode = "workflow"` profile, run by `src/modes/workflow.ts`.
+It chains profiles together: each step names a profile and an input reference, and the
+harness passes outputs from one step to the next. Every step is a **fresh LLM call** — no
+conversation history carries forward. The workflow maintains a **context** that accumulates
+results, and each step's input is resolved from it:
 
 | Reference | Resolves to |
 |---|---|
@@ -420,6 +475,7 @@ maintains a state map that accumulates results, and each step's input is resolve
 | `"step-N.text"` | the rendered text |
 | `"step-N.report"` | the structured report |
 | `{"key": "ref", ...}` | an object template composing multiple refs into one JSON |
+| `"run"` | the whole run so far: initial input, every step result, and whether it stopped early. Read by the terminal step |
 
 For example, the `clinical-verified` workflow:
 
@@ -427,17 +483,53 @@ For example, the `clinical-verified` workflow:
 steps = [
   { name = "extract", profile = "clinical", input = "initial" },
   { name = "verify-derived", profile = "clinical-verifier", input = { document = "initial", extraction = "step-0.output" } },
-  { name = "verify-source", profile = "verifier", input = "step-1.output" }
+  { name = "verify-source", profile = "verifier", input = "step-1.output" },
+  { name = "assess", profile = "clinical-assessment", input = "run", final = true }
 ]
 ```
 
 Step 0 runs the clinical extractor against the original note. Step 1 deterministically checks
 clinical derivations and removes them from the source-provenance payload. Step 2 runs the generic
 verifier against only the source observations — on a different LLM instance and port. Each step
-delegates to its profile's own mode (`extract`, `agentic`, or `router`), so the pipeline is a
-generic orchestrator that knows nothing about what any step does.
+delegates to its profile's own mode (`extract`, `agentic`, `router` or `code`), so the workflow is
+a generic orchestrator that knows nothing about what any step does.
 
-A failed step stops the pipeline. No retry, no fallback. Checkpointing to disk
+### The ending
+
+Step 3 is the **terminal step**, marked `final = true`, and it is what turns a chain of machine
+artifacts into a statement about the patient. It **computes nothing**: every fact it prints was
+produced by a step above and checked by the verifier below it. That constraint is what makes it
+gradeable — the page is a pure function of the run, so `eval --profile clinical-assessment` holds
+it to four gates with no GPU and no model:
+
+- **closure** — every printed line carries the input field it came from, and that field resolves.
+  A renderer that composed a sentence out of its own vocabulary fails here rather than in front
+  of a reader.
+- **agreement** — the verdict printed is the verdict in the structure.
+- **silence under refusal** — a run a gate stopped prints no verdict at all.
+- **determinism** — the same run renders to the same bytes.
+
+A terminal step runs on **every** exit, including the two failure exits, because a refused run is
+the one whose reader most needs a sentence. It cannot change the verdict: `stoppedEarly` is
+decided before it runs. A refused run ends like this instead:
+
+```
+NO ASSESSMENT — supplied input
+
+Withheld at step 'verify-derived' (clinical-verifier):
+  results.shock.output.shock_category: expected hypovolemic
+
+What the run did establish is in the step output. No verdict is stated here, because the
+check that would license one refused.
+```
+
+Model prose (`indeterminate_reason`, `screen_reason`, `notes`) is quoted verbatim and attributed
+to its field, never paraphrased — the moment it is paraphrased, nobody can tell which words were
+the model's. A finding the payload marks `not_assessed` is named rather than omitted, because the
+difference between "the JVP was normal" and "nobody looked" is the difference a summary is most
+likely to erase.
+
+A failed step stops the workflow. No retry, no fallback. Persisting the context to disk
 (`context.json` + `step-N.json`) enables crash recovery and step-by-step execution when
 only one GPU is available. See `profiles.toml` for the definition and
 `src/profiles/clinical-verified/` for the fidelity eval that compares three arms (monolith,
@@ -463,7 +555,7 @@ Verification operates at three levels:
 2. **Model-based** (`src/profiles/verifier/`) — a separate LLM instance that receives the
    original document and the extraction JSON, then checks every field's quote against the
    document. Reports `hallucination`, `modified_quote`, `missing_quote`, or
-   `unsupported_value`. This is the second step of the `clinical-verified` pipeline.
+   `unsupported_value`. This is the second step of the `clinical-verified` workflow.
 
 3. **Rule-based** (eval shortcut) — checks that every numeric value in the extraction
    appears somewhere in the document. Conservative, fast, no GPU.
@@ -756,8 +848,8 @@ longer exists, so an entry there gets a new date rather than an edit.
 | sepsis screen contract (14 cases, medprotocol reference arm) | done — 100% on three gates (pre–score-fidelity, 2026-09-10); four-gate re-measurement pending, `RESULTS.md` |
 | shock-pipeline prose→classification (3 extraction cases, chained) | done, tested — **provisional, unmeasured** |
 | verifier (30 cases, 100% catch, 0% FP on 4B model) | done, tested |
-| pipeline mode (multi-profile orchestration, state passing, checkpointing) | done, tested |
-| clinical-verified pipeline (extract → verify, fidelity eval) | done, tested |
+| workflow mode (multi-profile orchestration, context passing, resume) | done, tested |
+| clinical-verified workflow (extract → verify, fidelity eval) | done, tested |
 | interactive server (on-demand model lifecycle, idle sweep, in-flight protection) | done, tested |
 | session mode (multi-turn, streaming, consent gates, abort) | done, tested |
 | both models re-measured on the grown corpus | next — the entry `RESULTS.md` is waiting for |

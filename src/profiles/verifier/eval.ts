@@ -1,8 +1,8 @@
 /**
- * Verifier catch-rate eval: 31 synthetic cases with injected hallucinations.
+ * Verifier catch-rate eval: 34 synthetic cases with injected hallucinations.
  *
- * 21 clean cases  → measure false-positive rate (gate ≤ 5%)
- * 10 error cases  → measure catch rate (gate ≥ 90%)
+ * 23 clean cases  → measure false-positive rate (gate ≤ 5%)
+ * 11 error cases  → measure catch rate (gate ≥ 90%)
  *
  * The cases are short clinical snippets so the 1.7B verifier can run them
  * in a single prompt without context-window pressure.
@@ -214,6 +214,50 @@ const CLEAN_CASES: VerifierTestCase[] = [
     category: 'clean',
     mustPass: true,
   },
+  // The two readings a real admission note produced that the prompt used to call fabricated: a
+  // capillary refill given in SECONDS and mapped to its bucket, and a hypotension whose duration
+  // the note never states — which `clinical-verifier` now hands over as `null` rather than as the
+  // extraction contract's 0. Both are `mustPass`: the workflow refuses the run on either.
+  {
+    document: 'Synthetic example. On arrival BP 78/41, HR 124. Cap refill 4 sec. Cool extremities. Neck veins not examined. Lungs clear bilaterally. Pulse thready.',
+    extraction: {
+      'shock-extraction': {
+        exam: {
+          hypotension: { systolic: 78, diastolic: 41, duration_minutes: null },
+          heart_rate: 124,
+          skin_temperature: 'cool',
+          jugular_venous_pressure: 'not_assessed',
+          capillary_refill: 'delayed',
+          pulse_volume: 'thready',
+          lung_exam: 'clear',
+        },
+      },
+    },
+    expectVerified: true,
+    label: 'clean-measured-refill-unstated-duration',
+    category: 'clean',
+    mustPass: true,
+  },
+  {
+    document: 'Synthetic example. BP 84/50 for 90 minutes. HR 118. JVP 12 cm. Capillary refill 2 seconds. Skin cool. Crackles at both bases.',
+    extraction: {
+      'shock-extraction': {
+        exam: {
+          hypotension: { systolic: 84, diastolic: 50, duration_minutes: 90 },
+          heart_rate: 118,
+          skin_temperature: 'cool',
+          jugular_venous_pressure: 'elevated',
+          capillary_refill: 'brisk',
+          pulse_volume: 'not_assessed',
+          lung_exam: 'bilateral_crackles',
+        },
+      },
+    },
+    expectVerified: true,
+    label: 'clean-measured-jvp-brisk-refill',
+    category: 'clean',
+    mustPass: true,
+  },
 ]
 
 const INJECTED_CASES: VerifierTestCase[] = [
@@ -285,6 +329,28 @@ const INJECTED_CASES: VerifierTestCase[] = [
     extraction: { bp: { value: '140/90', quote: 'BP 140/90' }, hr: { value: '80', quote: 'HR 80' }, allergies: { value: 'penicillin', quote: 'allergies: penicillin' } },
     expectVerified: false,
     label: 'injected-invented-field',
+    category: 'injected',
+  },
+  // The other half of the measurement-to-bucket rule. Without this case, "a measurement supports
+  // the category it falls in" could be satisfied by a verifier that accepts any label sitting
+  // next to any number, and the eval would report that as a fix.
+  {
+    document: 'Synthetic example. BP 80/50 for two hours. HR 120. Cap refill 1 sec. Skin cool.',
+    extraction: {
+      'shock-extraction': {
+        exam: {
+          hypotension: { systolic: 80, diastolic: 50, duration_minutes: 120 },
+          heart_rate: 120,
+          skin_temperature: 'cool',
+          jugular_venous_pressure: 'not_assessed',
+          capillary_refill: 'delayed',
+          pulse_volume: 'not_assessed',
+          lung_exam: 'not_assessed',
+        },
+      },
+    },
+    expectVerified: false,
+    label: 'injected-measurement-wrong-bucket',
     category: 'injected',
   },
 ]

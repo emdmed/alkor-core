@@ -210,9 +210,22 @@ export interface Vitals {
    */
   meanArterialPressure: number
   /**
-   * Shock index, heart rate / systolic. Above 0.9 is the usual flag for circulatory
-   * compromise. Also derived here, and from MEDPROTOCOL'S parsed numbers rather than from the
-   * payload's raw strings, so there is one parse of a blood pressure in this pipeline.
+   * Shock index, heart rate / systolic, ROUNDED TO TWO DECIMAL PLACES. Above 0.9 is the usual
+   * flag for circulatory compromise. Also derived here, and from MEDPROTOCOL'S parsed numbers
+   * rather than from the payload's raw strings, so there is one parse of a blood pressure in
+   * this pipeline.
+   *
+   * Rounded at the point of division rather than at each place it is printed, and that is the
+   * whole point: `124 / 78` is `1.5897435897435896`, and a value that is rounded only for
+   * display travels into the exam payload at full precision while the report beside it says
+   * `1.59`. A model handed the long form echoes the long form, and a reader comparing the echo
+   * to the report sees two numbers. Worse, the threshold comparison then runs on a number
+   * nothing ever showed anyone — the run's own report would not describe the decision it made.
+   *
+   * WHAT THIS MOVES. `shockIndex > shockIndexAbove` now compares the rounded value, so a ratio
+   * within half a hundredth above the cut — `64/91 = 0.7033` against a cut of 0.7 — rounds to
+   * `0.70` and no longer clears it. That is a real shift of the boundary by up to 0.005, and it
+   * is the deliberate trade: the number that decided is the number that is published.
    */
   shockIndex: number
 }
@@ -245,7 +258,7 @@ export const evaluateVitals = (
     heartRate: h.value,
     heartRateCategory: h.category ?? 'unknown',
     meanArterialPressure: Math.round((b.diastolic + (b.systolic - b.diastolic) / 3) * 10) / 10,
-    shockIndex: h.value / b.systolic,
+    shockIndex: Math.round((h.value / b.systolic) * 100) / 100,
   }
 }
 

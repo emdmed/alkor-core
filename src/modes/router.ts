@@ -13,7 +13,7 @@
  *    schema to classify intent. This is for cases where the boundary between tasks is
  *    fuzzy or where the user input is free-form chat rather than a known document type.
  *
- * The router does not CALL the specialist; it only names it. The pipeline mode composes
+ * The router does not CALL the specialist; it only names it. The workflow mode composes
  * the router with the specialists it names, and the CLI can run a single routed request
  * by looking up the named profile and running it.
  *

@@ -43,12 +43,12 @@ test('profile.loaded updates an existing profile', () => {
 
 test('topology snapshot seeds the configured graph without manufacturing activity events', () => {
   const s = setTopology(emptyState(), {
-    profiles: [{ name: 'flow', mode: 'pipeline' }, { name: 'worker', mode: 'extract' }],
-    pipelines: [{ name: 'flow', steps: [{ name: 'first', profile: 'worker', input: 'initial' }] }],
+    profiles: [{ name: 'flow', mode: 'workflow' }, { name: 'worker', mode: 'extract' }],
+    workflows: [{ name: 'flow', steps: [{ name: 'first', profile: 'worker', input: 'initial' }] }],
   })
   assert.equal(s.lastSeq, 0)
   assert.equal(s.profiles.length, 2)
-  assert.equal(s.topology.pipelines[0]!.steps[0]!.profile, 'worker')
+  assert.equal(s.topology.workflows[0]!.steps[0]!.profile, 'worker')
 })
 
 test('model.identified keyed by baseUrl', () => {
@@ -263,12 +263,12 @@ test('route.decided carries runId so the dashboard can attach a decision to its 
 
 test('pipeline.started, step.started, step.completed, pipeline.completed', () => {
   let s = emptyState()
-  s = applyEvent(s, mkEvent({ kind: 'pipeline.started', seq: 1, runId: 'p1' }))
-  s = applyEvent(s, mkEvent({ kind: 'pipeline.step.started', seq: 2, runId: 'p1', step: 0, name: 'extract', profile: 'clinical', input: { ref: 'initial' } }))
-  s = applyEvent(s, mkEvent({ kind: 'pipeline.step.completed', seq: 3, runId: 'p1', step: 0, name: 'extract', profile: 'clinical', ok: true, wallMs: 150 }))
-  s = applyEvent(s, mkEvent({ kind: 'pipeline.completed', seq: 4, runId: 'p1', stoppedEarly: false, totalMs: 500 }))
+  s = applyEvent(s, mkEvent({ kind: 'workflow.started', seq: 1, runId: 'p1' }))
+  s = applyEvent(s, mkEvent({ kind: 'workflow.step.started', seq: 2, runId: 'p1', step: 0, name: 'extract', profile: 'clinical', input: { ref: 'initial' } }))
+  s = applyEvent(s, mkEvent({ kind: 'workflow.step.completed', seq: 3, runId: 'p1', step: 0, name: 'extract', profile: 'clinical', ok: true, wallMs: 150 }))
+  s = applyEvent(s, mkEvent({ kind: 'workflow.completed', seq: 4, runId: 'p1', stoppedEarly: false, totalMs: 500 }))
 
-  const p = s.pipelines.get('p1')
+  const p = s.workflows.get('p1')
   assert.ok(p)
   assert.equal(p!.steps.length, 1)
   assert.equal(p!.steps[0]!.status, 'completed')
@@ -367,8 +367,8 @@ test('run.completed without matching run.started is ignored', () => {
 
 test('pipeline.step.completed without pipeline is ignored', () => {
   let s = emptyState()
-  s = applyEvent(s, mkEvent({ kind: 'pipeline.step.completed', seq: 1, runId: 'p1', step: 0, name: 'x', profile: 'x', ok: true }))
-  assert.equal(s.pipelines.size, 0)
+  s = applyEvent(s, mkEvent({ kind: 'workflow.step.completed', seq: 1, runId: 'p1', step: 0, name: 'x', profile: 'x', ok: true }))
+  assert.equal(s.workflows.size, 0)
 })
 
 test('turn.completed without session is ignored', () => {

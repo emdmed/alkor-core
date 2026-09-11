@@ -216,6 +216,24 @@ const BOTH: SyndromeCase[] = [
       'transcribed and re-routed, indefensible if this is the only pass the note gets; the case ' +
       'stays here stating the clinical answer until that is decided',
   },
+  {
+    input:
+      'Patient: 71 y/o F\n' +
+      'HPI: Two days of worsening confusion, burning on urination since Sunday.\n' +
+      'ED COURSE: T 38.9 C, HR 124, BP 78/41, RR 28. GCS 13. Norepinephrine started.\n' +
+      'Gen: Ill-appearing, rousable to voice only.\n' +
+      'CV: Tachycardic. Cap refill 4 sec. Mottling over both knees.\n' +
+      'Resp: Tachypneic, clear bilaterally.\n' +
+      'Skin: Warm centrally, cool extremities.\n' +
+      'UA: >100 WBC/hpf, +nitrite, many bacteria.\n' +
+      'Abd: Marked R CVA tenderness.\n' +
+      'Plan: Blood cultures drawn before antibiotics; cefepime and vancomycin given.',
+    expectedArms: ['shock', 'sepsis'],
+    difficulty: 3,
+    discriminates:
+      'a section-headed admission note is not a dialogue — `Patient:` is a demographics ' +
+      'header and `HPI:`/`Gen:`/`CV:` are headings, none of which takes a turn',
+  },
 ]
 
 const NEITHER: SyndromeCase[] = [

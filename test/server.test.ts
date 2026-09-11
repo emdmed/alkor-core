@@ -48,7 +48,7 @@ test('health endpoint returns profiles and session count', async () => {
   assert.ok(Array.isArray((data as any).profiles))
   assert.ok((data as any).profiles.includes('clinical'))
   assert.ok((data as any).profiles.includes('router'))
-  assert.ok(Array.isArray((data as any).topology?.pipelines))
+  assert.ok(Array.isArray((data as any).topology?.workflows))
   assert.deepEqual((data as any).topology?.pipeline, {
     router: 'workflow-router',
     workflows: ['clinical-verified'],
@@ -80,7 +80,7 @@ test('health endpoint returns profiles and session count', async () => {
   assert.ok(decision.routes.some((route: any) => route.name === 'shock-extraction'))
   assert.equal(decision.routes.find((route: any) => route.name === 'shock-extraction').feeds, 'shock')
   assert.equal(decision.routes.find((route: any) => route.name === 'summary').available, false)
-  const verified = (data as any).topology.pipelines.find((pipeline: any) => pipeline.name === 'clinical-verified')
+  const verified = (data as any).topology.workflows.find((pipeline: any) => pipeline.name === 'clinical-verified')
   assert.deepEqual(verified.steps[1].input, [
     { name: 'document', ref: 'initial' },
     { name: 'extraction', ref: 'step-0.output' },
@@ -466,7 +466,7 @@ test('run endpoint requires input', async () => {
   await close()
 })
 
-test('pipeline endpoint routes to a workflow and supports an explicit diagnostic override', async () => {
+test('workflow endpoint routes to a workflow and supports an explicit diagnostic override', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'medextract-pipeline-front-door-test-'))
   const tomlPath = join(dir, 'profiles.toml')
   const routerPath = join(dir, 'workflow-router.mjs')
@@ -484,12 +484,12 @@ mode = "router"
 module = "workflow-router.mjs"
 
 [alpha]
-mode = "pipeline"
+mode = "workflow"
 module = "workflow.mjs"
 steps = [{ name = "work", profile = "worker", input = "initial" }]
 
 [beta]
-mode = "pipeline"
+mode = "workflow"
 module = "workflow.mjs"
 steps = [{ name = "work", profile = "worker", input = "initial" }]
 
@@ -514,7 +514,7 @@ module = "worker.mjs"
   writeFileSync(
     workflowPath,
     `export const PROFILE = {
-  name: 'workflow', mode: 'pipeline', needsPack: false,
+  name: 'workflow', mode: 'workflow', needsPack: false,
   async runEval() { return { pass: true, summary: 'test' } },
 }
 `,
@@ -652,7 +652,7 @@ url = "http://127.0.0.1:${stubPort}"
   assert.equal(sendStatus, 200)
   assert.equal((sendData as any).stop, 'answered')
   assert.equal((sendData as any).answer, 'Hello from stub')
-  assert.equal((sendData as any).steps, 1)
+  assert.equal((sendData as any).iterations, 1)
 
   await close()
   stub.closeAllConnections()
@@ -776,4 +776,78 @@ url = "http://127.0.0.1:${stubPort}"
   stub.close()
   await once(stub, 'close')
   rmSync(dir, { recursive: true, force: true })
+})
+
+/**
+ * The run id on the response is what lets a caller read the feed for the run it just made.
+ * Both endings must carry it: a success is useless to correlate without it, and a FAILURE is
+ * the case that matters — the only account of what went wrong is in the events, and without
+ * an id there is no way to say which events those were.
+ */
+test('a run names its run id on success and on failure', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'medextract-runid-test-'))
+  const okModule = join(dir, 'code-ok.mjs')
+  const boomModule = join(dir, 'code-boom.mjs')
+  const tomlPath = join(dir, 'profiles.toml')
+  writeFileSync(
+    tomlPath,
+    `[code-ok]\nmode = "code"\nmodule = "${okModule}"\n\n[code-boom]\nmode = "code"\nmodule = "${boomModule}"\n`,
+  )
+  // `code` runs no model, so both profiles reach their review with no backend at all.
+  writeFileSync(
+    okModule,
+    "export const PROFILE = { name: 'code-ok', mode: 'code', needsPack: false, async review() { return { report: { ok: true } } }, async runEval() { return { pass: true, summary: 'test' } } }\n",
+  )
+  writeFileSync(
+    boomModule,
+    "export const PROFILE = { name: 'code-boom', mode: 'code', needsPack: false, async review() { throw new Error('the third step exploded') }, async runEval() { return { pass: true, summary: 'test' } } }\n",
+  )
+
+  const { url, close } = await startServer(tomlPath)
+  try {
+    const { status, data } = await request(`${url}/run`, 'POST', { profile: 'code-ok', input: 'hi' })
+    assert.equal(status, 200)
+    assert.match(String((data as any).runId), /^[0-9a-f-]{36}$/)
+
+    const failed = await request(`${url}/run`, 'POST', { profile: 'code-boom', input: 'hi' })
+    assert.equal(failed.status, 500)
+    assert.equal((failed.data as any).error, 'the third step exploded')
+    assert.match(String((failed.data as any).runId), /^[0-9a-f-]{36}$/)
+    assert.equal((failed.data as any).profile, 'code-boom')
+  } finally {
+    await close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+/** A refusal raised before the run starts still names the run, for the same reason. */
+test('an unreachable backend refuses with the run id attached', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'medextract-runid-down-test-'))
+
+  const dead = createServer(() => {})
+  dead.listen(0, '127.0.0.1')
+  await once(dead, 'listening')
+  const { port: deadPort } = dead.address() as { port: number }
+  await new Promise<void>((resolve) => dead.close(() => resolve()))
+
+  const modulePath = join(dir, 'extract-down.mjs')
+  const tomlPath = join(dir, 'profiles.toml')
+  writeFileSync(
+    tomlPath,
+    `[extract-down]\nmode = "extract"\nmodule = "${modulePath}"\nurl = "http://127.0.0.1:${deadPort}"\n`,
+  )
+  writeFileSync(
+    modulePath,
+    "export const PROFILE = { name: 'extract-down', mode: 'extract', needsPack: false, async runEval() { return { pass: true, summary: 'test' } } }\n",
+  )
+
+  const { url, close } = await startServer(tomlPath)
+  try {
+    const { status, data } = await request(`${url}/run`, 'POST', { profile: 'extract-down', input: 'hi' })
+    assert.equal(status, 503)
+    assert.match(String((data as any).runId), /^[0-9a-f-]{36}$/)
+  } finally {
+    await close()
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

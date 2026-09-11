@@ -58,7 +58,7 @@ const StageNode = ({ stage, requests, depth }: { stage: StageEntry; requests: Ma
       ? clip(req.errorMessage ?? 'request failed', 70)
       : req
         ? `${req.constrained ? 'constrained' : 'unconstrained'}${req.promptTokens != null ? ` · ${req.promptTokens}→${req.completionTokens ?? '?'} tok` : ''}${req.finishReason ? ` · finish ${req.finishReason}` : ''}`
-        : detail && stage.name !== 'pipeline' && detail !== '' ? detail : ''
+        : detail && stage.name !== 'workflow' && detail !== '' ? detail : ''
 
   return (
     <div>
@@ -137,13 +137,13 @@ export const ExecutionPanel = ({ state }: { state: ProjectState }) => {
     if (!selected) return []
     return stageTreeForRun(state.stages, selected.runId)
   }, [state.stages, selected])
-  const pipelineRoot = tree.find((n) => n.name === 'pipeline' && n.parentId === undefined)
+  const workflowRoot = tree.find((n) => n.name === 'workflow' && n.parentId === undefined)
 
-  const pipelineEntry = selected ? state.pipelines.get(selected.runId) : undefined
-  const isPipeline = Boolean(pipelineEntry || pipelineRoot)
+  const workflowEntry = selected ? state.workflows.get(selected.runId) : undefined
+  const isWorkflow = Boolean(workflowEntry || workflowRoot)
 
-  const { pipelines } = state.topology
-  const independent = state.topology.profiles.filter((profile) => profile.mode !== 'pipeline')
+  const { workflows } = state.topology
+  const independent = state.topology.profiles.filter((profile) => profile.mode !== 'workflow')
 
   return (
     <Panel title="EXECUTION" subtitle="latest run · activity paints the decision tree">
@@ -180,12 +180,12 @@ export const ExecutionPanel = ({ state }: { state: ProjectState }) => {
               {shortDigest(selected.inputDigest) && <span className="dtree-detail">sha:{shortDigest(selected.inputDigest)}</span>}
             </div>
 
-            {pipelineEntry && pipelineEntry.steps.length > 0 ? (
-              pipelineEntry.steps.map((step, i) => {
-                const stage = pipelineRoot?.children.find((c) => stepOf(c) === step.step)
+            {workflowEntry && workflowEntry.steps.length > 0 ? (
+              workflowEntry.steps.map((step, i) => {
+                const stage = workflowRoot?.children.find((c) => stepOf(c) === step.step)
                 const stepStatus: NodeState =
                   step.status === 'started' ? 'active' : step.ok === false ? 'failed' : step.status === 'completed' ? 'done' : 'idle'
-                const next = pipelineEntry.steps[i + 1]
+                const next = workflowEntry.steps[i + 1]
                 const nextRef = next?.input ? `${next.input.ref ?? `step-${i}`}${next.input.field ? `.${next.input.field}` : ''}` : undefined
                 return (
                   <StepBlock
@@ -201,11 +201,11 @@ export const ExecutionPanel = ({ state }: { state: ProjectState }) => {
                   />
                 )
               })
-            ) : pipelineRoot ? (
+            ) : workflowRoot ? (
               <div className="dtree-children">
-                {pipelineRoot.children.map((c) => {
+                {workflowRoot.children.map((c) => {
                   const stepIx = stepOf(c)
-                  const stage = pipelineEntry?.steps.find((s) => s.step === stepIx)
+                  const stage = workflowEntry?.steps.find((s) => s.step === stepIx)
                   const stepStatus: NodeState =
                     stage?.status === 'started' ? 'active' : stage?.ok === false ? 'failed' : stage?.status === 'completed' ? 'done' : stageState(c, state.llmRequests)
                   return (
@@ -228,7 +228,7 @@ export const ExecutionPanel = ({ state }: { state: ProjectState }) => {
               tree.length > 0 && <StageColumn nodes={tree} requests={state.llmRequests} />
             )}
 
-            {!isPipeline && tree.length === 0 && (
+            {!isWorkflow && tree.length === 0 && (
               <div className="dtree-node">
                 <span className="dtree-detail">no stage detail for this run</span>
               </div>
@@ -244,10 +244,10 @@ export const ExecutionPanel = ({ state }: { state: ProjectState }) => {
         </>
       )}
 
-      {pipelines.length > 0 && (
+      {workflows.length > 0 && (
         <div className="available">
           <span className="text-muted-foreground text-xs">CONFIGURED TOPOLOGY</span>
-          {pipelines.map((definition) => (
+          {workflows.map((definition) => (
             <span key={definition.name} className="text-muted-foreground/60 text-xs">
               {definition.name}: {definition.steps.map((s) => `<${s.profile}>`).join(' → ')}
             </span>

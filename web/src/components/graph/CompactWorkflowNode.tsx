@@ -1,5 +1,5 @@
 /**
- * CompactPipelineNode — renders a pipeline as a single container node with all
+ * CompactWorkflowNode — renders a pipeline as a single container node with all
  * steps listed inside it, dramatically reducing canvas size while keeping all
  * workflow steps visible at all times.
  *
@@ -12,6 +12,7 @@
 import { memo, useLayoutEffect } from 'react'
 import { Handle, Position, useUpdateNodeInternals, type NodeProps } from '@xyflow/react'
 import type { GraphNode, GraphNodeData, CompactStepData, CompactStageData } from '../../lib/graph/index.ts'
+import { compactChrome } from '../../lib/graph/index.ts'
 import { fmtSec } from '../../lib/format.ts'
 import { ArrowRight, Braces, Check, ChevronDown, ChevronRight, Cpu, FileInput, FileOutput, GitBranch, LoaderCircle, Orbit, PanelRight, X } from 'lucide-react'
 
@@ -141,7 +142,7 @@ const StepRow = ({ step, ownerProfile, expanded, onToggle }: {
 }
 
 /** Compact pipeline node: one container card with all steps listed inside. */
-export const CompactPipelineNode = memo(({ id, data }: NodeProps<GraphNode>) => {
+export const CompactWorkflowNode = memo(({ id, data }: NodeProps<GraphNode>) => {
   const d = data as GraphNodeData
   const steps = (d.steps as CompactStepData[] | undefined) ?? []
 
@@ -149,32 +150,56 @@ export const CompactPipelineNode = memo(({ id, data }: NodeProps<GraphNode>) => 
   // attached edge must follow the card's new boundary. React Flow re-measures node
   // internals once the expanded content has committed.
   const updateNodeInternals = useUpdateNodeInternals()
-  const expansionSignature = steps.map((step) => (step.expanded ? '1' : '0')).join('')
+  // Collapsing the whole card moves the bottom handle just as disclosing a step does.
+  const expansionSignature = `${d.collapsed === true ? 'c' : 'o'}${steps.map((step) => (step.expanded ? '1' : '0')).join('')}`
   useLayoutEffect(() => {
     updateNodeInternals(id)
   }, [updateNodeInternals, id, expansionSignature])
 
-  // A route card is one branch of a profile's own decision, drawn inside the workflow that
-  // contains it. It carries no Input/Output rows: the document arrived at the workflow.
+  // A route card is one branch of a profile's own decision, drawn between the two halves of
+  // the workflow that runs it. It carries no Input/Output rows: the document arrived at the
+  // workflow, and a workflow segment carries only the terminal at its end of the chain.
   const isRoute = d.terminals === false
+  // A workflow the run did not take keeps its row in the catalogue but not its height: the
+  // header says what it is and how much it holds, and the steps are one click away.
+  const collapsed = d.collapsed === true
+  const chrome = compactChrome(d)
+  // Progress belongs to the whole workflow, not to the slice of it this card draws: a
+  // continuation that says "2 of 3 steps" about its own rows is answering a question
+  // nobody asked.
+  const progressSteps = (d.allSteps as CompactStepData[] | undefined) ?? steps
   // A workflow runs steps; a route runs the passes of one syndrome. Naming them apart is
   // how the two tiers stay distinguishable once both are collapsed to a list of rows.
-  const summary = summaryOf(steps, isRoute ? 'pass' : 'step')
+  const summary = summaryOf(progressSteps, isRoute ? 'pass' : 'step')
   // Only a state an operator can act on earns a word: work in flight, or work that broke.
   const flagged = d.status === 'active' || d.status === 'failed'
 
   return (
-    <div className={`g-compact ${statusClass(d.status)}${d.muted ? ' is-muted' : ''}${isRoute ? ' is-route' : ''}`}>
+    <div className={`g-compact ${statusClass(d.status)}${d.muted ? ' is-muted' : ''}${isRoute ? ' is-route' : ''}${collapsed ? ' is-collapsed' : ''}`}>
       <Handle id="t" type="target" position={Position.Top} />
       <Handle id="s" type="source" position={Position.Bottom} />
 
       <div className="c-header">
         <span className="c-header-glyph"><StatusIcon status={d.status} /></span>
         <span className="c-header-label">{d.label}</span>
+        {/* The same workflow, picked back up after its branch merged. Without this the two
+            halves read as two workflows that happen to share a name. */}
+        {d.continued === true && <span className="c-header-cont">cont.</span>}
         {flagged
           ? <span className="c-header-status">{statusLabel(d.status)}</span>
           : summary && <span className="c-header-summary">{summary}</span>}
-        {d.wallMs != null && <span className="c-header-time">{fmtSec(d.wallMs)}</span>}
+        {d.wallMs != null && d.continued !== true && <span className="c-header-time">{fmtSec(d.wallMs)}</span>}
+        {d.collapsible === true && (
+          <button
+            className="c-header-toggle"
+            type="button"
+            onClick={(event) => { event.stopPropagation(); d.onToggle?.() }}
+            aria-label={collapsed ? `Show the steps of ${d.label}` : `Collapse ${d.label}`}
+            aria-expanded={!collapsed}
+          >
+            {collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+          </button>
+        )}
         {d.onInspect && (
           <button
             className="c-header-inspect"
@@ -188,19 +213,20 @@ export const CompactPipelineNode = memo(({ id, data }: NodeProps<GraphNode>) => 
         )}
       </div>
 
-      <Progress steps={steps} />
+      {/* A collapsed card keeps its note: it is the card's explanation of itself, not detail. */}
+      {collapsed && chrome.note && <div className="c-route-note">{d.detailText ?? d.reason}</div>}
 
-      {isRoute ? (
-        (d.detailText || d.reason) && (
-          <div className="c-route-note">{d.detailText ?? d.reason}</div>
-        )
-      ) : (
+      {collapsed ? null : <>
+      <Progress steps={progressSteps} />
+
+      {chrome.input && (
         <div className="c-terminal">
           <FileInput size={12} className="c-terminal-icon" />
           <span className="c-terminal-label">Input</span>
           {d.detailText && <span className="c-terminal-meta">{d.detailText}</span>}
         </div>
       )}
+      {chrome.note && <div className="c-route-note">{d.detailText ?? d.reason}</div>}
 
       <div className="c-steps">
         {steps.map((step) => (
@@ -219,13 +245,14 @@ export const CompactPipelineNode = memo(({ id, data }: NodeProps<GraphNode>) => 
         )}
       </div>
 
-      {!isRoute && (
+      {chrome.output && (
         <div className="c-terminal">
           <FileOutput size={12} className="c-terminal-icon" />
           <span className="c-terminal-label">Output</span>
           {d.wallMs != null && <span className="c-terminal-meta">{fmtSec(d.wallMs)}</span>}
         </div>
       )}
+      </>}
     </div>
   )
 })

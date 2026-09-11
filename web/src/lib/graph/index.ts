@@ -21,7 +21,7 @@ export type {
   GraphOperation,
 } from './types.ts'
 
-export { detailTextOf, stageState } from './core.ts'
+export { compactChrome, detailTextOf, stageState } from './core.ts'
 
 export {
   CHIP_W,
@@ -35,12 +35,13 @@ export {
   COMPACT_TERMINAL_H,
   COMPACT_W,
   ROW_GAP,
+  compactCardKey,
   compactStepKey,
   layoutHeightOf,
 } from './core.ts'
 
 export { buildGraph, buildProgressGraph } from './run.ts'
 
-export { buildExpandedPipelinesGraph, buildPipelinesGraph, buildProjectGraph } from './project.ts'
+export { buildExpandedWorkflowsGraph, buildWorkflowsGraph, buildProjectGraph } from './project.ts'
 
 export { buildCompactGraph } from './compact.ts'

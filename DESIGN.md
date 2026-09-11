@@ -46,7 +46,7 @@ components:
 
 **Creative North Star: "The Care Workspace"**
 
-medextract is a working surface for clinical extraction, not a dark terminal. It uses a warm, near-white paper base and quiet healthcare hues so long-running pipeline state can be read without visual fatigue. The graph remains the primary object; chat, activity, and log panels are supporting workspaces.
+medextract is a working surface for clinical extraction, not a dark terminal. It uses a warm, near-white paper base and quiet healthcare hues so long-running workflow state can be read without visual fatigue. The graph remains the primary object; chat, activity, and log panels are supporting workspaces.
 
 **Key Characteristics:**
 

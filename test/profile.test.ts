@@ -73,7 +73,7 @@ test('an out-of-tree module is loaded and its PROFILE returned', async () => {
     )
     const profile = await loadProfileModule('outside', file)
     assert.equal(profile.name, 'outside')
-    const verdict = await profile.runEval({} as never)
+    const verdict = await profile.runEval!({} as never)
     assert.equal(verdict.summary, 'from out of tree')
   } finally {
     rmSync(dir, { recursive: true, force: true })

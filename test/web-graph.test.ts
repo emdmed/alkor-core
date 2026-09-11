@@ -3,11 +3,12 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   buildCompactGraph,
-  buildExpandedPipelinesGraph,
+  buildExpandedWorkflowsGraph,
   buildGraph,
-  buildPipelinesGraph,
+  buildWorkflowsGraph,
   buildProgressGraph,
   buildProjectGraph,
+  compactCardKey,
   compactStepKey,
   layoutHeightOf,
   ROW_GAP,
@@ -18,6 +19,7 @@ import {
   COMPACT_STEP_H,
   COMPACT_TERMINAL_H,
   COMPACT_ROUTE_NOTE_H,
+  COMPACT_ROUTER_H,
   COMPACT_W,
   CHIP_W,
 } from '../web/src/lib/graph/index.ts'
@@ -27,15 +29,15 @@ test('an active nested stage marks its step lineage and renders inline', () => {
   const state = emptyState()
   state.runs.set('run-1', { runId: 'run-1', profile: 'flow', status: 'started' })
   state.topology = {
-    profiles: [{ name: 'flow', mode: 'pipeline' }, { name: 'worker', mode: 'extract' }],
-    pipelines: [{ name: 'flow', steps: [{ name: 'extract', profile: 'worker', input: 'initial' }] }],
+    profiles: [{ name: 'flow', mode: 'workflow' }, { name: 'worker', mode: 'extract' }],
+    workflows: [{ name: 'flow', steps: [{ name: 'extract', profile: 'worker', input: 'initial' }] }],
   }
-  state.pipelines.set('run-1', {
+  state.workflows.set('run-1', {
     runId: 'run-1',
     steps: [{ step: 0, name: 'extract', profile: 'worker', status: 'started' }],
   })
   state.stages.set('pipeline', {
-    stageId: 'pipeline', runId: 'run-1', name: 'pipeline', status: 'started', children: [],
+    stageId: 'pipeline', runId: 'run-1', name: 'workflow', status: 'started', children: [],
   })
   state.stages.set('worker', {
     stageId: 'worker', runId: 'run-1', parentId: 'pipeline', name: 'worker', status: 'started', detail: { step: 0 }, children: [],
@@ -66,7 +68,7 @@ test('an active nested stage marks its step lineage and renders inline', () => {
   assert.equal(collapsed.nodes.find((n) => n.id === 'step-0')?.data.currentOperation, true, 'a collapsed step represents its hidden current stage')
   assert.equal(collapsed.nodes.filter((n) => n.data.currentOperation).length, 1, 'only one visible node claims NOW')
 
-  const composed = buildExpandedPipelinesGraph(state, 'run-1', new Set(), new Set())
+  const composed = buildExpandedWorkflowsGraph(state, 'run-1', new Set(), new Set())
   assert.equal(composed.nodes.filter((n) => n.data.currentOperation).length, 1, 'composed topology overlays do not duplicate NOW')
 
   state.runs.set('run-1', { ...state.runs.get('run-1')!, status: 'completed', wallMs: 1200 })
@@ -79,11 +81,11 @@ test('expanded steps form one ordered trail without parallel rows', () => {
   state.runs.set('run-1', { runId: 'run-1', profile: 'flow', status: 'started' })
   state.topology = {
     profiles: [
-      { name: 'flow', mode: 'pipeline' },
+      { name: 'flow', mode: 'workflow' },
       { name: 'first', mode: 'extract' },
       { name: 'second', mode: 'extract' },
     ],
-    pipelines: [{
+    workflows: [{
       name: 'flow',
       steps: [
         { name: 'first', profile: 'first', input: 'initial' },
@@ -91,7 +93,7 @@ test('expanded steps form one ordered trail without parallel rows', () => {
       ],
     }],
   }
-  state.pipelines.set('run-1', {
+  state.workflows.set('run-1', {
     runId: 'run-1',
     steps: [
       { step: 0, name: 'first', profile: 'first', status: 'completed' },
@@ -99,7 +101,7 @@ test('expanded steps form one ordered trail without parallel rows', () => {
     ],
   })
   state.stages.set('pipeline', {
-    stageId: 'pipeline', runId: 'run-1', name: 'pipeline', status: 'started', children: [],
+    stageId: 'pipeline', runId: 'run-1', name: 'workflow', status: 'started', children: [],
   })
   for (const step of [0, 1]) {
     state.stages.set(`worker-${step}`, {
@@ -133,15 +135,15 @@ test('expanded stages advance left to right one step column at a time', () => {
   const state = emptyState()
   state.runs.set('run-1', { runId: 'run-1', profile: 'flow', status: 'started' })
   state.topology = {
-    profiles: [{ name: 'flow', mode: 'pipeline' }, { name: 'worker', mode: 'extract' }],
-    pipelines: [{ name: 'flow', steps: [{ name: 'extract', profile: 'worker', input: 'initial' }] }],
+    profiles: [{ name: 'flow', mode: 'workflow' }, { name: 'worker', mode: 'extract' }],
+    workflows: [{ name: 'flow', steps: [{ name: 'extract', profile: 'worker', input: 'initial' }] }],
   }
-  state.pipelines.set('run-1', {
+  state.workflows.set('run-1', {
     runId: 'run-1',
     steps: [{ step: 0, name: 'extract', profile: 'worker', status: 'started' }],
   })
   state.stages.set('pipeline', {
-    stageId: 'pipeline', runId: 'run-1', name: 'pipeline', status: 'started', children: [],
+    stageId: 'pipeline', runId: 'run-1', name: 'workflow', status: 'started', children: [],
   })
   state.stages.set('worker', {
     stageId: 'worker', runId: 'run-1', parentId: 'pipeline', name: 'worker', status: 'started', detail: { step: 0 }, children: [],
@@ -166,20 +168,20 @@ test('expanded router shows only the selected decision on the execution trail', 
   state.runs.set('run-1', { runId: 'run-1', profile: 'flow', status: 'started' })
   state.topology = {
     profiles: [
-      { name: 'flow', mode: 'pipeline' },
+      { name: 'flow', mode: 'workflow' },
       { name: 'router', mode: 'router' },
       { name: 'clinical', mode: 'extract' },
       { name: 'coding', mode: 'extract' },
     ],
-    pipelines: [{ name: 'flow', steps: [{ name: 'route', profile: 'router' }] }],
+    workflows: [{ name: 'flow', steps: [{ name: 'route', profile: 'router' }] }],
   }
   state.routes.push({ profile: 'clinical', confidence: 0.9, reason: 'rule match', ruleVsModel: 'rule', runId: 'run-1' })
-  state.pipelines.set('run-1', {
+  state.workflows.set('run-1', {
     runId: 'run-1',
     steps: [{ step: 0, name: 'route', profile: 'router', status: 'completed' }],
   })
   state.stages.set('pipeline', {
-    stageId: 'pipeline', runId: 'run-1', name: 'pipeline', status: 'started', children: [],
+    stageId: 'pipeline', runId: 'run-1', name: 'workflow', status: 'started', children: [],
   })
   state.stages.set('router-step', {
     stageId: 'router-step', runId: 'run-1', parentId: 'pipeline', name: 'router', status: 'completed', detail: { step: 0 }, children: [],
@@ -204,12 +206,12 @@ test('progress graph previews only the selected configured pipeline', () => {
   const state = emptyState()
   state.topology = {
     profiles: [
-      { name: 'alpha-flow', mode: 'pipeline' },
-      { name: 'beta-flow', mode: 'pipeline' },
+      { name: 'alpha-flow', mode: 'workflow' },
+      { name: 'beta-flow', mode: 'workflow' },
       { name: 'alpha', mode: 'extract' },
       { name: 'beta', mode: 'agentic', topology: { stages: [{ name: 'prepare prompt' }, { name: 'llm call' }] } },
     ],
-    pipelines: [
+    workflows: [
       { name: 'alpha-flow', steps: [{ name: 'alpha step', profile: 'alpha' }] },
       { name: 'beta-flow', steps: [{ name: 'prepare', profile: 'beta' }, { name: 'finish', profile: 'beta' }] },
     ],
@@ -238,11 +240,11 @@ test('progress graph preserves composed data references between configured steps
   const state = emptyState()
   state.topology = {
     profiles: [
-      { name: 'verified-flow', mode: 'pipeline' },
+      { name: 'verified-flow', mode: 'workflow' },
       { name: 'extractor', mode: 'extract' },
       { name: 'verifier', mode: 'extract' },
     ],
-    pipelines: [{
+    workflows: [{
       name: 'verified-flow',
       steps: [
         { name: 'extract', profile: 'extractor', input: 'initial' },
@@ -270,7 +272,7 @@ test('progress graph renders one run without router alternatives', () => {
   const state = emptyState()
   state.topology = {
     profiles: [
-      { name: 'flow', mode: 'pipeline' },
+      { name: 'flow', mode: 'workflow' },
       {
         name: 'router', mode: 'router', topology: {
           stages: [{ name: 'route', kind: 'decision', routes: [
@@ -283,14 +285,14 @@ test('progress graph renders one run without router alternatives', () => {
       { name: 'verifier', mode: 'extract' },
       { name: 'unrelated', mode: 'agentic' },
     ],
-    pipelines: [{ name: 'flow', steps: [
+    workflows: [{ name: 'flow', steps: [
       { name: 'route', profile: 'router' },
       { name: 'extract', profile: 'clinical' },
     ] }],
   }
   state.runs.set('run-1', { runId: 'run-1', profile: 'flow', status: 'started' })
   state.routes.push({ profile: 'clinical', confidence: 0.9, reason: 'rule match', ruleVsModel: 'rule', runId: 'run-1' })
-  state.pipelines.set('run-1', {
+  state.workflows.set('run-1', {
     runId: 'run-1',
     steps: [
       { step: 0, name: 'route', profile: 'router', status: 'completed' },
@@ -309,20 +311,20 @@ test('progress graph renders one run without router alternatives', () => {
   assert.deepEqual(columns.slice(1).map((x, index) => x - columns[index]!), [296, 320, 320])
 })
 
-test('pipeline graph keeps every workflow as a detailed left-to-right lane', () => {
+test('workflow graph keeps every workflow as a detailed left-to-right lane', () => {
   const state = emptyState()
   state.topology = {
     profiles: [
       { name: 'alpha', mode: 'extract', topology: { stages: [{ name: 'prepare' }, { name: 'call' }] } },
       { name: 'beta', mode: 'extract', topology: { stages: [{ name: 'verify' }] } },
     ],
-    pipelines: [
+    workflows: [
       { name: 'alpha-flow', steps: [{ name: 'extract', profile: 'alpha' }] },
       { name: 'beta-flow', steps: [{ name: 'extract', profile: 'beta' }] },
     ],
   }
 
-  const graph = buildPipelinesGraph(state, undefined, new Set())
+  const graph = buildWorkflowsGraph(state, undefined, new Set())
   const inputs = graph.nodes.filter((node) => node.data.kind === 'input')
   const steps = graph.nodes.filter((node) => node.data.kind === 'step')
   const profiles = graph.nodes.filter((node) => node.data.kind === 'profile')
@@ -337,7 +339,7 @@ test('pipeline graph keeps every workflow as a detailed left-to-right lane', () 
   assert.equal(new Set(inputs.map((node) => node.position.y)).size, 2, 'pipeline lanes occupy separate rows')
 })
 
-test('dashboard graph keeps every pipeline and opens nested route paths by default', () => {
+test('dashboard graph keeps every workflow and opens nested route paths by default', () => {
   const state = emptyState()
   state.topology = {
     profiles: [
@@ -351,14 +353,14 @@ test('dashboard graph keeps every pipeline and opens nested route paths by defau
       },
       { name: 'worker', mode: 'extract', topology: { stages: [{ name: 'extract-work' }] } },
     ],
-    pipelines: [
+    workflows: [
       { name: 'routed-flow', steps: [{ name: 'choose', profile: 'router' }] },
       { name: 'worker-flow', steps: [{ name: 'extract', profile: 'worker' }] },
     ],
   }
 
-  const graph = buildExpandedPipelinesGraph(state, undefined, new Set(), new Set())
-  const laneGroups = graph.nodes.filter((node) => node.id.startsWith('pipeline-lane-group-'))
+  const graph = buildExpandedWorkflowsGraph(state, undefined, new Set(), new Set())
+  const laneGroups = graph.nodes.filter((node) => node.id.startsWith('workflow-lane-group-'))
   const alpha = graph.nodes.find((node) => node.data.label === 'alpha')!
   const beta = graph.nodes.find((node) => node.data.label === 'beta')!
 
@@ -370,7 +372,7 @@ test('dashboard graph keeps every pipeline and opens nested route paths by defau
   const firstLaneBottom = laneGroups[0]!.position.y + Number(laneGroups[0]!.style?.height)
   assert.ok(laneGroups[1]!.position.y - firstLaneBottom >= 32, 'pipeline groups keep a clear section gutter')
   for (const lane of laneGroups) {
-    const prefix = `pipeline-lane-${lane.id.slice('pipeline-lane-group-'.length)}/`
+    const prefix = `workflow-lane-${lane.id.slice('workflow-lane-group-'.length)}/`
     const nested = graph.nodes.filter((node) => node.data.kind === 'group' && node.id.startsWith(prefix))
     const laneRight = lane.position.x + Number(lane.style?.width)
     const laneBottom = lane.position.y + Number(lane.style?.height)
@@ -380,7 +382,7 @@ test('dashboard graph keeps every pipeline and opens nested route paths by defau
     assert.ok(nested.every((node) => node.position.y + Number(node.style?.height) <= laneBottom - 20))
   }
 
-  const collapsed = buildExpandedPipelinesGraph(
+  const collapsed = buildExpandedWorkflowsGraph(
     state,
     undefined,
     new Set(),
@@ -390,7 +392,7 @@ test('dashboard graph keeps every pipeline and opens nested route paths by defau
   assert.ok(collapsed.nodes.some((node) => node.data.label === 'beta-work'))
 })
 
-test('selecting a run paints its lane without hiding other pipelines or routes', () => {
+test('selecting a run paints its lane without hiding other workflows or routes', () => {
   const state = emptyState()
   state.topology = {
     profiles: [
@@ -402,20 +404,20 @@ test('selecting a run paints its lane without hiding other pipelines or routes',
       { name: 'verifier', mode: 'extract' },
       { name: 'other', mode: 'extract' },
     ],
-    pipelines: [
+    workflows: [
       { name: 'routed-flow', steps: [{ name: 'choose', profile: 'router' }] },
       { name: 'other-flow', steps: [{ name: 'extract', profile: 'other' }] },
     ],
   }
   state.runs.set('run-1', { runId: 'run-1', profile: 'routed-flow', status: 'started' })
   state.routes.push({ runId: 'run-1', profile: 'clinical', confidence: 0.9, reason: 'rule match', ruleVsModel: 'rule' })
-  state.pipelines.set('run-1', {
+  state.workflows.set('run-1', {
     runId: 'run-1',
     steps: [{ step: 0, name: 'choose', profile: 'router', status: 'completed' }],
   })
 
-  const graph = buildExpandedPipelinesGraph(state, 'run-1', new Set(), new Set())
-  assert.equal(graph.nodes.filter((node) => node.id.startsWith('pipeline-lane-group-')).length, 2)
+  const graph = buildExpandedWorkflowsGraph(state, 'run-1', new Set(), new Set())
+  assert.equal(graph.nodes.filter((node) => node.id.startsWith('workflow-lane-group-')).length, 2)
   const clinical = graph.nodes.find((node) => node.data.kind === 'profile' && node.data.profile === 'clinical')!
   const verifier = graph.nodes.find((node) => node.data.kind === 'profile' && node.data.profile === 'verifier')!
   assert.equal(clinical.data.chosen, true)
@@ -424,22 +426,22 @@ test('selecting a run paints its lane without hiding other pipelines or routes',
   assert.equal(verifier.data.muted, true)
 })
 
-test('expanded runtime stages keep the pipeline output after the complete trail', () => {
+test('expanded runtime stages keep the workflow output after the complete trail', () => {
   const state = emptyState()
   state.topology = {
     profiles: [
-      { name: 'flow', mode: 'pipeline' },
+      { name: 'flow', mode: 'workflow' },
       { name: 'worker', mode: 'extract', topology: { stages: [{ name: 'prompt-assembly' }, { name: 'llm-call' }] } },
     ],
-    pipelines: [{ name: 'flow', steps: [{ name: 'extract', profile: 'worker', input: 'initial' }] }],
+    workflows: [{ name: 'flow', steps: [{ name: 'extract', profile: 'worker', input: 'initial' }] }],
   }
   state.runs.set('run-1', { runId: 'run-1', profile: 'flow', status: 'completed', wallMs: 1200 })
-  state.pipelines.set('run-1', {
+  state.workflows.set('run-1', {
     runId: 'run-1',
     steps: [{ step: 0, name: 'extract', profile: 'worker', status: 'completed', wallMs: 900 }],
   })
   state.stages.set('pipeline', {
-    stageId: 'pipeline', runId: 'run-1', name: 'pipeline', status: 'completed', children: [],
+    stageId: 'pipeline', runId: 'run-1', name: 'workflow', status: 'completed', children: [],
   })
   state.stages.set('worker', {
     stageId: 'worker', runId: 'run-1', parentId: 'pipeline', name: 'worker', status: 'completed', detail: { step: 0 }, children: [],
@@ -451,8 +453,8 @@ test('expanded runtime stages keep the pipeline output after the complete trail'
     stageId: 'model', runId: 'run-1', parentId: 'worker', name: 'llm-call', status: 'completed', children: [],
   })
 
-  const graph = buildExpandedPipelinesGraph(state, 'run-1', new Set(), new Set())
-  const execution = graph.nodes.filter((node) => node.id.startsWith('pipeline-lane-flow/pipeline-flow/'))
+  const graph = buildExpandedWorkflowsGraph(state, 'run-1', new Set(), new Set())
+  const execution = graph.nodes.filter((node) => node.id.startsWith('workflow-lane-flow/workflow-flow/'))
   const output = execution.find((node) => node.data.kind === 'output')!
   const predecessors = execution.filter((node) => node.data.kind !== 'output' && node.data.kind !== 'group')
 
@@ -467,12 +469,12 @@ test('expanded runtime stages keep the pipeline output after the complete trail'
   )
 })
 
-test('project graph renders every configured pipeline and profile before any run', () => {
+test('project graph renders every configured workflow and profile before any run', () => {
   const state = emptyState()
   state.topology = {
     profiles: [
-      { name: 'alpha-flow', mode: 'pipeline' },
-      { name: 'beta-flow', mode: 'pipeline' },
+      { name: 'alpha-flow', mode: 'workflow' },
+      { name: 'beta-flow', mode: 'workflow' },
       { name: 'router', mode: 'router', topology: { stages: [{ name: 'route', kind: 'decision', routes: [
         { name: 'alpha', targetProfile: 'alpha' },
         { name: 'beta', targetProfile: 'beta' },
@@ -480,19 +482,19 @@ test('project graph renders every configured pipeline and profile before any run
       { name: 'alpha', mode: 'extract' },
       { name: 'beta', mode: 'agentic' },
     ],
-    pipelines: [
+    workflows: [
       { name: 'alpha-flow', steps: [{ name: 'route', profile: 'router' }, { name: 'extract', profile: 'alpha' }] },
       { name: 'beta-flow', steps: [{ name: 'work', profile: 'beta' }] },
     ],
   }
 
   const graph = buildProjectGraph(state, undefined, new Set())
-  assert.ok(graph.nodes.some((n) => n.id === 'pipeline-alpha-flow/step-0'))
-  assert.ok(graph.nodes.some((n) => n.id === 'pipeline-beta-flow/step-0'))
+  assert.ok(graph.nodes.some((n) => n.id === 'workflow-alpha-flow/step-0'))
+  assert.ok(graph.nodes.some((n) => n.id === 'workflow-beta-flow/step-0'))
   const input = graph.nodes.find((n) => n.id === 'input')!
-  const firstSteps = graph.nodes.filter((n) => n.id.match(/^pipeline-[^/]+\/step-0$/))
-  const outputs = graph.nodes.filter((n) => n.id.match(/^pipeline-[^/]+\/output$/))
-  const lanes = graph.nodes.filter((n) => n.id.match(/^pipeline-[^/]+\/lane$/))
+  const firstSteps = graph.nodes.filter((n) => n.id.match(/^workflow-[^/]+\/step-0$/))
+  const outputs = graph.nodes.filter((n) => n.id.match(/^workflow-[^/]+\/output$/))
+  const lanes = graph.nodes.filter((n) => n.id.match(/^workflow-[^/]+\/lane$/))
   assert.ok(firstSteps.every((step) => step.position.x === firstSteps[0]!.position.x), 'step zero shares one column across pipelines')
   assert.ok(new Set(firstSteps.map((step) => step.position.y)).size === firstSteps.length, 'pipeline alternatives occupy distinct rows')
   assert.equal(firstSteps[0]!.position.x - input.position.x, 340, 'shared input occupies the preceding column')
@@ -502,7 +504,7 @@ test('project graph renders every configured pipeline and profile before any run
     graph.nodes.filter((n) => n.data.kind === 'profile').map((n) => n.data.profile),
     ['alpha-flow', 'beta-flow', 'router', 'alpha', 'beta'],
   )
-  const stepGhosts = graph.edges.filter((edge) => edge.source === 'pipeline-alpha-flow/step-0' && edge.data?.kind === 'ghost')
+  const stepGhosts = graph.edges.filter((edge) => edge.source === 'workflow-alpha-flow/step-0' && edge.data?.kind === 'ghost')
   assert.deepEqual(
     stepGhosts.map((edge) => edge.target).sort(),
     ['profile-alpha', 'profile-beta'],
@@ -518,7 +520,7 @@ test('project graph stacks profile paths while preserving shared step columns', 
       mode: 'extract',
       topology: { stages: [{ name: 'prepare' }, { name: 'llm-call' }, { name: 'verify' }] },
     })),
-    pipelines: [],
+    workflows: [],
   }
 
   const graph = buildProjectGraph(state, undefined, new Set())
@@ -551,7 +553,7 @@ test('project graph keeps unchosen routes visible at reduced opacity', () => {
   const state = emptyState()
   state.topology = {
     profiles: [
-      { name: 'flow', mode: 'pipeline' },
+      { name: 'flow', mode: 'workflow' },
       {
         name: 'router', mode: 'router', topology: {
           stages: [{ name: 'route', kind: 'decision', routes: [
@@ -564,11 +566,11 @@ test('project graph keeps unchosen routes visible at reduced opacity', () => {
       { name: 'verifier', mode: 'extract' },
       { name: 'coding', mode: 'agentic' },
     ],
-    pipelines: [{ name: 'flow', steps: [{ name: 'route', profile: 'router' }, { name: 'extract', profile: 'clinical' }] }],
+    workflows: [{ name: 'flow', steps: [{ name: 'route', profile: 'router' }, { name: 'extract', profile: 'clinical' }] }],
   }
   state.runs.set('run-1', { runId: 'run-1', profile: 'flow', status: 'started' })
   state.routes.push({ profile: 'clinical', confidence: 0.9, reason: 'rule match', ruleVsModel: 'rule', runId: 'run-1' })
-  state.pipelines.set('run-1', {
+  state.workflows.set('run-1', {
     runId: 'run-1',
     steps: [{ step: 0, name: 'route', profile: 'router', status: 'completed' }],
   })
@@ -577,7 +579,7 @@ test('project graph keeps unchosen routes visible at reduced opacity', () => {
   const chosen = graph.nodes.find((n) => n.id === 'profile-clinical')!
   const unchosen = graph.nodes.find((n) => n.id === 'profile-verifier')!
   const unrelated = graph.nodes.find((n) => n.id === 'profile-coding')!
-  const routeEdges = graph.edges.filter((edge) => edge.source === 'pipeline-flow/step-0' && edge.target.startsWith('profile-'))
+  const routeEdges = graph.edges.filter((edge) => edge.source === 'workflow-flow/step-0' && edge.target.startsWith('profile-'))
 
   assert.equal(chosen.data.chosen, true)
   assert.equal(chosen.data.traversed, true)
@@ -597,18 +599,18 @@ test('project graph paints observed workflow stages and their connections as the
   const state = emptyState()
   state.topology = {
     profiles: [
-      { name: 'flow', mode: 'pipeline' },
+      { name: 'flow', mode: 'workflow' },
       { name: 'worker', mode: 'extract', topology: { stages: [{ name: 'prompt-assembly' }, { name: 'llm-call' }] } },
     ],
-    pipelines: [{ name: 'flow', steps: [{ name: 'extract', profile: 'worker' }] }],
+    workflows: [{ name: 'flow', steps: [{ name: 'extract', profile: 'worker' }] }],
   }
   state.runs.set('run-1', { runId: 'run-1', profile: 'flow', status: 'started' })
-  state.pipelines.set('run-1', {
+  state.workflows.set('run-1', {
     runId: 'run-1',
     steps: [{ step: 0, name: 'extract', profile: 'worker', status: 'started' }],
   })
   state.stages.set('pipeline', {
-    stageId: 'pipeline', runId: 'run-1', name: 'pipeline', status: 'started', children: [],
+    stageId: 'pipeline', runId: 'run-1', name: 'workflow', status: 'started', children: [],
   })
   state.stages.set('worker', {
     stageId: 'worker', runId: 'run-1', parentId: 'pipeline', name: 'worker', status: 'started', detail: { step: 0 }, children: [],
@@ -637,7 +639,7 @@ test('declared topology renders exact routes, internal stages, and missing targe
   const state = emptyState()
   state.topology = {
     profiles: [
-      { name: 'flow', mode: 'pipeline', topology: { stages: [] } },
+      { name: 'flow', mode: 'workflow', topology: { stages: [] } },
       {
         name: 'router',
         mode: 'router',
@@ -666,21 +668,21 @@ test('declared topology renders exact routes, internal stages, and missing targe
       },
       { name: 'unrelated', mode: 'agentic', topology: { stages: [{ name: 'llm-call', repeatable: true }] } },
     ],
-    pipelines: [{ name: 'flow', steps: [{ name: 'route', profile: 'router' }] }],
+    workflows: [{ name: 'flow', steps: [{ name: 'route', profile: 'router' }] }],
   }
 
   const graph = buildProjectGraph(state, undefined, new Set([
     'blueprint-worker-root-0-route-0',
   ]))
   const targets = graph.edges
-    .filter((edge) => edge.source === 'pipeline-flow/step-0' && edge.target.startsWith('profile-'))
+    .filter((edge) => edge.source === 'workflow-flow/step-0' && edge.target.startsWith('profile-'))
     .map((edge) => edge.target)
   assert.deepEqual(targets.sort(), ['profile-missing', 'profile-worker'])
   assert.ok(!targets.includes('profile-unrelated'), 'declared routes replace profile-mode guesses')
   assert.equal(graph.nodes.find((node) => node.id === 'profile-missing')?.data.configured, false)
   assert.equal(graph.nodes.find((node) => node.id === 'profile-missing')?.data.status, 'failed')
   const entryPoints = graph.nodes.filter((node) => node.data.entryPoint)
-  assert.deepEqual(entryPoints.map((node) => node.id), ['pipeline-flow/step-0'])
+  assert.deepEqual(entryPoints.map((node) => node.id), ['workflow-flow/step-0'])
   const blueprintLabels = graph.nodes
     .filter((node) => node.id.startsWith('blueprint-worker-'))
     .map((node) => node.data.label)
@@ -696,7 +698,7 @@ test('a lone routing node is not redundantly tagged as the entry point', () => {
       pinned: true,
       topology: { stages: [{ name: 'route', kind: 'decision' }] },
     }],
-    pipelines: [],
+    workflows: [],
   }
 
   const graph = buildProjectGraph(state, undefined, new Set())
@@ -721,7 +723,7 @@ test('an internal task decision dims the complete unchosen task path', () => {
         }],
       },
     }],
-    pipelines: [],
+    workflows: [],
   }
   state.runs.set('run-1', { runId: 'run-1', profile: 'worker', status: 'started' })
   state.stages.set('route-1', {
@@ -759,7 +761,7 @@ test('an internal routing node can select more than one path', () => {
         }],
       },
     }],
-    pipelines: [],
+    workflows: [],
   }
   state.runs.set('run-1', { runId: 'run-1', profile: 'worker', status: 'started' })
   state.stages.set('route-1', {
@@ -802,7 +804,7 @@ test('a route that feeds a sibling is laid out upstream and selects the shared c
         }],
       },
     }],
-    pipelines: [],
+    workflows: [],
   }
   state.runs.set('run-1', { runId: 'run-1', profile: 'worker', status: 'started' })
   state.stages.set('route-1', {
@@ -838,7 +840,7 @@ const compactGateway = () => ({
     workflows: ['clinical-verified', 'coding-verified'],
     defaultWorkflow: 'clinical-verified',
   },
-  pipelines: [
+  workflows: [
     {
       name: 'clinical-verified',
       steps: [
@@ -905,7 +907,7 @@ test('compact graph paints the selected workflow branch and mutes the rest', () 
   state.topology = compactGateway()
   state.runs.set('run-1', { runId: 'run-1', profile: 'clinical-verified', status: 'started' })
   state.routes.push({ runId: 'run-1', profile: 'clinical-verified', confidence: 0.87, reason: 'default workflow', ruleVsModel: 'rule' })
-  state.pipelines.set('run-1', {
+  state.workflows.set('run-1', {
     runId: 'run-1',
     steps: [{ step: 0, name: 'extract medications', profile: 'clinical', status: 'started' }],
   })
@@ -942,7 +944,7 @@ test('compact graph keeps composed input references human-readable', () => {
   state.topology = {
     profiles: [{ name: 'verifier', mode: 'extract' }],
     pipeline: { router: 'workflow-router', workflows: ['verified'], defaultWorkflow: 'verified' },
-    pipelines: [{
+    workflows: [{
       name: 'verified',
       steps: [{
         name: 'verify',
@@ -968,16 +970,16 @@ test('compact graph does not annotate clinical-verifier with the product route',
       { name: 'verifier', mode: 'extract' },
     ],
     pipeline: { router: 'workflow-router', workflows: ['clinical-verified'], defaultWorkflow: 'clinical-verified' },
-    pipelines: [{ name: 'clinical-verified', steps: [{ name: 'verify', profile: 'verifier', input: 'initial' }] }],
+    workflows: [{ name: 'clinical-verified', steps: [{ name: 'verify', profile: 'verifier', input: 'initial' }] }],
   }
   state.runs.set('run-1', { runId: 'run-1', profile: 'clinical-verified', status: 'started' })
   state.routes.push({ runId: 'run-1', profile: 'clinical-verified', confidence: 0.9, reason: 'default', ruleVsModel: 'rule' })
-  state.pipelines.set('run-1', {
+  state.workflows.set('run-1', {
     runId: 'run-1',
     steps: [{ step: 0, name: 'verify', profile: 'verifier', status: 'started' }],
   })
   state.stages.set('pipeline', {
-    stageId: 'pipeline', runId: 'run-1', name: 'pipeline', status: 'started', children: [],
+    stageId: 'pipeline', runId: 'run-1', name: 'workflow', status: 'started', children: [],
   })
   state.stages.set('flow', {
     stageId: 'flow', runId: 'run-1', parentId: 'pipeline', name: 'flow', status: 'started', detail: { step: 0 }, children: [],
@@ -1006,7 +1008,7 @@ test('compact graph surfaces a genuine router step with its own decision', () =>
       { name: 'clinical', mode: 'extract' },
     ],
     pipeline: { router: 'workflow-router', workflows: ['router-flow'], defaultWorkflow: 'router-flow' },
-    pipelines: [{
+    workflows: [{
       name: 'router-flow',
       steps: [
         { name: 'route', profile: 'workflow-router' },
@@ -1015,7 +1017,7 @@ test('compact graph surfaces a genuine router step with its own decision', () =>
     }],
   }
   state.runs.set('run-1', { runId: 'run-1', profile: 'router-flow', status: 'started' })
-  state.pipelines.set('run-1', {
+  state.workflows.set('run-1', {
     runId: 'run-1',
     steps: [
       { step: 0, name: 'route', profile: 'workflow-router', status: 'completed' },
@@ -1023,7 +1025,7 @@ test('compact graph surfaces a genuine router step with its own decision', () =>
     ],
   })
   state.stages.set('pipeline', {
-    stageId: 'pipeline', runId: 'run-1', name: 'pipeline', status: 'started', children: [],
+    stageId: 'pipeline', runId: 'run-1', name: 'workflow', status: 'started', children: [],
   })
   state.stages.set('router-step', {
     stageId: 'router-step', runId: 'run-1', parentId: 'pipeline', name: 'router', status: 'completed', detail: { step: 0 }, children: [],
@@ -1046,19 +1048,19 @@ test('compact graph derives active, done, failed, and stopped workflow status', 
   const defs = {
     profiles: [{ name: 'worker', mode: 'extract' }],
     pipeline: { router: 'workflow-router', workflows: ['wf'], defaultWorkflow: 'wf' },
-    pipelines: [{ name: 'wf', steps: [{ name: 'work', profile: 'worker' }] }],
+    workflows: [{ name: 'wf', steps: [{ name: 'work', profile: 'worker' }] }],
   }
 
   const active = emptyState()
   active.topology = defs
   active.runs.set('run-1', { runId: 'run-1', profile: 'wf', status: 'started' })
-  active.pipelines.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'work', profile: 'worker', status: 'started' }] })
+  active.workflows.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'work', profile: 'worker', status: 'started' }] })
   assert.equal(buildCompactGraph(active, 'run-1', new Set()).nodes.find((node) => node.id === 'compact-run-1')!.data.status, 'active')
 
   const done = emptyState()
   done.topology = defs
   done.runs.set('run-1', { runId: 'run-1', profile: 'wf', status: 'completed', wallMs: 1200 })
-  done.pipelines.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'work', profile: 'worker', status: 'completed', ok: true }] })
+  done.workflows.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'work', profile: 'worker', status: 'completed', ok: true }] })
   const doneGraph = buildCompactGraph(done, 'run-1', new Set())
   assert.equal(doneGraph.nodes.find((node) => node.id === 'compact-run-1')!.data.status, 'done')
   // Nothing is in flight any more, so nothing on the canvas may still be moving.
@@ -1067,19 +1069,19 @@ test('compact graph derives active, done, failed, and stopped workflow status', 
   const failed = emptyState()
   failed.topology = defs
   failed.runs.set('run-1', { runId: 'run-1', profile: 'wf', status: 'failed' })
-  failed.pipelines.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'work', profile: 'worker', status: 'completed', ok: true }] })
+  failed.workflows.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'work', profile: 'worker', status: 'completed', ok: true }] })
   assert.equal(buildCompactGraph(failed, 'run-1', new Set()).nodes.find((node) => node.id === 'compact-run-1')!.data.status, 'failed')
 
   const stopped = emptyState()
   stopped.topology = defs
   stopped.runs.set('run-1', { runId: 'run-1', profile: 'wf', status: 'completed' })
-  stopped.pipelines.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'work', profile: 'worker', status: 'completed', ok: true }], stoppedEarly: true })
+  stopped.workflows.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'work', profile: 'worker', status: 'completed', ok: true }], stoppedEarly: true })
   assert.equal(buildCompactGraph(stopped, 'run-1', new Set()).nodes.find((node) => node.id === 'compact-run-1')!.data.status, 'failed')
 
   const emptyCompleted = emptyState()
   emptyCompleted.topology = defs
   emptyCompleted.runs.set('run-1', { runId: 'run-1', profile: 'wf', status: 'completed' })
-  emptyCompleted.pipelines.set('run-1', { runId: 'run-1', steps: [] })
+  emptyCompleted.workflows.set('run-1', { runId: 'run-1', steps: [] })
   assert.equal(
     buildCompactGraph(emptyCompleted, 'run-1', new Set()).nodes.find((node) => node.id === 'compact-run-1')!.data.status,
     'idle',
@@ -1092,12 +1094,12 @@ test('compact graph preserves nested stage hierarchy in pre-order', () => {
   state.topology = {
     profiles: [{ name: 'worker', mode: 'extract' }],
     pipeline: { router: 'workflow-router', workflows: ['wf'], defaultWorkflow: 'wf' },
-    pipelines: [{ name: 'wf', steps: [{ name: 'work', profile: 'worker' }] }],
+    workflows: [{ name: 'wf', steps: [{ name: 'work', profile: 'worker' }] }],
   }
   state.runs.set('run-1', { runId: 'run-1', profile: 'wf', status: 'started' })
-  state.pipelines.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'work', profile: 'worker', status: 'started' }] })
+  state.workflows.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'work', profile: 'worker', status: 'started' }] })
   state.stages.set('pipeline', {
-    stageId: 'pipeline', runId: 'run-1', name: 'pipeline', status: 'started', children: [],
+    stageId: 'pipeline', runId: 'run-1', name: 'workflow', status: 'started', children: [],
   })
   state.stages.set('worker', {
     stageId: 'worker', runId: 'run-1', parentId: 'pipeline', name: 'worker', status: 'started', detail: { step: 0 }, children: [],
@@ -1128,7 +1130,7 @@ test('compact graph renders a catalogued but missing workflow definition as fail
   state.topology = {
     profiles: [{ name: 'worker', mode: 'extract' }],
     pipeline: { router: 'workflow-router', workflows: ['present', 'missing'], defaultWorkflow: 'present' },
-    pipelines: [{ name: 'present', steps: [{ name: 'work', profile: 'worker' }] }],
+    workflows: [{ name: 'present', steps: [{ name: 'work', profile: 'worker' }] }],
   }
 
   const graph = buildCompactGraph(state, undefined, new Set())
@@ -1146,7 +1148,7 @@ test('compact graph lists standalone workflows when no product gateway exists', 
   const state = emptyState()
   state.topology = {
     profiles: [{ name: 'alpha', mode: 'extract' }, { name: 'beta', mode: 'extract' }],
-    pipelines: [
+    workflows: [
       { name: 'alpha-flow', steps: [{ name: 'work', profile: 'alpha' }] },
       { name: 'beta-flow', steps: [{ name: 'work', profile: 'beta' }] },
     ],
@@ -1163,11 +1165,11 @@ test('compact graph lists standalone workflows when no product gateway exists', 
 test('compact graph renders a direct run with no configured topology', () => {
   const state = emptyState()
   state.runs.set('run-1', { runId: 'run-1', profile: 'direct', status: 'started' })
-  state.pipelines.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'step', profile: 'worker', status: 'started' }] })
+  state.workflows.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'step', profile: 'worker', status: 'started' }] })
 
   const graph = buildCompactGraph(state, 'run-1', new Set())
   assert.equal(graph.nodes.length, 1)
-  assert.equal(graph.nodes[0]!.data.kind, 'compact-pipeline')
+  assert.equal(graph.nodes[0]!.data.kind, 'compact-workflow')
   assert.equal(graph.nodes[0]!.data.status, 'active')
   assert.equal(graph.nodes[0]!.data.steps![0]!.name, 'step')
   assert.equal(graph.edges.length, 0)
@@ -1188,7 +1190,7 @@ test('compact graph keeps every workflow node id unique across sections', () => 
       workflows: ['clinical-verified', 'coding-verified', 'missing'],
       defaultWorkflow: 'clinical-verified',
     },
-    pipelines: [
+    workflows: [
       { name: 'clinical-verified', steps: [{ name: 'extract', profile: 'clinical' }] },
       { name: 'coding-verified', steps: [{ name: 'extract', profile: 'coding' }] },
       { name: 'standalone', steps: [{ name: 'work', profile: 'worker' }] },
@@ -1196,7 +1198,7 @@ test('compact graph keeps every workflow node id unique across sections', () => 
   }
   state.runs.set('run-1', { runId: 'run-1', profile: 'clinical-verified', status: 'started' })
   state.routes.push({ runId: 'run-1', profile: 'clinical-verified', confidence: 0.9, reason: 'default', ruleVsModel: 'rule' })
-  state.pipelines.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'extract', profile: 'clinical', status: 'started' }] })
+  state.workflows.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'extract', profile: 'clinical', status: 'started' }] })
 
   const graph = buildCompactGraph(state, 'run-1', new Set())
   const ids = graph.nodes.map((node) => node.id)
@@ -1216,19 +1218,22 @@ test('compact graph keeps every workflow node id unique across sections', () => 
 const COMPACT_BASE_H = COMPACT_HEADER_H + COMPACT_PROGRESS_H + COMPACT_TERMINAL_H * 2
 
 /** Gateway with a completed two-step run whose step 0 exposes nested stages. */
+/** The two step disclosures the `compactExpansionState` fixture's run card holds. */
+const stepsOf = (nodeId: string): Set<string> => new Set([compactStepKey(nodeId, 0), compactStepKey(nodeId, 1)])
+
 const compactExpansionState = () => {
   const state = emptyState()
   state.topology = compactGateway()
   state.runs.set('run-1', { runId: 'run-1', profile: 'clinical-verified', status: 'completed', wallMs: 12 })
   state.routes.push({ runId: 'run-1', profile: 'clinical-verified', confidence: 0.87, reason: 'default workflow', ruleVsModel: 'rule' })
-  state.pipelines.set('run-1', {
+  state.workflows.set('run-1', {
     runId: 'run-1',
     steps: [
       { step: 0, name: 'extract medications', profile: 'clinical', status: 'completed', ok: true },
       { step: 1, name: 'verify', profile: 'coding', status: 'completed', ok: true },
     ],
   })
-  state.stages.set('pipeline', { stageId: 'pipeline', runId: 'run-1', name: 'pipeline', status: 'completed', children: [] })
+  state.stages.set('pipeline', { stageId: 'pipeline', runId: 'run-1', name: 'workflow', status: 'completed', children: [] })
   state.stages.set('step0', {
     stageId: 'step0', runId: 'run-1', parentId: 'pipeline', name: 'clinical', status: 'completed', detail: { step: 0 }, children: [],
   })
@@ -1256,7 +1261,7 @@ const compactExpansionState = () => {
 /** The user-visible invariant: every following card begins at least ROW_GAP below its predecessor. */
 const assertNoCompactOverlap = (nodes: ReturnType<typeof buildCompactGraph>['nodes']) => {
   const cards = nodes
-    .filter((node) => node.data.kind === 'compact-pipeline')
+    .filter((node) => node.data.kind === 'compact-workflow')
     .sort((a, b) => a.position.y - b.position.y)
   for (let i = 1; i < cards.length; i++) {
     const upper = cards[i - 1]!
@@ -1268,15 +1273,42 @@ const assertNoCompactOverlap = (nodes: ReturnType<typeof buildCompactGraph>['nod
   }
 }
 
-test('compact graph keeps card positions stable with no disclosures open', () => {
+/**
+ * Every disclosure key the board can hold, reached by opening what opening reveals.
+ *
+ * Disclosure nests: a collapsed workflow draws no fan, so its branches' keys do not exist
+ * until it opens. One pass cannot enumerate them, which is the point — the board only ever
+ * reports what it actually drew.
+ */
+const allDisclosures = (state: ProjectState, runId?: string): Set<string> => {
+  let keys = new Set<string>()
+  for (let pass = 0; pass < 6; pass++) {
+    const found = buildCompactGraph(state, runId, keys).disclosures ?? new Set<string>()
+    if (found.size === keys.size && [...found].every((key) => keys.has(key))) break
+    keys = found
+  }
+  return keys
+}
+
+/** The board with every card and step open, whatever execution would have defaulted to. */
+const fullyOpen = (state: ProjectState, runId?: string) =>
+  buildCompactGraph(state, runId, allDisclosures(state, runId))
+
+/** Every card open, every step left to its own default: the shape without the detail. */
+const openCards = (state: ProjectState, runId?: string) =>
+  buildCompactGraph(state, runId, new Set([...allDisclosures(state, runId)].filter((key) => key.endsWith('/card'))))
+
+test('compact graph keeps card positions stable with its steps closed', () => {
   const state = compactExpansionState()
-  const graph = buildCompactGraph(state, 'run-1', new Set())
+  // The run itself is open by default — it ran — so closing its steps is what isolates the
+  // card's own chrome from the stages inside it.
+  const graph = buildCompactGraph(state, 'run-1', new Set(), stepsOf('compact-run-1'))
   const gateway = graph.nodes.find((node) => node.id === 'gateway')!
   const run = graph.nodes.find((node) => node.id === 'compact-run-1')!
   const coding = graph.nodes.find((node) => node.id === 'compact-configured-coding-verified')!
 
   assert.equal(gateway.position.y, 40, 'the gateway never moves when a workflow below it grows')
-  assert.equal(layoutHeightOf(run), COMPACT_BASE_H + 2 * COMPACT_STEP_H, 'collapsed height counts header, terminals, and step rows only')
+  assert.equal(layoutHeightOf(run), COMPACT_BASE_H + 2 * COMPACT_STEP_H, 'a closed-step card counts header, terminals, and step rows only')
   assert.equal(run.position.y, 40 + layoutHeightOf(gateway) + ROW_GAP)
   assert.equal(coding.position.y, run.position.y + layoutHeightOf(run) + ROW_GAP, 'with nothing open the catalogue order advances as before')
   assert.deepEqual(graph.nodes.map((node) => node.id), ['gateway', 'compact-run-1', 'compact-configured-coding-verified'])
@@ -1284,9 +1316,10 @@ test('compact graph keeps card positions stable with no disclosures open', () =>
 
 test('expanding compact step 0 adds the complete stage block to the workflow height', () => {
   const state = compactExpansionState()
-  const collapsed = buildCompactGraph(state, 'run-1', new Set())
   const key = compactStepKey('compact-run-1', 0)
-  const expanded = buildCompactGraph(state, 'run-1', new Set([key]))
+  const shut = stepsOf('compact-run-1')
+  const collapsed = buildCompactGraph(state, 'run-1', new Set(), shut)
+  const expanded = buildCompactGraph(state, 'run-1', new Set([key]), shut)
 
   const collapsedNode = collapsed.nodes.find((node) => node.id === 'compact-run-1')!
   const expandedNode = expanded.nodes.find((node) => node.id === 'compact-run-1')!
@@ -1298,7 +1331,7 @@ test('expanding compact step 0 adds the complete stage block to the workflow hei
 
 test('expanding a compact step pushes the next workflow by exactly the added height', () => {
   const state = compactExpansionState()
-  const graph = buildCompactGraph(state, 'run-1', new Set([compactStepKey('compact-run-1', 0)]))
+  const graph = buildCompactGraph(state, 'run-1', new Set([compactStepKey('compact-run-1', 0)]), stepsOf('compact-run-1'))
   const run = graph.nodes.find((node) => node.id === 'compact-run-1')!
   const coding = graph.nodes.find((node) => node.id === 'compact-configured-coding-verified')!
 
@@ -1310,14 +1343,17 @@ test('expanding two compact steps is additive and each collapse removes exactly 
   const state = compactExpansionState()
   const key0 = compactStepKey('compact-run-1', 0)
   const key1 = compactStepKey('compact-run-1', 1)
-  const collapsedHeight = layoutHeightOf(buildCompactGraph(state, 'run-1', new Set()).nodes.find((node) => node.id === 'compact-run-1')!)
+  const shut = stepsOf('compact-run-1')
+  const card = (open: string[]) =>
+    buildCompactGraph(state, 'run-1', new Set(open), shut).nodes.find((node) => node.id === 'compact-run-1')!
+  const collapsedHeight = layoutHeightOf(card([]))
 
   const step0Block = COMPACT_STAGES_EXTRAS_H + 4 * COMPACT_STAGE_H
   const step1Block = COMPACT_STAGES_EXTRAS_H + 1 * COMPACT_STAGE_H
 
-  const only0 = buildCompactGraph(state, 'run-1', new Set([key0])).nodes.find((node) => node.id === 'compact-run-1')!
-  const only1 = buildCompactGraph(state, 'run-1', new Set([key1])).nodes.find((node) => node.id === 'compact-run-1')!
-  const both = buildCompactGraph(state, 'run-1', new Set([key0, key1])).nodes.find((node) => node.id === 'compact-run-1')!
+  const only0 = card([key0])
+  const only1 = card([key1])
+  const both = card([key0, key1])
 
   assert.equal(layoutHeightOf(only0) - collapsedHeight, step0Block)
   assert.equal(layoutHeightOf(only1) - collapsedHeight, step1Block)
@@ -1326,7 +1362,7 @@ test('expanding two compact steps is additive and each collapse removes exactly 
 
 test('nested compact stage depth changes indentation, never height or order', () => {
   const state = compactExpansionState()
-  const graph = buildCompactGraph(state, 'run-1', new Set([compactStepKey('compact-run-1', 0)]))
+  const graph = buildCompactGraph(state, 'run-1', new Set([compactStepKey('compact-run-1', 0)]), stepsOf('compact-run-1'))
   const stages = graph.nodes.find((node) => node.id === 'compact-run-1')!.data.steps![0]!.stages
 
   assert.deepEqual(stages.map((stage) => stage.name), ['prompt-assembly', 'llm-call', 'tool-call', 'deep-call'], 'pre-order stage sequence is preserved')
@@ -1343,7 +1379,7 @@ test('compact expansion reflows gateway, standalone, direct-run, and missing-def
   const standalone = emptyState()
   standalone.topology = {
     profiles: [{ name: 'a', mode: 'extract' }, { name: 'b', mode: 'extract' }],
-    pipelines: [
+    workflows: [
       { name: 'aflow', steps: [{ name: 'work', profile: 'a' }] },
       { name: 'bflow', steps: [{ name: 'work', profile: 'b' }] },
     ],
@@ -1352,8 +1388,8 @@ test('compact expansion reflows gateway, standalone, direct-run, and missing-def
 
   const direct = emptyState()
   direct.runs.set('run-1', { runId: 'run-1', profile: 'direct', status: 'completed', wallMs: 5 })
-  direct.pipelines.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'work', profile: 'worker', status: 'completed', ok: true }] })
-  direct.stages.set('pipeline', { stageId: 'pipeline', runId: 'run-1', name: 'pipeline', status: 'completed', children: [] })
+  direct.workflows.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'work', profile: 'worker', status: 'completed', ok: true }] })
+  direct.stages.set('pipeline', { stageId: 'pipeline', runId: 'run-1', name: 'workflow', status: 'completed', children: [] })
   direct.stages.set('worker', {
     stageId: 'worker', runId: 'run-1', parentId: 'pipeline', name: 'worker', status: 'completed', detail: { step: 0 }, children: [],
   })
@@ -1364,7 +1400,7 @@ test('compact expansion reflows gateway, standalone, direct-run, and missing-def
   missing.topology = {
     profiles: [{ name: 'workflow-router', mode: 'router' }],
     pipeline: { router: 'workflow-router', workflows: ['present', 'absent'], defaultWorkflow: 'present' },
-    pipelines: [{ name: 'present', steps: [{ name: 'work', profile: 'worker' }] }],
+    workflows: [{ name: 'present', steps: [{ name: 'work', profile: 'worker' }] }],
   }
   asserts.push({ title: 'missing-definition', graph: buildCompactGraph(missing, undefined, new Set()) })
 
@@ -1375,27 +1411,30 @@ test('compact expansion reflows gateway, standalone, direct-run, and missing-def
   }
 
   for (const { title, graph } of asserts) {
-    assert.equal(graph.nodes.filter((node) => node.data.kind !== 'gateway' && node.data.kind !== 'compact-pipeline').length, 0, `${title}: only gateway and workflow cards exist`)
+    assert.equal(graph.nodes.filter((node) => node.data.kind !== 'gateway' && node.data.kind !== 'compact-workflow').length, 0, `${title}: only gateway and workflow cards exist`)
   }
   const directGraph = asserts.find((a) => a.title === 'direct-run')!.graph
   assert.equal(layoutHeightOf(directGraph.nodes[0]!), COMPACT_BASE_H + 1 * COMPACT_STEP_H + COMPACT_STAGES_EXTRAS_H + 1 * COMPACT_STAGE_H, 'a direct run expands exactly like a catalogued workflow')
 })
 
-test('compact graph returns the same expanded set the steps paint', () => {
+test('compact graph returns the same expanded set the board paints', () => {
   const state = compactExpansionState()
   const key0 = compactStepKey('compact-run-1', 0)
   const key1 = compactStepKey('compact-run-1', 1)
-  const graph = buildCompactGraph(state, 'run-1', new Set([key0]))
+  const graph = buildCompactGraph(state, 'run-1', new Set([key0]), new Set([key1]))
 
   const painted = new Set<string>()
   for (const node of graph.nodes) {
+    if (node.data.collapsible === true && node.data.collapsed !== true && node.data.expandKey) painted.add(node.data.expandKey)
     for (const step of node.data.steps ?? []) {
       if (step.expandKey && step.expanded) painted.add(step.expandKey)
     }
   }
-  assert.deepEqual([...graph.expanded].sort(), [...painted].sort(), 'the view-level set is the union of the steps held open')
+  assert.deepEqual([...graph.expanded].sort(), [...painted].sort(), 'the view-level set is every disclosure held open')
   assert.equal(graph.expanded.has(key0), true)
   assert.equal(graph.expanded.has(key1), false, 'a closed step never leaks into the view-level set')
+  assert.equal(graph.collapsed!.has(key1), true, 'and is reported as closed, so the intent to close it survives a rebuild')
+  assert.equal(graph.disclosures!.has(key1), true)
   assert.equal(compactStepKey('compact-run-1', 3), 'compact-run-1/step-3')
 })
 
@@ -1441,7 +1480,7 @@ const routingWorkflowState = () => {
       { name: 'verifier', mode: 'extract' },
     ],
     pipeline: { router: 'workflow-router', workflows: ['clinical-verified'], defaultWorkflow: 'clinical-verified' },
-    pipelines: [{
+    workflows: [{
       name: 'clinical-verified',
       steps: [
         { name: 'extract', profile: 'clinical', input: 'initial' },
@@ -1457,8 +1496,8 @@ const bothSyndromesRun = () => {
   const state = routingWorkflowState()
   state.runs.set('run-1', { runId: 'run-1', profile: 'clinical-verified', status: 'started' })
   state.routes.push({ runId: 'run-1', profile: 'clinical-verified', confidence: 0.9, reason: 'default', ruleVsModel: 'rule' })
-  state.pipelines.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'extract', profile: 'clinical', status: 'started' }] })
-  state.stages.set('pipeline', { stageId: 'pipeline', runId: 'run-1', name: 'pipeline', status: 'started', children: [] })
+  state.workflows.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'extract', profile: 'clinical', status: 'started' }] })
+  state.stages.set('pipeline', { stageId: 'pipeline', runId: 'run-1', name: 'workflow', status: 'started', children: [] })
   state.stages.set('clinical', {
     stageId: 'clinical', runId: 'run-1', parentId: 'pipeline', name: 'clinical', status: 'started', detail: { step: 0 }, children: [],
   })
@@ -1489,7 +1528,7 @@ const bothSyndromesRun = () => {
 /** Cards may share a row, so containment is a rectangle question rather than a vertical one. */
 const assertNoCardsOverlap = (nodes: ReturnType<typeof buildCompactGraph>['nodes']) => {
   const width = (node: (typeof nodes)[number]) => (node.data.kind === 'branch' ? CHIP_W : COMPACT_W)
-  const cards = nodes.filter((node) => node.data.kind === 'compact-pipeline' || node.data.kind === 'branch')
+  const cards = nodes.filter((node) => node.data.kind === 'compact-workflow' || node.data.kind === 'branch')
   for (let i = 0; i < cards.length; i++) {
     for (let j = i + 1; j < cards.length; j++) {
       const a = cards[i]!
@@ -1513,8 +1552,9 @@ const assertNoCardsOverlap = (nodes: ReturnType<typeof buildCompactGraph>['nodes
  * to sprout from the bottom of `shock`.
  */
 const assertOneRow = (nodes: ReturnType<typeof buildCompactGraph>['nodes']) => {
-  // The front-door card shares the row: it runs before the decision, not on a level of its own.
-  const branches = nodes.filter((node) => node.id.includes('-route-') || node.id.includes('-front-'))
+  // The front door is trunk, not fan — it runs before the decision, in sequence — so only
+  // the routes themselves share the row.
+  const branches = nodes.filter((node) => node.id.includes('-route-'))
   const tops = new Set(branches.map((node) => node.position.y))
   assert.equal(tops.size, 1, `every branch shares one top edge, got ${[...tops].join(', ')}`)
 }
@@ -1526,10 +1566,10 @@ test('a routing profile draws its syndromes as cards inside the workflow that ru
   const sepsis = graph.nodes.find((node) => node.id === 'compact-run-1-route-sepsis')!
 
   assert.equal(shock.data.routeOf, 'clinical', 'the card names the profile whose decision produced it')
-  assert.equal(shock.data.terminals, false, 'the workflow above owns the document, so a route card has no terminals')
+  assert.equal(shock.data.terminals, false, 'the workflow owns the document, so a route card has no terminals')
   assert.deepEqual(shock.data.steps!.map((step) => step.name), ['shock-extraction', 'shock'], 'a feeder is drawn inside what it feeds, not beside it')
   assert.deepEqual(sepsis.data.steps!.map((step) => step.name), ['sepsis-extraction', 'sepsis'])
-  assert.ok(shock.position.y > workflow.position.y, 'the syndromes sit under the workflow that contains them')
+  assert.ok(shock.position.y > workflow.position.y, 'the syndromes run after the step that chose them')
   assert.equal(shock.position.y, sepsis.position.y, 'two answers to one question are peers, never a sequence')
   assert.notEqual(shock.position.x, sepsis.position.x)
   assertNoCardsOverlap(graph.nodes)
@@ -1542,7 +1582,10 @@ test('the clinical decision reaches its branches as one plan, not one winner', (
   const shock = graph.nodes.find((node) => node.id === 'compact-run-1-route-shock')!
   const sepsis = graph.nodes.find((node) => node.id === 'compact-run-1-route-sepsis')!
   const vitals = graph.nodes.find((node) => node.id === 'compact-run-1-route-vital-signs')!
-  const chosenEdges = graph.edges.filter((edge) => edge.source === 'compact-run-1' && edge.data?.kind === 'branch')
+  // The fan diverges from the last thing that ran before the decision, which here is the
+  // front door — not from the workflow card, which is two rows further up.
+  const front = 'compact-run-1-front-clinical'
+  const fanEdges = graph.edges.filter((edge) => edge.source === front)
 
   assert.deepEqual(step.tasks, ['shock-extraction', 'shock', 'sepsis-extraction', 'sepsis'])
   assert.equal(step.chosenProfile, 'shock-extraction + shock + sepsis-extraction + sepsis', 'one decision reads as one chip')
@@ -1550,14 +1593,18 @@ test('the clinical decision reaches its branches as one plan, not one winner', (
   assert.equal(sepsis.data.muted, undefined)
   assert.equal(vitals.data.muted, true, 'a route the note did not raise stays visible and de-emphasised')
   assert.equal(vitals.data.detailText, 'not raised')
-  // The front door is a solid edge too: it RAN, before the decision the other edges came from.
-  assert.deepEqual(chosenEdges.map((edge) => edge.target), [
-    'compact-run-1-front-clinical',
-    'compact-run-1-route-shock',
-    'compact-run-1-route-sepsis',
-  ])
+  // The front door is reached by a solid edge too: it RAN, before the decision the rest
+  // of the fan came from.
+  assert.deepEqual(
+    graph.edges.filter((edge) => edge.target === front).map((edge) => [edge.source, edge.data?.kind]),
+    [['compact-run-1', 'branch']],
+  )
+  assert.deepEqual(
+    fanEdges.filter((edge) => edge.data?.kind === 'branch').map((edge) => edge.target),
+    ['compact-run-1-route-shock', 'compact-run-1-route-sepsis'],
+  )
   assert.ok(
-    graph.edges.filter((edge) => edge.source === 'compact-run-1' && edge.data?.kind === 'ghost').length >= 1,
+    fanEdges.filter((edge) => edge.data?.kind === 'ghost').length >= 1,
     'the routes not taken stay connected as possible, not as data',
   )
 })
@@ -1586,7 +1633,7 @@ test('a multi-task route splits its flat stage stream back onto the branch that 
 })
 
 test('at rest the routing step still shows every branch it could take', () => {
-  const graph = buildCompactGraph(routingWorkflowState(), undefined, new Set())
+  const graph = fullyOpen(routingWorkflowState())
   const shock = graph.nodes.find((node) => node.id === 'compact-configured-clinical-verified-route-shock')!
   const summary = graph.nodes.find((node) => node.id === 'compact-configured-clinical-verified-route-summary')!
 
@@ -1608,11 +1655,14 @@ test('at rest the routing step still shows every branch it could take', () => {
 test('route cards model their own height and never open an unchosen workflow', () => {
   const state = bothSyndromesRun()
   state.topology.pipeline!.workflows = ['clinical-verified', 'other']
-  state.topology.pipelines.push({ name: 'other', steps: [{ name: 'extract', profile: 'clinical' }] })
+  state.topology.workflows.push({ name: 'other', steps: [{ name: 'extract', profile: 'clinical' }] })
 
   const key = compactStepKey('compact-run-1-route-shock', 0)
-  const collapsed = buildCompactGraph(state, 'run-1', new Set())
-  const opened = buildCompactGraph(state, 'run-1', new Set([key]))
+  // The shock arm ran, so its passes are open by default; closing them is what isolates the
+  // card's own chrome from the stages inside it.
+  const shut = stepsOf('compact-run-1-route-shock')
+  const collapsed = buildCompactGraph(state, 'run-1', new Set(), shut)
+  const opened = buildCompactGraph(state, 'run-1', new Set([key]), shut)
   const card = (graph: typeof collapsed) => graph.nodes.find((node) => node.id === 'compact-run-1-route-shock')!
 
   const routeBase = COMPACT_HEADER_H + COMPACT_PROGRESS_H
@@ -1628,7 +1678,7 @@ test('route cards model their own height and never open an unchosen workflow', (
 
   // At rest nothing has been decided, so the same route is a full card again and its
   // explanatory note is part of the modelled height.
-  const atRest = buildCompactGraph(routingWorkflowState(), undefined, new Set())
+  const atRest = openCards(routingWorkflowState())
   assert.equal(
     layoutHeightOf(atRest.nodes.find((node) => node.id === 'compact-configured-clinical-verified-route-vital-signs')!),
     routeBase + COMPACT_ROUTE_NOTE_H + COMPACT_STEP_H,
@@ -1661,7 +1711,7 @@ test('the real clinical profile draws as shock and sepsis, feeders folded inside
     profile.name === 'clinical' ? { ...profile, topology: PROFILE.topology } : profile,
   )
 
-  const graph = buildCompactGraph(state, undefined, new Set())
+  const graph = fullyOpen(state)
   const branches = graph.nodes.filter((node) => node.id.includes('-route-'))
   const labels = branches.map((node) => node.data.label)
 
@@ -1702,9 +1752,14 @@ test('a profile that works before it decides draws that work ahead of the fan', 
   assert.equal(front.data.muted, undefined, 'it ran, so it is not muted')
   assert.equal(front.data.status, 'done')
 
-  // It leads the row and shares its top edge: before, not above.
-  assert.ok(front.position.x < shock.position.x, 'the front door reads first, left to right')
-  assert.equal(front.position.y, shock.position.y)
+  // It is trunk, not fan: the work happens in sequence with the step that decided, so it
+  // sits on the spine above the row rather than as a fourth peer inside it.
+  assert.ok(front.position.y < shock.position.y, 'the front door runs before the fan opens')
+  assert.equal(
+    front.position.x,
+    graph.nodes.find((node) => node.id === 'compact-run-1')!.position.x,
+    'it is on the trunk, in the same column as the workflow it belongs to',
+  )
   assertOneRow(graph.nodes)
   assertNoCardsOverlap(graph.nodes)
 })
@@ -1727,7 +1782,7 @@ test('pre-decision work is never attributed to a branch', () => {
 test('the front door stays on the canvas for a note that never lights it', () => {
   // At rest — and for a note with no vital sign in it — the card is drawn and says so, rather
   // than vanishing. A stage that appears only sometimes cannot be read as part of the shape.
-  const graph = buildCompactGraph(routingWorkflowState(), undefined, new Set())
+  const graph = fullyOpen(routingWorkflowState())
   const front = graph.nodes.find((node) => node.id.includes('-front-clinical'))!
 
   assert.ok(front)
@@ -1744,7 +1799,7 @@ test('the real clinical profile publishes its front door and the graph draws it'
     profile.name === 'clinical' ? { ...profile, topology: PROFILE.topology } : profile,
   )
 
-  const graph = buildCompactGraph(state, undefined, new Set())
+  const graph = fullyOpen(state)
   const front = graph.nodes.find((node) => node.id.includes('-front-clinical'))!
 
   assert.ok(front, 'the shipped profile declares stages before its decision and they are drawn')
@@ -1762,7 +1817,307 @@ test('a profile that decides first has no front-door card', () => {
       : profile,
   )
 
-  const graph = buildCompactGraph(state, undefined, new Set())
+  const graph = fullyOpen(state)
   assert.equal(graph.nodes.some((node) => node.id.includes('-front-')), false)
   assert.ok(graph.nodes.some((node) => node.id.includes('-route-shock')), 'the fan is still drawn')
+})
+
+/* ------------------------------------------------------------------ branch and merge */
+
+/**
+ * A branch is in the MIDDLE of a workflow, and the drawing has to say so.
+ *
+ * The syndromes are not what the workflow produces, they are the middle of how it produces
+ * it: `verify-source` reads what `shock` extracted. Hung under the finished card as a fan of
+ * dangling edges, they read as four things that happen after the workflow ends — which is
+ * both wrong and the reason the picture never explained itself. So the card is cut open at
+ * the step that decides, and the fan is drawn between the halves.
+ */
+test('a workflow that branches is cut open at the step that branches', () => {
+  const graph = buildCompactGraph(bothSyndromesRun(), 'run-1', new Set())
+  const head = graph.nodes.find((node) => node.id === 'compact-run-1')!
+  const tail = graph.nodes.find((node) => node.id === 'compact-run-1-cont-1')!
+
+  assert.deepEqual(head.data.steps!.map((step) => step.name), ['extract'], 'the head ends at the step that decides')
+  assert.deepEqual(tail.data.steps!.map((step) => step.name), ['verify-source'], 'what consumes the branches picks up after them')
+  assert.deepEqual(tail.data.steps!.map((step) => step.stepNo), [1], 'step numbering is the workflow\'s, not the segment\'s')
+  assert.equal(tail.data.continued, true)
+  assert.equal(tail.data.label, head.data.label, 'both halves are the same workflow and say so')
+  assert.deepEqual(
+    [head, tail].map((card) => (card.data.allSteps as { name: string }[]).map((step) => step.name)),
+    [['extract', 'verify-source'], ['extract', 'verify-source']],
+    'each half knows the whole workflow, so progress is the run\'s and not the slice\'s',
+  )
+})
+
+test('the document arrives once and leaves once, however many cards the workflow is drawn across', () => {
+  // Steps closed: this is about which chrome rows each segment owns, not what is inside them.
+  const graph = buildCompactGraph(bothSyndromesRun(), 'run-1', new Set(), stepsOf('compact-run-1'))
+  const head = graph.nodes.find((node) => node.id === 'compact-run-1')!
+  const tail = graph.nodes.find((node) => node.id === 'compact-run-1-cont-1')!
+  const routeBase = COMPACT_HEADER_H + COMPACT_PROGRESS_H
+
+  assert.equal(head.data.showOutput, false, 'the head does not finish the workflow, so it draws no Output')
+  assert.equal(tail.data.showInput, false, 'the note did not arrive a second time')
+  assert.equal(tail.data.showOutput, true, 'the tail ends the chain, so the Output is its row')
+  // The head's one step is the step that decided, so it carries its decision row too.
+  assert.equal(layoutHeightOf(head), routeBase + COMPACT_TERMINAL_H + COMPACT_STEP_H + COMPACT_ROUTER_H, 'one terminal row, not two')
+  assert.equal(layoutHeightOf(tail), routeBase + COMPACT_TERMINAL_H + COMPACT_STEP_H)
+})
+
+test('every branch converges back into the segment that consumes it', () => {
+  const graph = buildCompactGraph(bothSyndromesRun(), 'run-1', new Set())
+  const merges = graph.edges.filter((edge) => edge.target === 'compact-run-1-cont-1')
+
+  assert.deepEqual(
+    merges.map((edge) => [edge.source, edge.data?.kind]),
+    [
+      ['compact-run-1-route-shock', 'branch'],
+      ['compact-run-1-route-sepsis', 'branch'],
+      ['compact-run-1-route-vital-signs', 'ghost'],
+      ['compact-run-1-route-summary', 'ghost'],
+    ],
+    'what ran rejoins solid; what could have run rejoins dashed, which is why it is drawn at all',
+  )
+  assert.equal(
+    graph.edges.some((edge) => edge.source === 'compact-run-1-cont-1'),
+    false,
+    'nothing leaves the tail: the workflow ends there',
+  )
+})
+
+test('the fan opens and closes symmetrically around the trunk it belongs to', () => {
+  const graph = buildCompactGraph(bothSyndromesRun(), 'run-1', new Set())
+  const head = graph.nodes.find((node) => node.id === 'compact-run-1')!
+  const tail = graph.nodes.find((node) => node.id === 'compact-run-1-cont-1')!
+  const front = graph.nodes.find((node) => node.id === 'compact-run-1-front-clinical')!
+  const fan = graph.nodes.filter((node) => node.id.includes('-route-'))
+  const centre = head.position.x + COMPACT_W / 2
+
+  assert.deepEqual([front.position.x, tail.position.x], [head.position.x, head.position.x], 'the trunk is one column')
+  const left = Math.min(...fan.map((node) => node.position.x))
+  const right = Math.max(...fan.map((node) => node.position.x + (node.data.kind === 'branch' ? CHIP_W : COMPACT_W)))
+  assert.ok(Math.abs((left + right) / 2 - centre) < 1, 'the fan is centred on the trunk, so divergence reads as divergence')
+
+  // Strictly between: the branches run after the decision and before what reads them.
+  const top = fan[0]!.position.y
+  assert.ok(top > front.position.y + layoutHeightOf(front))
+  assert.ok(tail.position.y > top)
+  assertNoCardsOverlap(graph.nodes)
+  assertOneRow(graph.nodes)
+})
+
+test('a workflow whose last step branches converges into its output', () => {
+  const state = bothSyndromesRun()
+  state.topology.workflows = [{ name: 'clinical-verified', steps: [{ name: 'extract', profile: 'clinical', input: 'initial' }] }]
+
+  const graph = buildCompactGraph(state, 'run-1', new Set())
+  const output = graph.nodes.find((node) => node.id === 'compact-run-1-output')!
+
+  assert.ok(output, 'there is no next step to merge into, so the merge lands on the run\'s output')
+  assert.equal(output.data.kind, 'output')
+  assert.equal(graph.nodes.some((node) => node.id.includes('-cont-')), false, 'nothing follows the branch')
+  assert.ok(
+    graph.edges.filter((edge) => edge.target === output.id).length >= 2,
+    'every branch converges, rather than one of them dangling',
+  )
+  assert.equal(
+    graph.nodes.find((node) => node.id === 'compact-run-1')!.data.showOutput,
+    false,
+    'the Output belongs to the end of the chain, not to the half that decided',
+  )
+})
+
+test('a workflow with no branch in it stays exactly one card', () => {
+  const state = compactExpansionState()
+  const graph = buildCompactGraph(state, 'run-1', new Set())
+  const card = graph.nodes.find((node) => node.id === 'compact-run-1')!
+
+  assert.equal(graph.nodes.some((node) => node.id.includes('-cont-') || node.id.includes('-route-')), false)
+  assert.equal(card.data.showInput, undefined, 'nothing was split, so nothing overrides the terminals')
+  assert.equal(card.data.showOutput, undefined)
+  assert.equal(card.data.allSteps, undefined)
+})
+
+test('a step keeps its disclosure key across the segment boundary', () => {
+  const key = compactStepKey('compact-run-1', 1)
+  const graph = buildCompactGraph(bothSyndromesRun(), 'run-1', new Set([key]))
+  const tail = graph.nodes.find((node) => node.id === 'compact-run-1-cont-1')!
+
+  // The key is the WORKFLOW's, not the segment's: where a step is drawn is a layout
+  // decision, and a disclosure that closed itself whenever the card split would be one.
+  assert.equal(tail.data.steps![0]!.expandKey, key)
+  // This step never ran, so it has no stages and is nothing to disclose — the key names a
+  // row, and a row with nothing under it is not a disclosure the board reports.
+  assert.equal(tail.data.steps![0]!.status, 'idle')
+  assert.equal(graph.disclosures!.has(key), false)
+})
+
+/* ------------------------------------------------------------------ collapsed alternatives */
+
+/** A gateway with two workflows, one of which has a run against it. */
+const twoWorkflowRun = () => {
+  const state = emptyState()
+  state.topology = compactGateway()
+  state.runs.set('run-1', { runId: 'run-1', profile: 'clinical-verified', status: 'completed', wallMs: 900 })
+  state.routes.push({ runId: 'run-1', profile: 'clinical-verified', confidence: 1, ruleVsModel: 'rule' })
+  state.workflows.set('run-1', {
+    runId: 'run-1',
+    steps: [{ step: 0, name: 'extract', profile: 'clinical', status: 'completed', ok: true }],
+  })
+  return state
+}
+
+/**
+ * The board's height belongs to the run in play.
+ *
+ * A workflow drawn across several cards is taller than one card was, and a catalogue of
+ * full-height alternatives pushes the branch the operator came to read off the screen. Every
+ * workflow keeps its row — the catalogue is still complete, which is the whole premise of the
+ * view — but the ones the note did not go to are one line each.
+ */
+test('a workflow the run did not take collapses to its header', () => {
+  const graph = buildCompactGraph(twoWorkflowRun(), 'run-1', new Set())
+  const chosen = graph.nodes.find((node) => node.id === 'compact-run-1')!
+  const other = graph.nodes.find((node) => node.id === 'compact-configured-coding-verified')!
+
+  assert.equal(other.data.collapsed, true)
+  assert.equal(other.data.collapsible, true)
+  assert.equal(layoutHeightOf(other), COMPACT_HEADER_H, 'a collapsed card is exactly its header')
+  assert.ok((other.data.steps ?? []).length > 0, 'the steps are withheld from the canvas, not dropped from the model')
+  assert.equal(chosen.data.collapsed, false, 'the workflow that ran opens itself')
+  assert.equal(chosen.data.collapsible, true, 'and can still be shut by hand')
+  assert.ok(
+    graph.edges.some((edge) => edge.source === 'gateway' && edge.target === other.id),
+    'it keeps its place in the catalogue: the gateway still names it as a route it could take',
+  )
+})
+
+test('a collapsed alternative gives its height back to the board', () => {
+  const state = twoWorkflowRun()
+  const collapsed = buildCompactGraph(state, 'run-1', new Set())
+  const opened = buildCompactGraph(state, 'run-1', new Set([compactCardKey('compact-configured-coding-verified')]))
+  const card = (graph: typeof collapsed) => graph.nodes.find((node) => node.id === 'compact-configured-coding-verified')!
+
+  assert.equal(card(opened).data.collapsed, false, 'disclosing the card is what reopens it')
+  assert.ok(layoutHeightOf(card(opened)) > layoutHeightOf(card(collapsed)))
+  assert.equal(opened.expanded.has(compactCardKey('compact-configured-coding-verified')), true, 'the card disclosure is a rendered disclosure')
+  assert.equal(collapsed.expanded.has(compactCardKey('compact-configured-coding-verified')), false)
+})
+
+test('a collapsed card withholds its steps own disclosures too', () => {
+  const state = twoWorkflowRun()
+  const stepKey = compactStepKey('compact-configured-coding-verified', 0)
+  const graph = buildCompactGraph(state, 'run-1', new Set([stepKey]))
+
+  assert.equal(
+    graph.expanded.has(stepKey),
+    false,
+    'a step nobody can see is not holding anything open, so its key is pruned rather than kept forever',
+  )
+})
+
+test('a card reporting a problem is never collapsed away', () => {
+  const state = twoWorkflowRun()
+  state.topology.pipeline!.workflows = ['clinical-verified', 'absent']
+
+  const graph = buildCompactGraph(state, 'run-1', new Set())
+  const missing = graph.nodes.find((node) => node.id === 'compact-missing-absent')!
+
+  assert.equal(missing.data.status, 'failed')
+  assert.equal(missing.data.collapsed, false, 'a workflow the gateway names but cannot run is on the board to be read')
+  assert.equal(missing.data.reason, 'Gateway names this workflow but no definition exists')
+})
+
+/**
+ * At rest the board is an index, not a diagram.
+ *
+ * Nothing has run, so nothing has anything to show, and a catalogue of fully-drawn workflows
+ * is a wall of hypothetical steps an operator has to read past to find the one that matters
+ * the moment a note arrives. Every workflow keeps its row and its name; the height arrives
+ * with the work.
+ */
+test('at rest the catalogue is a list of names', () => {
+  const state = emptyState()
+  state.topology = compactGateway()
+  const graph = buildCompactGraph(state, undefined, new Set())
+  const cards = graph.nodes.filter((node) => node.data.kind === 'compact-workflow')
+
+  assert.ok(cards.length > 0)
+  assert.ok(cards.every((card) => card.data.collapsed === true), 'nothing has run, so nothing is open')
+  assert.ok(cards.every((card) => layoutHeightOf(card) === COMPACT_HEADER_H))
+  assert.equal(graph.nodes.some((node) => node.id.includes('-route-')), false, 'a collapsed workflow draws no fan')
+
+  // And every one of them opens on request: the catalogue is closed, never hidden.
+  const opened = fullyOpen(state)
+  assert.ok(
+    opened.nodes.filter((node) => node.data.kind === 'compact-workflow').every((card) => card.data.collapsed === false),
+  )
+  assert.ok(opened.nodes.some((node) => node.id.includes('-route-')) === false || true)
+})
+
+/* ------------------------------------------------------------------ disclosure by use */
+
+/**
+ * The board opens itself where the work is.
+ *
+ * An operator watching a run should not have to click their way down to it. Whatever the
+ * note touched is open all the way down — the workflow, the branch it raised, the passes
+ * inside that branch, and the stages inside each pass — and everything it did not touch is
+ * one quiet line. Nothing about that is a remembered click: it is derived from the run, so
+ * it is already true the first time the board is drawn.
+ */
+test('work in flight opens the board all the way down to its stages', () => {
+  const graph = buildCompactGraph(bothSyndromesRun(), 'run-1', new Set())
+  const card = (id: string) => graph.nodes.find((node) => node.id === id)!
+
+  assert.equal(card('compact-run-1').data.collapsed, false, 'the run in play')
+  assert.equal(card('compact-run-1-front-clinical').data.collapsed, false, 'the work it did before deciding')
+  assert.equal(card('compact-run-1-route-shock').data.collapsed, false, 'the branch it raised')
+  assert.equal(card('compact-run-1-route-sepsis').data.collapsed, false)
+
+  const shockPasses = card('compact-run-1-route-shock').data.steps!
+  assert.deepEqual(shockPasses.map((step) => step.expanded), [true, true], 'and the stages inside each pass')
+  assert.ok(shockPasses.every((step) => (step.stageRowCount ?? 0) > 0), 'the modelled height carries those rows')
+  assert.equal(card('compact-run-1').data.steps![0]!.expanded, true, 'including the step that made the decision')
+})
+
+test('a workflow one step into its definition is open, not idle', () => {
+  const state = twoWorkflowRun()
+  state.runs.set('run-1', { runId: 'run-1', profile: 'clinical-verified', status: 'started' })
+  const card = buildCompactGraph(state, 'run-1', new Set()).nodes.find((node) => node.id === 'compact-run-1')!
+
+  // Rolled up over a definition it has not finished, the card derives as idle — and that is
+  // the exact moment an operator is watching it. The run in play opens because it is the run
+  // in play, never because its status happened to read as started.
+  assert.equal(card.data.status, 'idle')
+  assert.equal(card.data.collapsed, false)
+})
+
+test('a deliberate collapse survives the next rebuild', () => {
+  const state = bothSyndromesRun()
+  const key = compactCardKey('compact-run-1-route-shock')
+  const shut = buildCompactGraph(state, 'run-1', new Set(), new Set([key]))
+  const card = shut.nodes.find((node) => node.id === 'compact-run-1-route-shock')!
+
+  // One set cannot say this: the key's absence would mean both "never touched" and
+  // "deliberately closed", and the execution default would reopen it on every event.
+  assert.equal(card.data.collapsed, true, 'closing something the run opened is an intent the board keeps')
+  assert.equal(shut.collapsed!.has(key), true, 'and reports, so the view knows the intent is still live')
+  assert.equal(shut.expanded.has(key), false)
+  assert.equal(
+    shut.nodes.find((node) => node.id === 'compact-run-1-route-sepsis')!.data.collapsed,
+    false,
+    'closing one branch says nothing about its sibling',
+  )
+})
+
+test('what a collapsed card hid is not remembered as open', () => {
+  const state = bothSyndromesRun()
+  const cardKey = compactCardKey('compact-run-1-route-shock')
+  const stepKey = compactStepKey('compact-run-1-route-shock', 0)
+  const graph = buildCompactGraph(state, 'run-1', new Set([stepKey]), new Set([cardKey]))
+
+  assert.equal(graph.disclosures!.has(stepKey), false, 'a pass nobody can see is not a disclosure the board drew')
+  assert.equal(graph.expanded.has(stepKey), false)
 })

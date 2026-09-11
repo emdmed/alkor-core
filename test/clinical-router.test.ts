@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import {
   routeClinicalShape,
   taskForShape,
+  skipsFrontDoor,
   DEFAULT_CLINICAL_RULES,
 } from '../src/profiles/clinical/clinical-router.ts'
 import {
@@ -356,6 +357,42 @@ test('routeClinicalShape with JSON object that is not exam falls through', () =>
 test('dialogue detection requires two speaker labels for generic pattern', () => {
   const r = routeClinicalShape('Speaker: hello world')
   assert.notEqual(r.shape, 'dialogue')
+})
+
+/**
+ * A dialogue is turn-taking, and these four cases are the edges of that definition.
+ *
+ * `Patient:` at the head of a demographics line used to be sufficient on its own, and two lines
+ * of `Word: ` used to be sufficient behind it — so a section-headed admission note was a
+ * transcript at 0.95, which suppressed the front door and both syndrome arms. Section headings
+ * are each written once; speakers speak twice.
+ */
+test('a section-headed admission note is not a dialogue', () => {
+  const note = [
+    'Patient: 71 y/o F  MRN 4471982',
+    'HPI: Two days of confusion, burning on urination.',
+    'Gen: Ill-appearing, rousable to voice.',
+    'CV: Tachycardic. Cap refill 4 sec.',
+    'Neuro: Nonfocal.',
+    'CXR: No consolidation.',
+  ].join('\n')
+  assert.notEqual(routeClinicalShape(note).shape, 'dialogue')
+  assert.equal(skipsFrontDoor(note), false, 'the front door must still read this note')
+})
+
+test('a SOAP note is not a dialogue, because P: alone is one speaker', () => {
+  const soap = 'S: Chest pain for two days.\nO: BP 120/80, HR 72.\nA: Stable angina.\nP: Start GTN.'
+  assert.notEqual(routeClinicalShape(soap).shape, 'dialogue')
+})
+
+test('a generic two-speaker transcript is a dialogue when a label recurs', () => {
+  const r = routeClinicalShape('Smith: We reviewed her this morning.\nJones: Agreed.\nSmith: Discharge today.')
+  assert.equal(r.shape, 'dialogue')
+})
+
+test('a marker in front of a turn does not hide the speaker behind it', () => {
+  const r = routeClinicalShape('Dictation: Doctor: How are you?\nPatient: Fine.')
+  assert.equal(r.shape, 'dialogue')
 })
 
 test('dictation marker must be at the start of the string', () => {

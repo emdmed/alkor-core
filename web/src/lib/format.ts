@@ -55,7 +55,7 @@ export const eventClass = (kind: string): string => {
   if (kind.startsWith('llm.')) return 'ev-llm'
   if (kind.startsWith('run.')) return 'ev-run'
   if (kind.startsWith('http.')) return 'ev-http'
-  if (kind.startsWith('pipeline.')) return 'ev-pipeline'
+  if (kind.startsWith('workflow.')) return 'ev-workflow'
   if (kind.startsWith('session.') || kind.startsWith('turn.')) return 'ev-session'
   if (kind === 'stage') return 'ev-stage'
   if (kind.startsWith('route.')) return 'ev-route'

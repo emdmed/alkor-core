@@ -18,7 +18,7 @@ import { join } from 'node:path'
 import { route } from '../src/modes/router.ts'
 import { ROUTER_RULES as CLINICAL_RULES } from '../src/profiles/router/profile.ts'
 import { routeClinicalShape, DEFAULT_CLINICAL_RULES } from '../src/profiles/clinical/clinical-router.ts'
-import { runPipeline, buildPipeline } from '../src/modes/pipeline.ts'
+import { runWorkflow, buildWorkflow } from '../src/modes/workflow.ts'
 import type { ProfileModule, ReviewResult, EvalVerdict } from '../src/core/profile.ts'
 import { loadPack } from '../src/core/pack.ts'
 
@@ -165,9 +165,9 @@ const buildTestPipeline = (
   ])
   const baseUrls = new Map<string, undefined>([['router', undefined], ['clinical', undefined], ['verifier', undefined]])
 
-  return runPipeline({
+  return runWorkflow({
     initialInput,
-    steps: buildPipeline([
+    steps: buildWorkflow([
       { name: 'route', profile: 'router' },
       { name: 'extract', profile: 'clinical', input: 'initial' },
       { name: 'verify', profile: 'verifier', input: { document: 'initial', extraction: 'step-1.report' } },
@@ -377,7 +377,7 @@ notes/patient-c.note.txt`
 // Checkpoint persistence: full flow writes and resumes
 // ---------------------------------------------------------------------------
 
-test('full flow: pipeline checkpoints are written after each step and resume correctly', async () => {
+test('full flow: workflow context is written after each step and resumes correctly', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'medextract-full-flow-'))
   try {
     const input = 'Patient BP 120/80, HR 72, T 36.5°C.'
@@ -395,10 +395,10 @@ test('full flow: pipeline checkpoints are written after each step and resume cor
     assert.equal(context.completedStep, 2, 'completedStep should be 2 (last step index)')
     assert.equal(context.initialInput, input)
     assert.equal(context.results.length, 3)
-    assert.equal(context.state['initial'], input)
-    assert.ok(context.state['step-0'].output, 'step-0 output should exist')
-    assert.ok(context.state['step-1'].output, 'step-1 output should exist')
-    assert.ok(context.state['step-2'].output, 'step-2 output should exist')
+    assert.equal(context.values['initial'], input)
+    assert.ok(context.values['step-0'].output, 'step-0 output should exist')
+    assert.ok(context.values['step-1'].output, 'step-1 output should exist')
+    assert.ok(context.values['step-2'].output, 'step-2 output should exist')
 
     // Verify the clinical extraction report was checkpointed correctly.
     const step1 = JSON.parse(readFileSync(join(dir, 'step-1.json'), 'utf8'))

@@ -1,23 +1,41 @@
 /**
- * Pipeline mode: orchestrate multi-model workflows where the output of one specialist
+ * Workflow mode: orchestrate multi-model recipes where the output of one specialist
  * becomes the input of the next.
  *
- * A pipeline is a sequence of steps, each naming a profile and describing what it reads.
- * The pipeline itself is stateless: it holds the step definitions and the intermediate
+ * A workflow is a sequence of steps, each naming a profile and describing what it reads.
+ * The workflow itself is stateless: it holds the step definitions and the intermediate
  * results, and it delegates every actual model call to the profile's own mode (extract,
- * agentic, or nested pipeline).
+ * agentic, or nested workflow). See `spec/nomenclature.md` for how workflow, step, profile,
+ * task and pass nest — and for why the deployment's front door is the PIPELINE, of which a
+ * workflow is one selectable recipe.
  *
- * The harness already supports per-profile servers and per-profile packs; a pipeline
+ * The harness already supports per-profile servers and per-profile packs; a workflow
  * simply composes them. Each step runs against whatever server and model its profile
- * names in `profiles.toml`, so a pipeline with four steps may talk to four different
+ * names in `profiles.toml`, so a workflow with four steps may talk to four different
  * llama-server instances on four different ports, each loaded with a different quantisation.
  *
- * Error handling is deliberately simple: a step that fails stops the pipeline and returns
+ * Error handling is deliberately simple: a step that fails stops the workflow and returns
  * what it has so far. There is no retry, no fallback, and no circuit breaker — those belong
  * to the product layer above, not to the harness that runs the steps.
  *
- * A pipeline step may read:
- * - `initial`: the original user input that started the pipeline.
+ * THE TERMINAL STEP. A workflow may mark its last step `final`, and that step runs on every
+ * exit — after the chain completes, after a step is rejected, and after a step throws. It is
+ * how a workflow ends with a statement rather than with whatever its last successful step
+ * happened to leave behind. A refused run is exactly when a caller most needs a sentence, so
+ * the one step whose job is to produce that sentence is the one step a refusal may not skip.
+ *
+ * A terminal step reads `run` — a value the workflow composes for it holding the initial
+ * input, every step result so far (including the error of the one that refused), and whether
+ * the chain stopped early. It reads results by PROFILE rather than by index, so reordering a
+ * recipe cannot silently point it at the wrong step.
+ *
+ * Running it changes no verdict: `stoppedEarly` is decided before it runs and is not
+ * revisited, so an ending that renders successfully never turns a refused run into a passed
+ * one. If the terminal step itself fails, its failure is recorded beside the others and the
+ * run's original verdict stands.
+ *
+ * A workflow step may read:
+ * - `initial`: the original user input that started the workflow.
  * - `step-N`: the output of step N (0-indexed).
  * - `step-N.raw`: the raw completion of step N, before parsing.
  * - `step-N.text`: the rendered text of step N, when available.
@@ -26,10 +44,10 @@
  *   source: `{ document = "initial", extraction = "step-1.report" }` hands the step a JSON
  *   object built from the two refs. Template refs resolve STRICTLY — a ref whose field the
  *   previous step did not produce resolves to `undefined` (which `JSON.stringify` drops)
- *   rather than substituting the whole step state, so a template cannot quietly smuggle the
+ *   rather than substituting the whole step's values, so a template cannot quietly smuggle the
  *   previous step's spill into a field the consumer treats as a specific thing.
  *
- * A pipeline step may write:
+ * A workflow step may write:
  * - `output`: the step's structured output, if the profile produces one.
  * - `raw`: the raw completion.
  * - `text`: the rendered text.
@@ -49,7 +67,7 @@ import { nullTrace } from '../core/trace.ts'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-export interface PipelineStep {
+export interface WorkflowStep {
   /** Human-readable name for diagnostics. */
   name: string
   /** The profile to run for this step. */
@@ -66,34 +84,39 @@ export interface PipelineStep {
    */
   field?: string
   /**
-   * Override options passed to the step's profile. Merged with the pipeline's
+   * Override options passed to the step's profile. Merged with the workflow's
    * shared options; explicit step options win.
    */
   options?: Record<string, unknown>
+  /**
+   * The terminal step: runs on every exit, including a refusal. At most one per workflow and
+   * it must be last. Defaults its input to `run` (see the header).
+   */
+  final?: boolean
 }
 
-export interface PipelineOptions {
-  /** The user input that started the pipeline. */
+export interface WorkflowOptions {
+  /** The user input that started the workflow. */
   initialInput: string
-  steps: PipelineStep[]
+  steps: WorkflowStep[]
   /** Shared options passed to every step unless overridden. */
   options?: Record<string, unknown>
-  /** A pre-loaded profile map, so the pipeline does not re-import modules. */
+  /** A pre-loaded profile map, so the workflow does not re-import modules. */
   profiles: Map<string, ProfileModule>
   /** A pre-loaded pack map, indexed by profile name. */
   packs: Map<string, Pack | undefined>
   /** Base URLs per profile, from profiles.toml. */
   baseUrls: Map<string, string | undefined>
-  /** Trace for the pipeline as a whole; each step writes its own sub-trace. */
+  /** Trace for the workflow as a whole; each step writes its own sub-trace. */
   trace?: Trace
   /**
-   * Directory to save pipeline state after each step. Enables resuming after a crash
+   * Directory to save the workflow context after each step. Enables resuming after a crash
    * and step-by-step execution where only one model is loaded at a time.
    */
   contextDir?: string
   /**
    * Run only this step (0-indexed). Requires `contextDir` for steps > 0,
-   * because the state from previous steps must be loaded from disk.
+   * because the context from previous steps must be loaded from disk.
    */
   runStep?: number
   /** A custom LLM provider; defaults to the built-in HTTP client. */
@@ -102,32 +125,32 @@ export interface PipelineOptions {
   activity?: Activity
 }
 
-/** Serializable checkpoint written to `contextDir` after each step. */
-interface PipelineCheckpoint {
+/** The values carried between steps, serialized to `contextDir` after each one. */
+export interface WorkflowContext {
   initialInput: string
-  results: PipelineStepResult[]
-  state: Record<string, unknown>
+  results: WorkflowStepResult[]
+  values: Record<string, unknown>
   completedStep: number
 }
 
-const CHECKPOINT_FILE = 'context.json'
+const CONTEXT_FILE = 'context.json'
 
-const saveCheckpoint = (dir: string, checkpoint: PipelineCheckpoint) => {
+const saveContext = (dir: string, context: WorkflowContext) => {
   mkdirSync(dir, { recursive: true })
-  const path = join(dir, CHECKPOINT_FILE)
-  writeFileSync(path, JSON.stringify(checkpoint, null, 2), 'utf8')
+  const path = join(dir, CONTEXT_FILE)
+  writeFileSync(path, JSON.stringify(context, null, 2), 'utf8')
   // Also write per-step files so the next step (or a human operator) can read
-  // the context message without parsing the full checkpoint.
-  for (const result of checkpoint.results) {
+  // the context message without parsing the whole of it.
+  for (const result of context.results) {
     writeFileSync(join(dir, `step-${result.step}.json`), JSON.stringify(result, null, 2), 'utf8')
   }
 }
 
-const loadCheckpoint = (dir: string): PipelineCheckpoint | undefined => {
-  const path = join(dir, CHECKPOINT_FILE)
+const loadContext = (dir: string): WorkflowContext | undefined => {
+  const path = join(dir, CONTEXT_FILE)
   if (!existsSync(path)) return undefined
   try {
-    return JSON.parse(readFileSync(path, 'utf8')) as PipelineCheckpoint
+    return JSON.parse(readFileSync(path, 'utf8')) as WorkflowContext
   } catch {
     return undefined
   }
@@ -135,16 +158,16 @@ const loadCheckpoint = (dir: string): PipelineCheckpoint | undefined => {
 
 // The highest step result by step number, not by array index. After a re-run the
 // array may not be in step order, so the last element is not necessarily the final step.
-const highestStepResult = (results: PipelineStepResult[]): PipelineStepResult | undefined =>
+const highestStepResult = (results: WorkflowStepResult[]): WorkflowStepResult | undefined =>
   results.length === 0 ? undefined : results.reduce((a, b) => (b.step > a.step ? b : a))
 
 /** The newest value a step actually produced, including a rejected verifier report. */
-const finalOutput = (results: PipelineStepResult[]): unknown => {
+const finalOutput = (results: WorkflowStepResult[]): unknown => {
   const produced = results.filter((result) => result.output !== undefined)
   return highestStepResult(produced)?.output
 }
 
-export interface PipelineStepResult {
+export interface WorkflowStepResult {
   step: number
   name: string
   profile: string
@@ -164,34 +187,34 @@ export interface PipelineStepResult {
   wallMs?: number
 }
 
-export interface PipelineResult {
+export interface WorkflowResult {
   /** All steps that ran, in order. */
-  steps: PipelineStepResult[]
+  steps: WorkflowStepResult[]
   /**
-   * The last output the pipeline produced, whatever its shape.
+   * The last output the workflow produced, whatever its shape.
    *
    * Present on an early stop when the rejected step returned a usable report, or when an
    * earlier step produced output before a later step threw. The HTTP caller asked for a run,
-   * so losing its produced value merely because the pipeline also reports failure makes the
+   * so losing its produced value merely because the workflow also reports failure makes the
    * response impossible to inspect.
    */
   final?: unknown
-  /** The pipeline stopped early because a step failed. */
+  /** The workflow stopped early because a step failed. */
   stoppedEarly: boolean
-  /** Total wall time for the pipeline. */
+  /** Total wall time for the workflow. */
   totalMs: number
 }
 
-/** Run a pipeline from step 0 to completion or first failure. */
-export const runPipeline = async (o: PipelineOptions): Promise<PipelineResult> => {
+/** Run a workflow from step 0 to completion or first failure. */
+export const runWorkflow = async (o: WorkflowOptions): Promise<WorkflowResult> => {
   const startedAt = performance.now()
-  o.activity?.emit({ kind: 'pipeline.started' })
+  o.activity?.emit({ kind: 'workflow.started' })
   // The root node of the decision tree. Steps nest under it (see stepStageId below).
   const rootStageId = o.activity ? nextStageId() : undefined
   o.activity?.emit({
     kind: 'stage',
     stageId: rootStageId,
-    name: 'pipeline',
+    name: 'workflow',
     status: 'started',
     detail: { steps: o.steps.length },
   })
@@ -199,41 +222,49 @@ export const runPipeline = async (o: PipelineOptions): Promise<PipelineResult> =
     o.activity?.emit({
       kind: 'stage',
       stageId: rootStageId,
-      name: 'pipeline',
+      name: 'workflow',
       status: 'completed',
       wallMs: totalMs,
       detail: { stoppedEarly },
     })
-  let results: PipelineStepResult[] = []
-  const state = new Map<string, unknown>()
+  let results: WorkflowStepResult[] = []
+  const context = new Map<string, unknown>()
   let startStep = 0
   let initialInput = o.initialInput
 
-  // Load a saved checkpoint if contextDir is provided.
+  // The terminal step is not part of the chain: the loop below never reaches it, and
+  // `conclude` gives it its turn on whichever exit the chain takes.
+  const terminalIndex = terminalStepIndex(o.steps)
+  const chainEnd = terminalIndex === -1 ? o.steps.length : terminalIndex
+
+  // Load a saved context if contextDir is provided.
   if (o.contextDir) {
-    const saved = loadCheckpoint(o.contextDir)
+    const saved = loadContext(o.contextDir)
     if (saved) {
-      // Step 0 is always a fresh start: overwrite any previous checkpoint.
+      // Step 0 is always a fresh start: overwrite any previous context.
       if (o.runStep !== 0) {
         results = saved.results
-        for (const [key, value] of Object.entries(saved.state)) {
-          state.set(key, value)
+        for (const [key, value] of Object.entries(saved.values)) {
+          context.set(key, value)
         }
         initialInput = saved.initialInput
-        // When re-running a specific step, truncate downstream results and state so the
-        // re-run starts from a clean checkpoint. Without this, stale results from later
+        // When re-running a specific step, truncate downstream results and context so the
+        // re-run starts clean. Without this, stale results from later
         // steps survive and corrupt the final output.
         if (o.runStep !== undefined && o.runStep > 0) {
           results = saved.results.filter((r) => r.step < o.runStep!)
-          for (const key of Array.from(state.keys())) {
+          for (const key of Array.from(context.keys())) {
             if (key.startsWith('step-')) {
               const stepNum = parseInt(key.slice('step-'.length), 10)
-              if (stepNum >= o.runStep!) state.delete(key)
+              if (stepNum >= o.runStep!) context.delete(key)
             }
           }
         }
         if (o.runStep === undefined) {
-          const lastResult = highestStepResult(saved.results)
+          // Chain steps only. The terminal step runs after every exit, so it is the highest
+          // result in a saved context whether or not the chain got anywhere — reading it here
+          // would report a refused run as finished.
+          const lastResult = highestStepResult(saved.results.filter((r) => r.step < chainEnd))
           if (lastResult && !lastResult.ok) {
             // The last step failed; resume from it so it can be re-run after a fix.
             startStep = lastResult.step
@@ -244,45 +275,169 @@ export const runPipeline = async (o: PipelineOptions): Promise<PipelineResult> =
       }
     } else if (o.runStep !== undefined && o.runStep > 0) {
       throw new Error(
-        `no checkpoint in '${o.contextDir}' — step ${o.runStep} needs state from previous steps`,
+        `no context in '${o.contextDir}' — step ${o.runStep} needs values from previous steps`,
       )
     }
   }
 
   // If nothing was loaded, initialise from the beginning.
-  if (state.size === 0) {
-    state.set('initial', initialInput)
+  if (context.size === 0) {
+    context.set('initial', initialInput)
+  }
+
+  const persist = (completedStep: number) => {
+    if (!o.contextDir) return
+    saveContext(o.contextDir, {
+      initialInput,
+      results,
+      values: Object.fromEntries(context),
+      completedStep,
+    })
+  }
+
+  /**
+   * Run the terminal step, whatever brought the chain here.
+   *
+   * It reads `run`: the initial input, the results so far, and the verdict already reached.
+   * The results are COPIED into that value so the step cannot see its own entry, and the
+   * verdict is passed in rather than recomputed so nothing the ending does can revise it.
+   */
+  const runTerminal = async (stepDef: WorkflowStep, index: number, stoppedEarly: boolean): Promise<void> => {
+    const stepStart = performance.now()
+    // Its own entry is filtered out, not merely absent: on a resume the saved context still
+    // holds the ending written for the previous attempt, and a step handed its own last answer
+    // as evidence is a step that can agree with itself.
+    context.set('run', { output: { initialInput, steps: results.filter((r) => r.step !== index), stoppedEarly } })
+    const inputRef = stepDef.input ?? 'run'
+    const input = resolveInput(context, inputRef, stepDef.field)
+
+    o.activity?.emit({
+      kind: 'workflow.step.started',
+      step: index,
+      name: stepDef.name,
+      profile: stepDef.profile,
+      input: { ref: describeInputRef(inputRef), field: stepDef.field, fromProfile: o.steps[index - 1]?.profile },
+    })
+    const stepStageId = o.activity ? nextStageId() : undefined
+    o.activity?.emit({
+      kind: 'stage',
+      stageId: stepStageId,
+      parentId: rootStageId,
+      name: stepDef.name,
+      status: 'started',
+      detail: { step: index, profile: stepDef.profile, final: true, input: { ref: describeInputRef(inputRef), field: stepDef.field } },
+    })
+
+    const record = (stepResult: WorkflowStepResult) => {
+      const existingIdx = results.findIndex((r) => r.step === index)
+      if (existingIdx !== -1) results.splice(existingIdx, 1)
+      results.push(stepResult)
+      o.activity?.emit({ kind: 'workflow.step.completed', step: index, name: stepDef.name, profile: stepDef.profile, ok: stepResult.ok, wallMs: stepResult.wallMs ?? 0 })
+      o.activity?.emit({ kind: 'stage', stageId: stepStageId, parentId: rootStageId, name: stepDef.name, status: 'completed', wallMs: stepResult.wallMs, detail: { step: index, ok: stepResult.ok, final: true } })
+      // Checkpoint the ending, but leave `completedStep` where the CHAIN left it: a resume
+      // must still restart at the step that refused, and an ending written after it is not
+      // evidence that it succeeded.
+      persist(highestStepResult(results.filter((r) => r.step < chainEnd))?.step ?? -1)
+    }
+
+    const profile = o.profiles.get(stepDef.profile)
+    if (!profile) {
+      record({
+        step: index,
+        name: stepDef.name,
+        profile: stepDef.profile,
+        ok: false,
+        error: `profile '${stepDef.profile}' not found in workflow profile map`,
+        wallMs: performance.now() - stepStart,
+      })
+      return
+    }
+
+    try {
+      const result = await withActivityScope({ ...currentActivityScope(), parentId: stepStageId }, () =>
+        runStep({
+          profile,
+          pack: o.packs.get(stepDef.profile),
+          baseUrl: o.baseUrls.get(stepDef.profile),
+          input,
+          options: { ...o.options, ...stepDef.options },
+          trace: o.trace,
+          provider: o.provider,
+          activity: o.activity,
+        }),
+      )
+      context.set(`step-${index}`, { output: result.output, raw: result.raw, text: result.text, report: result.report, document: result.document })
+      record({
+        step: index,
+        name: stepDef.name,
+        profile: stepDef.profile,
+        ok: result.ok,
+        error: result.ok ? undefined : result.text,
+        output: result.output,
+        raw: result.raw,
+        text: result.text,
+        report: result.report,
+        wallMs: performance.now() - stepStart,
+      })
+    } catch (e) {
+      record({
+        step: index,
+        name: stepDef.name,
+        profile: stepDef.profile,
+        ok: false,
+        error: (e as Error).message,
+        wallMs: performance.now() - stepStart,
+      })
+    }
+  }
+
+  /**
+   * Every exit from the chain goes through here, which is what makes the terminal step
+   * unskippable. `--step N` is excluded: a single-step re-run is an inspection of one step,
+   * not a run, and appending an ending to it would write a conclusion nobody asked for.
+   */
+  const conclude = async (stoppedEarly: boolean, announce = true): Promise<WorkflowResult> => {
+    if (terminalIndex !== -1 && o.runStep === undefined) {
+      await runTerminal(o.steps[terminalIndex]!, terminalIndex, stoppedEarly)
+    }
+    const totalMs = performance.now() - startedAt
+    rootDone(stoppedEarly, totalMs)
+    if (announce && !stoppedEarly) o.activity?.emit({ kind: 'workflow.completed', stoppedEarly: false, totalMs })
+    return { steps: results, final: finalOutput(results), stoppedEarly, totalMs }
   }
 
   const actualStart = o.runStep !== undefined ? o.runStep : startStep
-  const endStep = o.runStep !== undefined ? o.runStep + 1 : o.steps.length
+  const endStep = o.runStep !== undefined ? o.runStep + 1 : chainEnd
 
-  if (actualStart >= o.steps.length) {
+  // `--step N` may name the terminal step directly: recomposing the ending from a saved
+  // context is the one thing worth doing without re-running any model.
+  if (o.runStep !== undefined && o.runStep === terminalIndex) {
+    const stoppedEarly = results.some((r) => !r.ok)
+    await runTerminal(o.steps[terminalIndex]!, terminalIndex, stoppedEarly)
     const totalMs = performance.now() - startedAt
-    rootDone(false, totalMs)
-    return {
-      steps: results,
-      stoppedEarly: false,
-      final: finalOutput(results),
-      totalMs,
-    }
+    rootDone(stoppedEarly, totalMs)
+    return { steps: results, final: finalOutput(results), stoppedEarly, totalMs }
+  }
+
+  if (actualStart >= chainEnd) {
+    return conclude(false, false)
   }
 
   for (let i = actualStart; i < endStep; i++) {
     const stepDef = o.steps[i]!
     const stepStart = performance.now()
     const inputRef = stepDef.input ?? (i === 0 ? 'initial' : `step-${i - 1}.output`)
-    const input = resolveInput(state, inputRef, stepDef.field)
+    const input = resolveInput(context, inputRef, stepDef.field)
 
     const fromProfile = i > 0 ? o.steps[i - 1]!.profile : undefined
     o.activity?.emit({
-      kind: 'pipeline.step.started',
+      kind: 'workflow.step.started',
       step: i,
       name: stepDef.name,
       profile: stepDef.profile,
       input: { ref: describeInputRef(inputRef), field: stepDef.field, fromProfile },
     })
-    // The step as a node in the decision tree, attached under the pipeline root. Everything
+    // The step as a node in the decision tree, attached under the workflow root. Everything
     // the step's own mode and provider emits while running nests underneath it via the
     // parentId scope in `withActivityScope` below.
     const stepStageId = o.activity ? nextStageId() : undefined
@@ -303,14 +458,13 @@ export const runPipeline = async (o: PipelineOptions): Promise<PipelineResult> =
         name: stepDef.name,
         profile: stepDef.profile,
         ok: false,
-        error: `profile '${stepDef.profile}' not found in pipeline profile map`,
+        error: `profile '${stepDef.profile}' not found in workflow profile map`,
         wallMs,
       }
       results.push(fail)
-      o.activity?.emit({ kind: 'pipeline.step.completed', step: i, name: stepDef.name, profile: stepDef.profile, ok: false, wallMs })
+      o.activity?.emit({ kind: 'workflow.step.completed', step: i, name: stepDef.name, profile: stepDef.profile, ok: false, wallMs })
       o.activity?.emit({ kind: 'stage', stageId: stepStageId, parentId: rootStageId, name: stepDef.name, status: 'completed', wallMs, detail: { step: i, ok: false } })
-      rootDone(true, performance.now() - startedAt)
-      return { steps: results, final: finalOutput(results), stoppedEarly: true, totalMs: performance.now() - startedAt }
+      return conclude(true)
     }
 
     const pack = o.packs.get(stepDef.profile)
@@ -335,7 +489,7 @@ export const runPipeline = async (o: PipelineOptions): Promise<PipelineResult> =
       )
 
       const wallMs = performance.now() - stepStart
-      const stepResult: PipelineStepResult = {
+      const stepResult: WorkflowStepResult = {
         step: i,
         name: stepDef.name,
         profile: stepDef.profile,
@@ -357,7 +511,7 @@ export const runPipeline = async (o: PipelineOptions): Promise<PipelineResult> =
         results.splice(existingIdx, 1)
       }
       results.push(stepResult)
-      state.set(`step-${i}`, {
+      context.set(`step-${i}`, {
         output: result.output,
         raw: result.raw,
         text: result.text,
@@ -365,25 +519,15 @@ export const runPipeline = async (o: PipelineOptions): Promise<PipelineResult> =
         document: result.document,
       })
 
-      o.activity?.emit({ kind: 'pipeline.step.completed', step: i, name: stepDef.name, profile: stepDef.profile, ok: result.ok, wallMs })
+      o.activity?.emit({ kind: 'workflow.step.completed', step: i, name: stepDef.name, profile: stepDef.profile, ok: result.ok, wallMs })
       o.activity?.emit({ kind: 'stage', stageId: stepStageId, parentId: rootStageId, name: stepDef.name, status: 'completed', wallMs, detail: { step: i, ok: result.ok } })
 
-      if (o.contextDir) {
-        saveCheckpoint(o.contextDir, {
-          initialInput,
-          results,
-          state: Object.fromEntries(state),
-          completedStep: i,
-        })
-      }
+      persist(i)
 
-      if (!result.ok) {
-        rootDone(true, performance.now() - startedAt)
-        return { steps: results, final: finalOutput(results), stoppedEarly: true, totalMs: performance.now() - startedAt }
-      }
+      if (!result.ok) return conclude(true)
     } catch (e) {
       const wallMs = performance.now() - stepStart
-      const stepResult: PipelineStepResult = {
+      const stepResult: WorkflowStepResult = {
         step: i,
         name: stepDef.name,
         profile: stepDef.profile,
@@ -396,38 +540,40 @@ export const runPipeline = async (o: PipelineOptions): Promise<PipelineResult> =
         results.splice(existingIdx, 1)
       }
       results.push(stepResult)
-      o.activity?.emit({ kind: 'pipeline.step.completed', step: i, name: stepDef.name, profile: stepDef.profile, ok: false, wallMs })
+      o.activity?.emit({ kind: 'workflow.step.completed', step: i, name: stepDef.name, profile: stepDef.profile, ok: false, wallMs })
       o.activity?.emit({ kind: 'stage', stageId: stepStageId, parentId: rootStageId, name: stepDef.name, status: 'completed', wallMs, detail: { step: i, ok: false } })
-      if (o.contextDir) {
-        saveCheckpoint(o.contextDir, {
-          initialInput,
-          results,
-          state: Object.fromEntries(state),
-          completedStep: i,
-        })
-      }
-      rootDone(true, performance.now() - startedAt)
-      return { steps: results, final: finalOutput(results), stoppedEarly: true, totalMs: performance.now() - startedAt }
+      persist(i)
+      return conclude(true)
     }
   }
 
-  const totalMs = performance.now() - startedAt
-  rootDone(false, totalMs)
-  o.activity?.emit({ kind: 'pipeline.completed', stoppedEarly: false, totalMs })
-  return {
-    steps: results,
-    stoppedEarly: false,
-    final: finalOutput(results),
-    totalMs,
-  }
+  return conclude(false)
 }
 
-/** Resolve a state reference like `step-0.output` or `initial`. */
-const resolveRef = (state: Map<string, unknown>, ref: string, field?: string): unknown => {
+/**
+ * Where the terminal step sits, or -1. At most one, and it must be last: a step that runs
+ * after a refusal cannot have steps depending on it, so anything declared behind it would be
+ * a step the workflow promises to run and then does not.
+ */
+const terminalStepIndex = (steps: WorkflowStep[]): number => {
+  const marked = steps.map((step, i) => (step.final ? i : -1)).filter((i) => i !== -1)
+  if (marked.length === 0) return -1
+  if (marked.length > 1) {
+    throw new Error(`a workflow may mark one step 'final'; steps ${marked.join(', ')} are all marked`)
+  }
+  const index = marked[0]!
+  if (index !== steps.length - 1) {
+    throw new Error(`the 'final' step must be last; step ${index} is marked but ${steps.length - 1} is last`)
+  }
+  return index
+}
+
+/** Resolve a context reference like `step-0.output` or `initial`. */
+const resolveRef = (context: Map<string, unknown>, ref: string, field?: string): unknown => {
   const parts = ref.split('.')
   const key = parts[0]!
   const explicitField = parts[1] ?? field ?? 'output'
-  const value = state.get(key)
+  const value = context.get(key)
   if (value === undefined) return undefined
   if (typeof value === 'object' && value !== null) {
     return (value as Record<string, unknown>)[explicitField] ?? value
@@ -445,11 +591,11 @@ const resolveRef = (state: Map<string, unknown>, ref: string, field?: string): u
  * certificate of a verifier built as `{extraction = "step-1.report"}` silently receives the
  * step's whole output under the `extraction` name.
  */
-const resolveTemplateRef = (state: Map<string, unknown>, ref: string): unknown => {
+const resolveTemplateRef = (context: Map<string, unknown>, ref: string): unknown => {
   const parts = ref.split('.')
   const key = parts[0]!
   const explicitField = parts[1] ?? 'output'
-  const value = state.get(key)
+  const value = context.get(key)
   if (value === undefined) return undefined
   if (typeof value === 'object' && value !== null) {
     return (value as Record<string, unknown>)[explicitField]
@@ -458,19 +604,19 @@ const resolveTemplateRef = (state: Map<string, unknown>, ref: string): unknown =
 }
 
 /** Compose a step input from a map of names to refs. */
-const resolveTemplate = (state: Map<string, unknown>, template: Record<string, string>): Record<string, unknown> => {
+const resolveTemplate = (context: Map<string, unknown>, template: Record<string, string>): Record<string, unknown> => {
   const out: Record<string, unknown> = {}
   for (const [name, ref] of Object.entries(template)) {
-    out[name] = resolveTemplateRef(state, ref)
+    out[name] = resolveTemplateRef(context, ref)
   }
   return out
 }
 
 const resolveInput = (
-  state: Map<string, unknown>,
+  context: Map<string, unknown>,
   ref: string | Record<string, string>,
   field?: string,
-): unknown => (typeof ref === 'string' ? resolveRef(state, ref, field) : resolveTemplate(state, ref))
+): unknown => (typeof ref === 'string' ? resolveRef(context, ref, field) : resolveTemplate(context, ref))
 
 /**
  * A metadata-only description of a step's input reference, for activity events.
@@ -515,7 +661,7 @@ const runStep = async (o: {
       pack,
       baseUrl,
       trace: o.trace ?? nullTrace(),
-      input: { kind: 'text', text: textInput, label: 'pipeline-step' },
+      input: { kind: 'text', text: textInput, label: 'workflow-step' },
       options,
       provider,
       activity: o.activity,
@@ -540,7 +686,7 @@ const runStep = async (o: {
       task,
       workspace,
       tools: profile.tools,
-      maxSteps: profile.maxSteps ?? 12,
+      maxIterations: profile.maxIterations ?? 12,
       baseUrl,
       trace: o.trace,
       provider,
@@ -552,14 +698,15 @@ const runStep = async (o: {
     }
   }
 
-  // Router mode: delegate to the profile's review, which uses its own compiled rules.
-  if (profile.mode === 'router' && profile.review) {
+  // Router and code modes: delegate to the profile's review, which reaches no model. The two
+  // are separate declarations (one chooses, one computes) and one call site.
+  if ((profile.mode === 'router' || profile.mode === 'code') && profile.review) {
     const textInput = typeof input === 'string' ? input : JSON.stringify(input)
     const reviewCtx: ReviewContext = {
       pack,
       baseUrl,
       trace: o.trace ?? nullTrace(),
-      input: { kind: 'text', text: textInput, label: 'pipeline-step' },
+      input: { kind: 'text', text: textInput, label: 'workflow-step' },
       options,
       provider,
       activity: o.activity,
@@ -574,24 +721,37 @@ const runStep = async (o: {
     }
   }
 
-  // Pipeline mode: nested pipeline.
-  if (profile.mode === 'pipeline') {
-    // Nested pipelines are not supported in the first cut; they require resolving
+  // Workflow mode: nested workflow.
+  if (profile.mode === 'workflow') {
+    // Nested workflows are not supported in the first cut; they require resolving
     // a new set of profiles and packs, which risks infinite recursion.
-    throw new Error('nested pipeline mode is not supported in this step')
+    throw new Error('nested workflow mode is not supported in this step')
   }
 
-  // Eval mode is not a step; it is a measurement, not a production path.
-  throw new Error(`profile mode '${profile.mode}' cannot be used as a pipeline step`)
+  throw new Error(`profile mode '${profile.mode}' cannot be used as a workflow step`)
 }
 
-/** Build a pipeline definition from a simple declarative format. */
-export const buildPipeline = (
+/** Build a workflow definition from a simple declarative format. */
+export const buildWorkflow = (
   steps: Array<{
     name: string
     profile: string
     input?: string | Record<string, string>
     field?: string
     options?: Record<string, unknown>
+    final?: boolean
   }>,
-): PipelineStep[] => steps.map((s) => ({ name: s.name, profile: s.profile, input: s.input, field: s.field, options: s.options }))
+): WorkflowStep[] => {
+  const built = steps.map((s) => ({
+    name: s.name,
+    profile: s.profile,
+    input: s.input,
+    field: s.field,
+    options: s.options,
+    final: s.final,
+  }))
+  // Refuse a malformed terminal declaration here, where the config is being read, rather than
+  // at the exit of a run that has already spent several minutes on a model.
+  terminalStepIndex(built)
+  return built
+}

@@ -46,10 +46,32 @@ const reducer = (state: ProjectState, action: Action): ProjectState => {
   }
 }
 
+/**
+ * A refused run, carrying what the server said about it.
+ *
+ * `runId` is the point: a failed POST still names the run it failed, so the dashboard can
+ * assemble that run's log out of the feed instead of showing a status code alone. Absent
+ * when the failure happened before the server minted one (or never reached it).
+ */
+export class RunFailure extends Error {
+  // Declared as fields rather than constructor parameters: this repository runs TypeScript
+  // by stripping types, so syntax that emits code (a parameter property) is not available.
+  status?: number
+  runId?: string
+  constructor(message: string, status?: number, runId?: string) {
+    super(message)
+    this.name = 'RunFailure'
+    this.status = status
+    this.runId = runId
+  }
+}
+
 export interface UseMedextract {
   state: ProjectState
   /** What the URL input currently displays (the draft). */
   serverUrl: string
+  /** The URL runs actually go to — the committed one, which the draft may not be yet. */
+  activeUrl: string
   setServerUrl: (url: string) => void
   /** Validate, normalize, and activate the candidate URL atomically. */
   connect: () => void
@@ -136,7 +158,7 @@ export const useMedextract = (initialUrl: string): UseMedextract => {
       .then((data: { topology?: TopologySnapshot; models?: ModelHealth[] }) => {
         if (!isCurrentGeneration(generation, sourceRef.current)) return
         if (Array.isArray(data.models)) setModels(data.models)
-        if (data.topology?.profiles && data.topology?.pipelines) {
+        if (data.topology?.profiles && data.topology?.workflows) {
           dispatch({ type: 'topology', topology: data.topology })
         }
       })
@@ -166,21 +188,34 @@ export const useMedextract = (initialUrl: string): UseMedextract => {
    * executes that recipe under one run id. `workflow` is an explicit diagnostic override.
    */
   const run = useCallback(async (input: string, workflow?: string): Promise<unknown> => {
-    const res = await fetch(`${normalizeUrl(sourceRef.current.activeUrl)}/pipeline`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ input, ...(workflow ? { workflow } : {}) }),
-    })
+    const base = normalizeUrl(sourceRef.current.activeUrl)
+    let res: Response
+    try {
+      res = await fetch(`${base}/pipeline`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ input, ...(workflow ? { workflow } : {}) }),
+      })
+    } catch (e) {
+      // The request never reached a server: no status, no run id, and no events will ever
+      // arrive for it. Said plainly, because the browser's own message ("Failed to fetch")
+      // does not mention the address it failed to reach.
+      throw new RunFailure(`could not reach ${base} — ${(e as Error).message}`)
+    }
     if (!res.ok) {
       const raw = await res.text().catch(() => '')
       let message = raw || 'run failed'
+      let runId: string | undefined
       try {
-        const body = JSON.parse(raw) as { error?: string }
+        const body = JSON.parse(raw) as { error?: string; runId?: string }
         if (typeof body.error === 'string') message = body.error
+        if (typeof body.runId === 'string') runId = body.runId
       } catch {
         // Not JSON; keep the raw text.
       }
-      throw new Error(`HTTP ${res.status}: ${message.slice(0, 300)}`)
+      // The message is NOT truncated: a failure from deep in a workflow carries the only
+      // description of what went wrong, and a 300-character cut lands in the middle of it.
+      throw new RunFailure(`HTTP ${res.status}: ${message}`, res.status, runId)
     }
     return res.json()
   }, [])
@@ -188,6 +223,7 @@ export const useMedextract = (initialUrl: string): UseMedextract => {
   return {
     state,
     serverUrl: source.draftUrl,
+    activeUrl: normalizeUrl(source.activeUrl),
     setServerUrl: (url: string) => dispatchSource({ type: 'draft', url }),
     connect,
     paused,
