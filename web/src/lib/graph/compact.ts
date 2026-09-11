@@ -7,7 +7,8 @@
 import { stageTreeForRun } from '../../../../src/tui/state.ts'
 import type { PipelineDefinition, PipelineStepEntry, ProjectState, RunEntry, StageEntry } from '../../../../src/tui/state.ts'
 import { CHIP_GAP, CHIP_W, COMPACT_W, MAIN_X, MAIN_Y, ROUTE_GAP, ROW_GAP, compactStepKey, detailTextOf, flowEdge, layoutHeightOf, llmOf, node, obj, operationFor, shortDigest, stageState, stepIndexOf } from './core.ts'
-import { declaredRouteGroups, inputReference, matchTopology, routeForRun, type RouteGroup } from './run.ts'
+import { declaredPreDecisionStages, declaredRouteGroups, inputReference, matchTopology, routeForRun, type RouteGroup } from './run.ts'
+import type { ProfileTopologyStage } from '../../../../src/core/topology.ts'
 import type { CompactStageData, CompactStepData, ExpandedGraphBuild, GraphEdge, GraphNode } from './types.ts'
 
 /* ------------------------------------------------------------------ compact step data */
@@ -160,12 +161,19 @@ const stagesByTask = (
   let nameIndex = 0
   let current = plan[0]?.task
   let skipping = false
+  // Nothing belongs to a branch until the branches exist. A profile may work BEFORE it decides —
+  // the clinical one reads the note's vital signs and runs the CLI over them, because the
+  // decision depends on those numbers — and an unrecognised stage is otherwise filed under
+  // whichever task is open, which before the decision is the first task in the plan. That drew
+  // the front door's two passes inside `shock`, as work the shock arm did.
+  let decided = false
   for (const stage of stages) {
     // The decision itself belongs to no branch: it is what chose between them, and the
     // step that made it already shows it. Copying it into a branch — with whatever it
     // nests — would read as work that branch did.
     if (stage.depth === 0) skipping = stage.name === ROUTE_STAGE
-    if (skipping) continue
+    if (stage.depth === 0 && stage.name === ROUTE_STAGE) decided = true
+    if (skipping || !decided) continue
     // Only a top-level stage can open a task; a nested one belongs to its parent's task.
     if (stage.depth === 0) {
       let candidateIndex = planIndex
@@ -204,6 +212,76 @@ const rowStatus = (stages: CompactStageData[], ran: boolean): CompactStepData['s
   if (stages.some((stage) => stage.status === 'failed')) return 'failed'
   if (stages.some((stage) => stage.status === 'active')) return 'active'
   return 'done'
+}
+
+/**
+ * The card for what a profile does BEFORE it decides, or nothing when it decides first.
+ *
+ * It sits at the head of the route row and reads left to right the way the run happens: the
+ * front door, then the fan it fed. Drawing it as a peer of the routes would be wrong in the
+ * other direction — it is not an alternative to `shock`, it is what told the profile to
+ * consider `shock` — so it carries its own note saying when it runs, and the routes keep the
+ * vocabulary of a choice.
+ *
+ * Its rows are matched to the observed stages BY NAME rather than by position: these stages run
+ * before the plan exists, so `stagesByTask` has no task to file them under and deliberately
+ * leaves them out.
+ */
+const buildPreDecisionNode = (
+  ownerId: string,
+  step: CompactStepData,
+  declared: ProfileTopologyStage[],
+  expanded: Set<string>,
+): GraphNode | undefined => {
+  if (declared.length === 0) return undefined
+  const nodeId = `${ownerId}-front-${step.profile}`
+  const observed = new Map(step.stages.filter((stage) => stage.depth === 0).map((stage) => [stage.name, stage]))
+
+  const steps: CompactStepData[] = declared.map((stage, index) => {
+    const seen = observed.get(stage.name)
+    const rows: CompactStageData[] = seen
+      ? [seen]
+      : [{
+          stageId: `${nodeId}/${stage.name}`,
+          name: stage.name,
+          status: 'idle' as const,
+          depth: 0,
+          operation: operationFor(stage.name, false, stage.operation),
+          detailText: stage.optional ? 'optional' : undefined,
+        }]
+    const expandKey = compactStepKey(nodeId, index)
+    const isExpanded = expanded.has(expandKey)
+    return {
+      name: stage.name,
+      profile: step.profile,
+      status: rowStatus(rows, Boolean(seen)),
+      stepNo: index,
+      stages: rows,
+      expandKey,
+      expanded: isExpanded,
+      stageRowCount: isExpanded && rows.length > 0 ? rows.length : 0,
+    }
+  })
+
+  const ran = steps.some((row) => row.status !== 'idle')
+  const status: CompactStepData['status'] = !ran ? 'idle'
+    : steps.some((row) => row.status === 'failed') ? 'failed'
+    : steps.some((row) => row.status === 'active') ? 'active'
+    : 'done'
+
+  const card = node(nodeId, 'compact-pipeline', 'before routing', status, {
+    profile: step.profile,
+    steps,
+    operation: 'orchestrator',
+    terminals: false,
+    routeOf: step.profile,
+    // Every stage here is optional in the topology's sense — a note with no vital sign in it
+    // never lights one — so an idle card is a statement about the note, not a pass that failed
+    // to happen.
+    detailText: ran ? 'runs before the decision' : 'only when the note carries it',
+  })
+  if (!ran) card.data.muted = true
+  return card
 }
 
 /**
@@ -397,7 +475,10 @@ const attachRouteBranches = (
   for (const step of (workflow.data.steps as CompactStepData[] | undefined) ?? []) {
     const groups = declaredRouteGroups(state, step.profile)
     if (groups.length === 0) continue
-    const cards = buildRouteGroupNodes(workflow.id, step, groups, expanded)
+    // The front door leads the row: it runs before the decision, and a reader scanning left to
+    // right should meet it in that order.
+    const front = buildPreDecisionNode(workflow.id, step, declaredPreDecisionStages(state, step.profile), expanded)
+    const cards = [...(front ? [front] : []), ...buildRouteGroupNodes(workflow.id, step, groups, expanded)]
     bottom = placeRouteRow(cards, bottom)
     for (const card of cards) {
       nodes.push(card)

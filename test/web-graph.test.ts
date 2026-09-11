@@ -1407,6 +1407,17 @@ test('compact graph returns the same expanded set the steps paint', () => {
  */
 const routingProfileTopology = () => ({
   stages: [{
+    // What the profile does BEFORE it decides: read the note's vital signs, put the numbers
+    // through the CLI. Route-less top-level stages, which is exactly the shape the compact
+    // graph used to drop on the floor.
+    name: 'vitals-first',
+    operation: 'model' as const,
+    optional: true,
+  }, {
+    name: 'calculations',
+    operation: 'code' as const,
+    optional: true,
+  }, {
     name: 'route',
     kind: 'decision' as const,
     operation: 'decision' as const,
@@ -1457,6 +1468,9 @@ const bothSyndromesRun = () => {
     state.stages.set(stageId, { stageId, runId: 'run-1', parentId, name, status, children: [] })
     return stageId
   }
+  // The front door runs before the decision, so its stages arrive before it in the stream.
+  stage('vitals-first')
+  stage('calculations')
   state.stages.set('decision', {
     stageId: 'decision', runId: 'run-1', parentId: 'clinical', name: 'route', status: 'completed',
     detail: { shape: 'note', confidence: 0.92, task: 'shock-extraction', tasks: ['shock-extraction', 'shock', 'sepsis-extraction', 'sepsis'] },
@@ -1499,7 +1513,8 @@ const assertNoCardsOverlap = (nodes: ReturnType<typeof buildCompactGraph>['nodes
  * to sprout from the bottom of `shock`.
  */
 const assertOneRow = (nodes: ReturnType<typeof buildCompactGraph>['nodes']) => {
-  const branches = nodes.filter((node) => node.id.includes('-route-'))
+  // The front-door card shares the row: it runs before the decision, not on a level of its own.
+  const branches = nodes.filter((node) => node.id.includes('-route-') || node.id.includes('-front-'))
   const tops = new Set(branches.map((node) => node.position.y))
   assert.equal(tops.size, 1, `every branch shares one top edge, got ${[...tops].join(', ')}`)
 }
@@ -1535,7 +1550,12 @@ test('the clinical decision reaches its branches as one plan, not one winner', (
   assert.equal(sepsis.data.muted, undefined)
   assert.equal(vitals.data.muted, true, 'a route the note did not raise stays visible and de-emphasised')
   assert.equal(vitals.data.detailText, 'not raised')
-  assert.deepEqual(chosenEdges.map((edge) => edge.target), ['compact-run-1-route-shock', 'compact-run-1-route-sepsis'])
+  // The front door is a solid edge too: it RAN, before the decision the other edges came from.
+  assert.deepEqual(chosenEdges.map((edge) => edge.target), [
+    'compact-run-1-front-clinical',
+    'compact-run-1-route-shock',
+    'compact-run-1-route-sepsis',
+  ])
   assert.ok(
     graph.edges.filter((edge) => edge.source === 'compact-run-1' && edge.data?.kind === 'ghost').length >= 1,
     'the routes not taken stay connected as possible, not as data',
@@ -1657,4 +1677,92 @@ test('the real clinical profile draws as shock and sepsis, feeders folded inside
     ['sepsis-extraction', 'sepsis'],
   )
   assertNoCardsOverlap(graph.nodes)
+})
+
+/**
+ * What a profile does before it decides has to be on the canvas.
+ *
+ * The clinical profile reads a note's vital signs and runs the medprotocol CLI over them
+ * BEFORE it decides which syndrome the note raises, because no word list reads a blood
+ * pressure. Both are published as ordinary top-level stages with no routes — and the compact
+ * graph collected `stage.routes` and nothing else, so they were drawn nowhere and the picture
+ * showed a decision made on evidence that came from no visible pass.
+ */
+test('a profile that works before it decides draws that work ahead of the fan', () => {
+  const graph = buildCompactGraph(bothSyndromesRun(), 'run-1', new Set())
+  const front = graph.nodes.find((node) => node.id === 'compact-run-1-front-clinical')!
+  const shock = graph.nodes.find((node) => node.id === 'compact-run-1-route-shock')!
+
+  assert.ok(front, 'the pre-decision stages have a card')
+  assert.equal(front.data.label, 'before routing')
+  assert.deepEqual(front.data.steps!.map((step) => step.name), ['vitals-first', 'calculations'])
+  assert.equal(front.data.routeOf, 'clinical', 'it names the profile whose decision it feeds')
+  assert.equal(front.data.terminals, false, 'the workflow above owns the document')
+  assert.equal(front.data.detailText, 'runs before the decision')
+  assert.equal(front.data.muted, undefined, 'it ran, so it is not muted')
+  assert.equal(front.data.status, 'done')
+
+  // It leads the row and shares its top edge: before, not above.
+  assert.ok(front.position.x < shock.position.x, 'the front door reads first, left to right')
+  assert.equal(front.position.y, shock.position.y)
+  assertOneRow(graph.nodes)
+  assertNoCardsOverlap(graph.nodes)
+})
+
+test('pre-decision work is never attributed to a branch', () => {
+  const graph = buildCompactGraph(bothSyndromesRun(), 'run-1', new Set())
+  const shock = graph.nodes.find((node) => node.id === 'compact-run-1-route-shock')!
+  const sepsis = graph.nodes.find((node) => node.id === 'compact-run-1-route-sepsis')!
+
+  // An unrecognised stage is filed under whichever task is open, and before the decision that
+  // is the FIRST task in the plan — so the front door's two passes landed inside `shock` and
+  // read as work the shock arm did.
+  const named = [shock, sepsis].flatMap((card) =>
+    card.data.steps!.flatMap((step) => step.stages.map((stage) => stage.name)),
+  )
+  assert.equal(named.includes('vitals-first'), false, 'the shock arm did not read the vital signs')
+  assert.equal(named.includes('calculations'), false)
+})
+
+test('the front door stays on the canvas for a note that never lights it', () => {
+  // At rest — and for a note with no vital sign in it — the card is drawn and says so, rather
+  // than vanishing. A stage that appears only sometimes cannot be read as part of the shape.
+  const graph = buildCompactGraph(routingWorkflowState(), undefined, new Set())
+  const front = graph.nodes.find((node) => node.id.includes('-front-clinical'))!
+
+  assert.ok(front)
+  assert.equal(front.data.muted, true)
+  assert.equal(front.data.status, 'idle')
+  assert.equal(front.data.detailText, 'only when the note carries it')
+  assert.deepEqual(front.data.steps!.map((step) => step.status), ['idle', 'idle'])
+})
+
+test('the real clinical profile publishes its front door and the graph draws it', async () => {
+  const { PROFILE } = await import('../src/profiles/clinical/profile.ts')
+  const state = routingWorkflowState()
+  state.topology.profiles = state.topology.profiles.map((profile) =>
+    profile.name === 'clinical' ? { ...profile, topology: PROFILE.topology } : profile,
+  )
+
+  const graph = buildCompactGraph(state, undefined, new Set())
+  const front = graph.nodes.find((node) => node.id.includes('-front-clinical'))!
+
+  assert.ok(front, 'the shipped profile declares stages before its decision and they are drawn')
+  assert.deepEqual(front.data.steps!.map((step) => step.name), ['vitals-first', 'calculations'])
+  assertNoCardsOverlap(graph.nodes)
+})
+
+test('a profile that decides first has no front-door card', () => {
+  // The mechanism is a description of the topology, not a fixture for the clinical profile:
+  // nothing precedes the decision here, so nothing is drawn ahead of the fan.
+  const state = routingWorkflowState()
+  state.topology.profiles = state.topology.profiles.map((profile) =>
+    profile.name === 'clinical'
+      ? { ...profile, topology: { stages: routingProfileTopology().stages.filter((stage) => stage.name === 'route') } }
+      : profile,
+  )
+
+  const graph = buildCompactGraph(state, undefined, new Set())
+  assert.equal(graph.nodes.some((node) => node.id.includes('-front-')), false)
+  assert.ok(graph.nodes.some((node) => node.id.includes('-route-shock')), 'the fan is still drawn')
 })

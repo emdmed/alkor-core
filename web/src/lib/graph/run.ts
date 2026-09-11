@@ -251,6 +251,30 @@ export const declaredRouteGroups = (state: ProjectState, profileName: string): R
   return groups
 }
 
+/**
+ * The stages a profile runs BEFORE its own decision — work that belongs to no route.
+ *
+ * A profile's topology is not only a fan. The clinical profile reads a note's vital signs and
+ * puts the numbers through the medprotocol CLI before it decides which syndrome the note
+ * raises, because no word list reads a blood pressure. Both of those are published as ordinary
+ * top-level stages, and `declaredRouteGroups` above collects `stage.routes` and nothing else —
+ * so a stage with no routes was drawn nowhere at all, and the picture showed a decision being
+ * made on evidence that appeared from nowhere.
+ *
+ * Everything before the first decision stage, in declared order. A profile with no decision has
+ * no fan to precede, so it has nothing here: it is already drawn as the single step it is.
+ */
+export const declaredPreDecisionStages = (
+  state: ProjectState,
+  profileName: string,
+): ProfileTopologyStage[] => {
+  const profile = state.topology.profiles.find((candidate) => candidate.name === profileName)
+  const stages = profile?.topology?.stages ?? []
+  const decision = stages.findIndex((stage) => stage.kind === 'decision' || (stage.routes?.length ?? 0) > 0)
+  if (decision <= 0) return []
+  return stages.slice(0, decision)
+}
+
 export const declaredRouteTargets = (state: ProjectState, profileName: string): string[] => {
   const profile = state.topology.profiles.find((candidate) => candidate.name === profileName)
   const targets: string[] = []
