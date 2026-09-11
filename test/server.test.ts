@@ -72,9 +72,14 @@ test('health endpoint returns profiles and session count', async () => {
   // router has no rule for is a card on the dashboard nothing can ever route to.
   assert.deepEqual([...workflowTargets].sort(), [...(data as any).topology.pipeline.workflows].sort())
   const clinical = topologyProfiles.find((profile) => profile.name === 'clinical')
-  assert.ok(clinical.topology.stages[0].routes.some((route: any) => route.name === 'shock-extraction'))
-  assert.equal(clinical.topology.stages[0].routes.find((route: any) => route.name === 'shock-extraction').feeds, 'shock')
-  assert.equal(clinical.topology.stages[0].routes.find((route: any) => route.name === 'summary').available, false)
+  // Found by KIND, not by position. The clinical profile publishes the front-door vitals pass
+  // and its CLI calculation ahead of the decision now, so the decision is no longer stage zero
+  // and an index here would be asserting about a stage with no routes at all.
+  const decision = clinical.topology.stages.find((stage: any) => stage.kind === 'decision')
+  assert.ok(decision, 'the clinical profile publishes no decision stage')
+  assert.ok(decision.routes.some((route: any) => route.name === 'shock-extraction'))
+  assert.equal(decision.routes.find((route: any) => route.name === 'shock-extraction').feeds, 'shock')
+  assert.equal(decision.routes.find((route: any) => route.name === 'summary').available, false)
   const verified = (data as any).topology.pipelines.find((pipeline: any) => pipeline.name === 'clinical-verified')
   assert.deepEqual(verified.steps[1].input, [
     { name: 'document', ref: 'initial' },

@@ -494,7 +494,30 @@ test('clinical profile executes a multi-route plan sequentially and emits it for
 })
 
 /**
- * The septic-shock note, end to end: two questions, four passes, two handoffs.
+ * What the front door's vital-signs pass returns for the septic-shock note below.
+ *
+ * A blood pressure and a heart rate, because those are the two medprotocol's `vitals` command
+ * requires: with either missing it refuses, and the CLI-derived half of the routing evidence —
+ * the categories, the shock index — is simply absent. The respiratory rate is the qSOFA
+ * criterion the front door can supply; the GCS is not here because the contract has no slot for
+ * one, which is why the sepsis arm still runs its own extraction.
+ */
+const FRONT_DOOR_READING = JSON.stringify({
+  blood_pressure: { systolic: 88, diastolic: 54, unit: 'mmHg', raw_text: 'Hypotensive at 88/54' },
+  heart_rate: { value: 118, unit: 'bpm', raw_text: 'tachypneic with' },
+  respiratory_rate: { value: 24, unit: 'breaths/min', raw_text: 'respiratory rate 24' },
+  temperature: null,
+  weight: null,
+  height: null,
+  oxygen_saturation: null,
+  blood_glucose: null,
+  bmi: null,
+  extraction_confidence: 0.9,
+  notes: null,
+})
+
+/**
+ * The septic-shock note, end to end: two questions, five passes, two handoffs.
  *
  * What this is really guarding is that each reasoning contract reads ITS OWN extraction's
  * payload. Both extractions run over the same prose, and both downstream contracts parse their
@@ -523,6 +546,7 @@ test('a septic shock note runs both workflows, each reasoning over its own extra
     async chat(o: { label: string; userPrompt: string }): Promise<string> {
       calls.push(o.label)
       received[o.label] = o.userPrompt
+      if (o.label === 'vital_signs') return FRONT_DOOR_READING
       if (o.label === 'shock-extraction') return JSON.stringify(shockExam)
       if (o.label === 'sepsis-extraction') return JSON.stringify(sepsisExam)
       if (o.label === 'shock') return JSON.stringify({
@@ -564,13 +588,22 @@ test('a septic shock note runs both workflows, each reasoning over its own extra
     activity,
   } as any)
 
-  assert.deepEqual(calls, ['shock-extraction', 'shock', 'sepsis-extraction', 'sepsis'])
+  // The vital signs are read FIRST, before the route is decided — see vitals-first.ts. The
+  // reading is part of the plan rather than a pass made and discarded, so it appears in the
+  // routes too, at the head of them.
+  assert.deepEqual(calls, ['vital_signs', 'shock-extraction', 'shock', 'sepsis-extraction', 'sepsis'])
   assert.equal(result.ok, true)
-  assert.deepEqual((result.report as any).routes, ['shock-extraction', 'shock', 'sepsis-extraction', 'sepsis'])
+  assert.deepEqual((result.report as any).routes, ['vital-signs', 'shock-extraction', 'shock', 'sepsis-extraction', 'sepsis'])
 
-  // Both extractions read the note itself.
+  // Both extractions read the note itself, with the measured numbers appended as already-decided
+  // facts: they still have findings to extract that the vital-signs contract has no slot for,
+  // and no reason to read a blood pressure the CLI has already parsed.
   assert.ok(received['shock-extraction']!.includes('suspected pneumonia'))
   assert.ok(received['sepsis-extraction']!.includes('suspected pneumonia'))
+  for (const label of ['shock-extraction', 'sepsis-extraction']) {
+    assert.match(received[label]!, /MEASURED VITAL SIGNS/, `${label} was not seeded with the measured vitals`)
+    assert.match(received[label]!, /blood pressure: 88\/54 mmHg/, `${label} did not receive the parsed blood pressure`)
+  }
 
   // Each reasoning pass read its own upstream payload, and neither read the prose.
   assert.ok(received['shock']!.includes('jugular_venous_pressure'))
@@ -579,7 +612,11 @@ test('a septic shock note runs both workflows, each reasoning over its own extra
   assert.ok(!received['sepsis']!.includes('jugular_venous_pressure'))
 
   const route = activity.recent().find((e: any) => e.kind === 'stage' && e.name === 'route') as any
-  assert.deepEqual(route.detail.tasks, ['shock-extraction', 'shock', 'sepsis-extraction', 'sepsis'])
+  assert.deepEqual(route.detail.tasks, ['vital-signs', 'shock-extraction', 'shock', 'sepsis-extraction', 'sepsis'])
+
+  // The decision names the numbers it turned on, at the cut-points the pack publishes, so a
+  // reader can check the route by hand rather than taking `shock-suspicion` on trust.
+  assert.match(route.detail.reason ?? '', /measured:/)
 })
 
 /**
@@ -594,6 +631,7 @@ test('a failed sepsis extraction skips only its own screen', async () => {
   const provider = {
     async chat(o: { label: string }): Promise<string> {
       calls.push(o.label)
+      if (o.label === 'vital_signs') return FRONT_DOOR_READING
       if (o.label === 'sepsis-extraction') return 'I cannot determine the GCS from this note.'
       if (o.label === 'shock-extraction') return JSON.stringify({
         hypotension: { systolic: 88, diastolic: 54, duration_minutes: 45 },
@@ -633,7 +671,8 @@ test('a failed sepsis extraction skips only its own screen', async () => {
   } as any)
 
   // The screen was never called: it is absent from the call list, not called with the prose.
-  assert.deepEqual(calls, ['shock-extraction', 'shock', 'sepsis-extraction'])
+  // The front door's reading is at the head of the list for every routed prose note now.
+  assert.deepEqual(calls, ['vital_signs', 'shock-extraction', 'shock', 'sepsis-extraction'])
   assert.equal(result.ok, false)
   const results = (result.report as any).results
   assert.equal(results['shock'].ok, true)
@@ -820,6 +859,7 @@ test('a real run emits exactly the stages its routes publish', async () => {
   }
   const provider = {
     async chat(o: { label: string }): Promise<string> {
+      if (o.label === 'vital_signs') return FRONT_DOOR_READING
       if (o.label === 'shock-extraction') return JSON.stringify(shockExam)
       if (o.label === 'sepsis-extraction') return JSON.stringify({ respiratory_rate: 24, systolic_bp: 88, gcs: 12 })
       if (o.label === 'shock') return JSON.stringify({
@@ -861,7 +901,7 @@ test('a real run emits exactly the stages its routes publish', async () => {
   assert.equal(result.ok, true)
 
   const ran = (result.report as { routes: Task[] }).routes
-  assert.deepEqual(ran, ['shock-extraction', 'shock', 'sepsis-extraction', 'sepsis'])
+  assert.deepEqual(ran, ['vital-signs', 'shock-extraction', 'shock', 'sepsis-extraction', 'sepsis'])
 
   const emitted = new Set(
     activity
@@ -882,8 +922,11 @@ test('a real run emits exactly the stages its routes publish', async () => {
     }
   }
 
-  // And nothing ran that no route declares.
-  const publishable = new Set(['route', ...fan.flatMap((route) => (route.stages ?? []).map((stage) => stage.name))])
+  // And nothing ran that no route declares. The profile's own top-level stages count as
+  // declared — the front door and its CLI pass are published there, before the decision,
+  // because they happen before a route exists to attach them to.
+  const topLevel = (PROFILE.topology?.stages ?? []).map((stage) => stage.name)
+  const publishable = new Set([...topLevel, ...fan.flatMap((route) => (route.stages ?? []).map((stage) => stage.name))])
   for (const name of emitted) {
     assert.ok(publishable.has(name), `the run emitted '${name}', which no route publishes`)
   }

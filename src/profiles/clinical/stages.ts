@@ -34,6 +34,20 @@ import type { Task } from './contracts.ts'
 export const ROUTE_STAGE = 'route'
 
 /**
+ * The front door: the vital-signs contract, run BEFORE the route decision.
+ *
+ * Named beside `ROUTE_STAGE` and not inside `TASK_PASSES` for the same reason the route is —
+ * it is not a task's stage, it is work the profile does around the choice between tasks. The
+ * task it runs IS `vital-signs`, whose own passes are declared below and emitted by
+ * `reviewVitalSigns`; this stage is the marker that says the pass happened at the front door
+ * rather than on a route. See `vitals-first.ts`.
+ */
+export const VITALS_FIRST_STAGE = 'vitals-first'
+
+/** The medprotocol pass over what the front door read: categories, MAP, shock index. */
+export const CALCULATIONS_STAGE = 'calculations'
+
+/**
  * One pass a task makes.
  *
  * A `model` pass is an `extract()` call. When it names a `bracket`, the profile emits that

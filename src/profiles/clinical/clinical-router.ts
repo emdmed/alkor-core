@@ -3,8 +3,15 @@
  *
  * The router classifies the *shape* of a clinical input and selects the right
  * contract workflow(s), with a confidence score and a fallback to the caller's explicit
- * `--task` override. It is fast and deterministic (rule-based, no model call),
- * and runs *before* any GPU pass so the wrong schema is never sent.
+ * `--task` override. It is fast and deterministic — rule-based, no model call of its own.
+ *
+ * IT NO LONGER RUNS BEFORE EVERY GPU PASS, and that is a deliberate reversal worth finding
+ * here rather than in a diff. Prose carrying vital signs is extracted first and the numbers
+ * are handed back as `RouteEvidence`, because no word list reads a blood pressure: `BP 76/44,
+ * HR 128` is shock stated the way a flowsheet states it, and the rules below counted it as one
+ * criterion out of the two they require. `vitals-first.ts` holds the whole argument, including
+ * what the extra pass costs and which documents still skip it. This function stays pure:
+ * evidence in, plan out, no model call, so the router evals still run on every commit.
  *
  * Shapes are properties of the input bytes, not contract names. Most shapes map to one task,
  * and an input that raises more than one clinical question returns an ordered task plan: a
@@ -20,6 +27,7 @@
  */
 
 import { type ClinicalShape, DEFAULT_TASK_FOR_SHAPE, NOTE_DEFAULT_TASKS, TASK_FEEDS, TASK_ORDER, TASKS, type Task } from './contracts.ts'
+import type { MeasuredVitals, RouteThresholds } from './vitals-first.ts'
 
 /**
  * What a rule is answering, which is what decides whether it may share a plan.
@@ -36,11 +44,29 @@ import { type ClinicalShape, DEFAULT_TASK_FOR_SHAPE, NOTE_DEFAULT_TASKS, TASK_FE
  */
 export type ClinicalRuleKind = 'modality' | 'question'
 
+/**
+ * What the front door has already MEASURED about this document, when it has measured anything.
+ *
+ * Absent, every rule below behaves exactly as it did when routing was rules over bytes: the
+ * words decide. Present, the numbers are counted as criteria beside the words — because the
+ * words were never the problem. `hypotensive` is a criterion to a word list and `BP 76/44` is
+ * not, and a flowsheet states shock in numbers.
+ *
+ * The numbers arrive already parsed by the medprotocol CLI and are compared against the PACK's
+ * own cut-points, never against a threshold written down in this file. A router screening at a
+ * systolic the downstream contract does not classify at would send notes to an arm that then
+ * declines to reason about them, and it would read as a model failure.
+ */
+export interface RouteEvidence {
+  measured?: MeasuredVitals
+  thresholds?: RouteThresholds
+}
+
 export interface ClinicalRouteRule {
   name: string
   shape: ClinicalShape
   kind: ClinicalRuleKind
-  detect: (input: string) => boolean
+  detect: (input: string, evidence?: RouteEvidence) => boolean
   confidence: number
 }
 
@@ -207,31 +233,72 @@ const isClinicalNote = (input: string): boolean => {
 
 // --- Shock suspicion detection -----------------------------------------------------------
 
-const SHOCK_SUSPICION_GROUPS = [
-  ['hypotension', 'hypotensive', 'low blood pressure', 'low bp', 'bp low'],
-  ['tachycardia', 'tachycardic', 'elevated heart rate', 'fast heart rate', 'high heart rate', 'heart rate elevated', 'heart rate high'],
-  ['hypoperfusion', 'peripheral hypoperfusion', 'poor perfusion', 'cool peripheries', 'cool extremities', 'warm peripheries', 'warm extremities', 'clammy skin', 'mottled skin', 'delayed capillary refill', 'cold extremities', 'cold peripheries', 'poor peripheral perfusion'],
-  ['oliguria', 'oliguric', 'low urine output', 'decreased urine output', 'anuria', 'anuric', 'reduced urine output', 'urine output low'],
-  ['encephalopathy', 'altered mental status', 'altered mental state', 'confusion', 'obtundation', 'decreased consciousness', 'altered consciousness', 'confused', 'drowsy', 'lethargic', 'unresponsive', 'reduced consciousness'],
-]
+/**
+ * The shock criteria, NAMED, with the words that state each one in prose.
+ *
+ * Named rather than counted anonymously because a number can now satisfy the same criterion a
+ * word does, and the two must not both count. A note reading `hypotensive, BP 76/44` states
+ * hypotension twice and meets one criterion; counting it twice would clear the bar of two on
+ * one finding, which is exactly the bar's purpose to prevent.
+ */
+const SHOCK_SUSPICION_GROUPS: Record<string, string[]> = {
+  hypotension: ['hypotension', 'hypotensive', 'low blood pressure', 'low bp', 'bp low'],
+  tachycardia: ['tachycardia', 'tachycardic', 'elevated heart rate', 'fast heart rate', 'high heart rate', 'heart rate elevated', 'heart rate high'],
+  hypoperfusion: ['hypoperfusion', 'peripheral hypoperfusion', 'poor perfusion', 'cool peripheries', 'cool extremities', 'warm peripheries', 'warm extremities', 'clammy skin', 'mottled skin', 'delayed capillary refill', 'cold extremities', 'cold peripheries', 'poor peripheral perfusion'],
+  oliguria: ['oliguria', 'oliguric', 'low urine output', 'decreased urine output', 'anuria', 'anuric', 'reduced urine output', 'urine output low'],
+  mentation: ['encephalopathy', 'altered mental status', 'altered mental state', 'confusion', 'obtundation', 'decreased consciousness', 'altered consciousness', 'confused', 'drowsy', 'lethargic', 'unresponsive', 'reduced consciousness'],
+}
 
 const SHOCK_GENERAL_TERMS = ['shock', 'septic shock', 'cardiogenic shock', 'hypovolemic shock', 'distributive shock', 'obstructive shock', 'hemorrhagic shock', 'shock index']
 
-const isShockSuspicion = (input: string): boolean => {
+/**
+ * Which shock criteria the MEASURED numbers meet, at the pack's cut-points.
+ *
+ * Three of them, and each is decided by something that is not this file:
+ *
+ *   - `hypotension` is the PACK's entry criterion, `[clinical.shockExam].hypotensionSystolicBelow`,
+ *     and deliberately not medprotocol's `Low` category — the two disagree, `medprotocol.ts`
+ *     explains where, and the one the downstream contract classifies on is the pack's.
+ *   - `tachycardia` is the CLI's OWN heart-rate category, which is the word `Elevated` — above
+ *     100, strictly. No threshold appears here for it, because the pack states none and
+ *     inventing one in src/ is how a rule stops being the pack's. The word is matched rather
+ *     than the number for the same reason: `Elevated` is medprotocol's verdict, and a rate it
+ *     re-categorises in a later version re-categorises here without this file being edited.
+ *   - `hypoperfusion` from a shock index above `[clinical.shockExam].shockIndexAbove`, and ONLY
+ *     when the systolic is not already below the hypotension cut. The index is HR/SBP: a low
+ *     systolic drives it up mechanically, so in a hypotensive patient it is the same finding
+ *     arriving twice, and counting it would clear a bar of two criteria on one blood pressure.
+ *     Where it carries information the other two do not is the normotensive patient — an index
+ *     of 0.9 at 118/72 is compensated shock that neither the systolic rule nor the heart-rate
+ *     category would flag — and that is exactly the case this leaves it counting.
+ */
+const measuredShockCriteria = (evidence?: RouteEvidence): Set<string> => {
+  const met = new Set<string>()
+  const m = evidence?.measured
+  const t = evidence?.thresholds
+  if (!m || !t) return met
+  const hypotensive = m.systolic !== undefined && m.systolic < t.hypotensionSystolicBelow
+  if (hypotensive) met.add('hypotension')
+  if (m.heartRateCategory && /^elevated$/i.test(m.heartRateCategory)) met.add('tachycardia')
+  if (!hypotensive && m.shockIndex !== undefined && m.shockIndex > t.shockIndexAbove) met.add('hypoperfusion')
+  return met
+}
+
+const isShockSuspicion = (input: string, evidence?: RouteEvidence): boolean => {
   if (isExamJson(input)) return false // structured JSON has its own route
   const lower = input.toLowerCase()
 
-  let criteria = 0
-  for (const group of SHOCK_SUSPICION_GROUPS) {
-    if (group.some((k) => lower.includes(k))) criteria++
+  const met = measuredShockCriteria(evidence)
+  for (const [name, group] of Object.entries(SHOCK_SUSPICION_GROUPS)) {
+    if (group.some((k) => lower.includes(k))) met.add(name)
   }
 
   if (SHOCK_GENERAL_TERMS.some((k) => {
     if (k.includes(' ')) return lower.includes(k)
     return new RegExp(`\\b${k}\\b`, 'i').test(input)
-  })) criteria++
+  })) met.add('named')
 
-  return criteria >= 2
+  return met.size >= 2
 }
 
 // --- Sepsis suspicion detection ----------------------------------------------------------
@@ -256,11 +323,35 @@ const INFECTION_TERMS = [
  * words. A router that fired on a criterion the downstream contract does not read would send
  * notes to a screen that cannot use them.
  */
-const QSOFA_PROSE_GROUPS = [
-  ['tachypnea', 'tachypnoea', 'tachypneic', 'tachypnoeic', 'respiratory rate', 'breathing fast', 'rapid breathing', 'increased work of breathing'],
-  ['hypotension', 'hypotensive', 'low blood pressure', 'low bp', 'systolic', 'sbp'],
-  ['altered mental status', 'altered mental state', 'confusion', 'confused', 'obtunded', 'obtundation', 'gcs', 'glasgow coma', 'drowsy', 'lethargic', 'encephalopathy', 'unresponsive'],
-]
+const QSOFA_PROSE_GROUPS: Record<string, string[]> = {
+  tachypnoea: ['tachypnea', 'tachypnoea', 'tachypneic', 'tachypnoeic', 'respiratory rate', 'breathing fast', 'rapid breathing', 'increased work of breathing'],
+  hypotension: ['hypotension', 'hypotensive', 'low blood pressure', 'low bp', 'systolic', 'sbp'],
+  mentation: ['altered mental status', 'altered mental state', 'confusion', 'confused', 'obtunded', 'obtundation', 'gcs', 'glasgow coma', 'drowsy', 'lethargic', 'encephalopathy', 'unresponsive'],
+}
+
+/**
+ * Which qSOFA criteria the MEASURED numbers meet, at the pack's cut-points.
+ *
+ * Two of the three, and the third is the reason this router still hands prose to
+ * `sepsis-extraction` rather than screening here: qSOFA's mental-status criterion is a GCS, the
+ * vital-signs contract has no GCS slot, and a screen missing one of three criteria is a screen
+ * that never ran.
+ *
+ * NO FEVER CRITERION, though the note's temperature is right here. Fever is not a qSOFA
+ * criterion, and the pack publishes no cut-point for it — a `>= 38` written into this file would
+ * be a threshold invented in src/ and reported as the pack's, which is the one thing every
+ * other rule in this profile is arranged to prevent. A stated fever still counts through
+ * `INFECTION_TERMS`, where it always has.
+ */
+const measuredSepsisCriteria = (evidence?: RouteEvidence): Set<string> => {
+  const met = new Set<string>()
+  const m = evidence?.measured
+  const t = evidence?.thresholds
+  if (!m || !t) return met
+  if (m.respiratoryRate !== undefined && m.respiratoryRate >= t.respiratoryRateAtLeast) met.add('tachypnoea')
+  if (m.systolic !== undefined && m.systolic <= t.systolicAtMost) met.add('hypotension')
+  return met
+}
 
 /** Explicit naming of the syndrome, which counts as one criterion the way `shock` does. */
 const SEPSIS_GENERAL_TERMS = ['sepsis', 'septic', 'septicaemia', 'septicemia', 'qsofa', 'q-sofa']
@@ -278,19 +369,34 @@ const SEPSIS_GENERAL_TERMS = ['sepsis', 'septic', 'septicaemia', 'septicemia', '
  * extract them from. Firing here would buy a GPU call that can only fail, and it nearly did:
  * the exam payload says `hypotension` and `mental_status`, which reads as two criteria.
  */
-const isSepsisSuspicion = (input: string): boolean => {
+const isSepsisSuspicion = (input: string, evidence?: RouteEvidence): boolean => {
   if (isSepsisJson(input) || isExamJson(input)) return false
   const lower = input.toLowerCase()
 
-  let criteria = 0
-  if (INFECTION_TERMS.some((k) => (k.includes(' ') ? lower.includes(k) : new RegExp(`\\b${k}\\b`, 'i').test(input)))) criteria++
-  for (const group of QSOFA_PROSE_GROUPS) {
-    if (group.some((k) => (k.includes(' ') ? lower.includes(k) : new RegExp(`\\b${k}\\b`, 'i').test(input)))) criteria++
+  const met = measuredSepsisCriteria(evidence)
+  if (INFECTION_TERMS.some((k) => (k.includes(' ') ? lower.includes(k) : new RegExp(`\\b${k}\\b`, 'i').test(input)))) met.add('infection')
+  for (const [name, group] of Object.entries(QSOFA_PROSE_GROUPS)) {
+    if (group.some((k) => (k.includes(' ') ? lower.includes(k) : new RegExp(`\\b${k}\\b`, 'i').test(input)))) met.add(name)
   }
-  if (SEPSIS_GENERAL_TERMS.some((k) => new RegExp(`\\b${k}\\b`, 'i').test(input))) criteria++
+  if (SEPSIS_GENERAL_TERMS.some((k) => new RegExp(`\\b${k}\\b`, 'i').test(input))) met.add('named')
 
-  return criteria >= 2
+  return met.size >= 2
 }
+
+/**
+ * Documents the front door must NOT spend an extraction pass on, and why each one.
+ *
+ * A structured payload — an exam, a qSOFA screen, a list of paths — already IS the numbers;
+ * sending it to a prose extractor is asking a model to copy JSON. A dialogue or a dictation is
+ * a MODALITY, and modality wins outright in the plan below, so the route is `transcript` no
+ * matter what the numbers say: the pass would be bought and then not used.
+ *
+ * Exported because the decision belongs with the rules it mirrors. The front door asking its
+ * own question here, in its own words, is how the two would come to disagree about which
+ * documents take which path.
+ */
+export const skipsFrontDoor = (input: string): boolean =>
+  isExamJson(input) || isSepsisJson(input) || isSummaryInput(input) || isDialogue(input) || isDictation(input)
 
 // --- Rule set ------------------------------------------------------------------------------
 
@@ -360,6 +466,40 @@ export const DEFAULT_CLINICAL_RULES: ClinicalRouteRule[] = [
   },
 ]
 
+/**
+ * Which measured numbers pushed this route, quoted with the cut-point they cleared.
+ *
+ * The reason string is what a trace keeps and what the dashboard prints, and "rules:
+ * shock-suspicion" over a note with no shock words in it is a decision a reader cannot check.
+ * Naming the number and the threshold makes it checkable by hand, which is the only kind of
+ * traceability worth the characters.
+ */
+const measuredReason = (evidence?: RouteEvidence): string => {
+  const m = evidence?.measured
+  const t = evidence?.thresholds
+  if (!m || !t) return ''
+  const facts: string[] = []
+  if (m.systolic !== undefined && m.systolic < t.hypotensionSystolicBelow) {
+    facts.push(`systolic ${m.systolic} < ${t.hypotensionSystolicBelow}`)
+  } else if (m.systolic !== undefined && m.systolic <= t.systolicAtMost) {
+    facts.push(`systolic ${m.systolic} <= ${t.systolicAtMost}`)
+  }
+  if (m.heartRateCategory && /^elevated$/i.test(m.heartRateCategory)) facts.push(`heart rate ${m.heartRate} (${m.heartRateCategory})`)
+  // Quoted only when it COUNTED — see `measuredShockCriteria`. A reason listing a criterion the
+  // decision did not turn on is a reason that cannot be checked by hand.
+  if (
+    m.shockIndex !== undefined &&
+    m.shockIndex > t.shockIndexAbove &&
+    !(m.systolic !== undefined && m.systolic < t.hypotensionSystolicBelow)
+  ) {
+    facts.push(`shock index ${m.shockIndex.toFixed(2)} > ${t.shockIndexAbove}`)
+  }
+  if (m.respiratoryRate !== undefined && m.respiratoryRate >= t.respiratoryRateAtLeast) {
+    facts.push(`respiratory rate ${m.respiratoryRate} >= ${t.respiratoryRateAtLeast}`)
+  }
+  return facts.length ? ` · measured: ${facts.join(', ')}` : ''
+}
+
 /** Which shape maps to which task, with the `note` shape reading the pack's default. */
 export const taskForShape = (shape: ClinicalShape, defaultTask?: string): Task => {
   if (shape === 'note' && NOTE_DEFAULT_TASKS.includes(defaultTask as Task)) return defaultTask as Task
@@ -380,11 +520,21 @@ export const taskForShape = (shape: ClinicalShape, defaultTask?: string): Task =
  * `sepsis-extraction` implies the `sepsis` screen. A structured payload skips its extraction
  * because it already is the payload.
  *
+ * `evidence` is what the front door measured before calling here — see `vitals-first.ts`. It
+ * changes no rule's shape and no task's meaning: the numbers are counted as criteria beside the
+ * words, under the pack's own cut-points. Omitted, this function is exactly the pure, model-free
+ * classifier it has always been, which is what lets the router evals run on every commit.
+ *
  * @param input — the raw document text or payload
  * @param defaultTask — the pack's declared `defaultTask`, used only for the `note` shape
+ * @param evidence — measured vitals and the pack's thresholds, when the front door ran
  */
-export const routeClinicalShape = (input: string, defaultTask?: string): ClinicalRouteResult => {
-  const fired = DEFAULT_CLINICAL_RULES.filter((rule) => rule.detect(input))
+export const routeClinicalShape = (
+  input: string,
+  defaultTask?: string,
+  evidence?: RouteEvidence,
+): ClinicalRouteResult => {
+  const fired = DEFAULT_CLINICAL_RULES.filter((rule) => rule.detect(input, evidence))
 
   // The winner decides which KIND of rule this document is answered by, and the highest
   // confidence still picks it. What changed is what happens next: when a question rule wins,
@@ -435,7 +585,9 @@ export const routeClinicalShape = (input: string, defaultTask?: string): Clinica
       tasks,
       shape: top.shape,
       confidence,
-      reason: `${matches.length === 1 ? 'rule' : 'rules'}: ${matches.map((match) => match.rule).join(', ')}`,
+      reason:
+        `${matches.length === 1 ? 'rule' : 'rules'}: ${matches.map((match) => match.rule).join(', ')}` +
+        measuredReason(evidence),
     }
   }
 

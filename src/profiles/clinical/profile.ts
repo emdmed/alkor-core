@@ -25,10 +25,22 @@ import { gatePasses, runNoteFormatEval, runSummaryEval, runTranscriptEval, type 
 import { loadSettings } from './settings.ts'
 import { GRADED_TASKS, ROUTED_TASKS, TASK_FEEDS, TASKS, UNREVIEWABLE_TASKS, type Task } from './contracts.ts'
 import type { ProfileTopology } from '../../core/topology.ts'
-import { ROUTE_STAGE, topologyStagesFor } from './stages.ts'
+import { CALCULATIONS_STAGE, ROUTE_STAGE, VITALS_FIRST_STAGE, topologyStagesFor } from './stages.ts'
+import {
+  hasVitalSigns,
+  measureVitals,
+  medprotocolFor,
+  renderMeasured,
+  routeThresholds,
+  seedWithMeasured,
+  vitalsDetected,
+  type MeasuredVitals,
+  type RouteThresholds,
+} from './vitals-first.ts'
+import type { VitalSigns } from './extraction.ts'
 import { clinicalRedactor } from './redact.ts'
 import { rescoreSummaryLine, rescoreTrace } from './rescore.ts'
-import { routeClinicalShape, type ClinicalRouteResult } from './clinical-router.ts'
+import { routeClinicalShape, skipsFrontDoor, type ClinicalRouteResult } from './clinical-router.ts'
 import { reviewVitalSigns, vitalDocumentNames } from './review.ts'
 import { reviewTranscript, transcriptDocumentNames } from './review-transcript.ts'
 import { reviewShock } from './review-shock.ts'
@@ -52,6 +64,20 @@ import { runShockPipelineEval, shockPipelineDocumentNames } from './shock-pipeli
  */
 const clinicalTopology = (): ProfileTopology => ({
   stages: [{
+    // The front door, drawn BEFORE the decision because that is when it runs. Optional in the
+    // strict sense: a document with no vital sign written in it never lights this node, and
+    // routing for those documents costs exactly what it always did.
+    name: VITALS_FIRST_STAGE,
+    operation: 'model',
+    optional: true,
+  }, {
+    // The CLI pass over whatever the front door read. Deterministic, no model, and drawn
+    // separately from the extraction because they fail for different reasons: an empty reading
+    // is the model's, a refusal here is medprotocol's.
+    name: CALCULATIONS_STAGE,
+    operation: 'code',
+    optional: true,
+  }, {
     name: ROUTE_STAGE,
     kind: 'decision',
     operation: 'decision',
@@ -284,6 +310,104 @@ const asTask = (s: string): Task => {
   throw new ProfileError(`unknown --task '${s}' (expected ${TASKS.join(', ')}, all, or default)`)
 }
 
+// --- The front door ---------------------------------------------------------------------------
+
+/** What the vital-signs pass produced before the route was decided. */
+interface FrontDoor {
+  /** The reading itself, reported as a result of the run rather than thrown away. */
+  result: ReviewResult
+  /** The numbers, after medprotocol. Absent when the extraction came back empty. */
+  measured?: MeasuredVitals
+  thresholds: RouteThresholds
+}
+
+/**
+ * The thresholds, or `undefined` for a pack that has no syndrome arms to route to.
+ *
+ * A pack declaring neither `[clinical.shockExam]` nor `[clinical.sepsisScreen]` has no shock
+ * contract and no qSOFA screen, so there is nothing a measured systolic could route it to, and
+ * spending a pass to find that out would be spending it for nothing. Refused by ABSENCE rather
+ * than by a default: a pack that declares the tables partially still fails loudly inside
+ * `loadShockRule`, which is where an incomplete cut-point table should fail.
+ */
+const syndromeThresholds = (pack: Pack): RouteThresholds | undefined => {
+  const manifest = pack.manifest as { clinical?: { shockExam?: unknown; sepsisScreen?: unknown } }
+  if (!manifest.clinical?.shockExam || !manifest.clinical?.sepsisScreen) return undefined
+  return routeThresholds(pack)
+}
+
+/**
+ * Read the vital signs, calculate everything the CLI can, and hand the numbers to the router.
+ *
+ * Returns `undefined` when the front door does not apply, and the three reasons it does not are
+ * all cheap to establish: the document carries no vital sign, the pack has no syndrome arm, or
+ * the pack declares no medprotocol CLI. None of them costs a model call.
+ *
+ * A FAILED EXTRACTION IS NOT A FAILED RUN. The reading is reported either way and the route is
+ * decided on the words alone, exactly as it was before this step existed — a model that came
+ * back empty should cost the run its numbers, not its routing.
+ */
+const runFrontDoor = async (
+  ctx: ReviewContext,
+  shared: { pack: Pack; baseUrl?: string; trace: ReviewContext['trace']; constrain: boolean; input: ReviewContext['input']; provider?: Provider; activity?: Activity },
+  text: string,
+): Promise<FrontDoor | undefined> => {
+  if (skipsFrontDoor(text) || !hasVitalSigns(text)) return undefined
+  const thresholds = syndromeThresholds(shared.pack)
+  if (!thresholds) return undefined
+
+  ctx.activity?.emit({
+    kind: 'stage',
+    name: VITALS_FIRST_STAGE,
+    operation: 'model',
+    status: 'started',
+    detail: { readings: vitalsDetected(text) },
+  })
+  // `calculate: true` regardless of --calculate: the derived values are not a display option
+  // here, they are the evidence the next decision is made on.
+  const result = await reviewVitalSigns({ ...shared, calculate: true })
+  const vitals = (result.report as { vitals?: VitalSigns } | undefined)?.vitals
+  ctx.activity?.emit({
+    kind: 'stage',
+    name: VITALS_FIRST_STAGE,
+    operation: 'model',
+    status: 'completed',
+    detail: { ok: result.ok, readings: vitalsDetected(text) },
+  })
+
+  if (!result.ok || !vitals) {
+    ctx.trace.write({ event: 'vitals-first', ok: false, reason: 'the vital-signs pass produced no reading' })
+    return { result, thresholds }
+  }
+
+  const measured = measureVitals(vitals, medprotocolFor(shared.pack))
+  ctx.activity?.emit({
+    kind: 'stage',
+    name: CALCULATIONS_STAGE,
+    operation: 'code',
+    status: 'completed',
+    detail: {
+      via: 'medprotocol vitals',
+      ran: measured.cliRan,
+      ...(measured.cliRan
+        ? {
+            bloodPressureCategory: measured.bloodPressureCategory,
+            heartRateCategory: measured.heartRateCategory,
+            meanArterialPressure: measured.meanArterialPressure,
+            shockIndex: Number(measured.shockIndex!.toFixed(2)),
+          }
+        : { skipped: measured.cliSkipped }),
+    },
+  })
+  ctx.trace.write({ event: 'vitals-first', ok: true, measured })
+
+  return {
+    result: { ...result, text: `${result.text}\n--- measured ---\n${renderMeasured(measured).join('\n')}` },
+    measured,
+    thresholds,
+  }
+}
+
 // --- Review helpers ------------------------------------------------------------------------
 
 const resolveInputText = (ctx: ReviewContext): string => {
@@ -291,17 +415,26 @@ const resolveInputText = (ctx: ReviewContext): string => {
   return resolveCaseDocument(ctx.pack!, ctx.input.name)
 }
 
-const executeClinicalTask = async (ctx: ReviewContext, shared: { pack: Pack; baseUrl?: string; trace: ReviewContext['trace']; constrain: boolean; input: ReviewContext['input']; calculate: boolean; provider?: Provider; activity?: Activity }, task: Task): Promise<ReviewResult> => {
+const executeClinicalTask = async (ctx: ReviewContext, shared: { pack: Pack; baseUrl?: string; trace: ReviewContext['trace']; constrain: boolean; input: ReviewContext['input']; calculate: boolean; provider?: Provider; activity?: Activity }, task: Task, front?: FrontDoor): Promise<ReviewResult> => {
   if (task !== 'transcript' && ctx.options.repair) {
     throw new ProfileError(`--repair applies to --task transcript; ${task} has no citation to repair`)
   }
 
+  // The front door already ran this contract over this document. Running it again would be the
+  // same prompt, the same schema and the same note, for a second answer that may differ from
+  // the one the route was decided on — and a report that disagrees with its own routing reason
+  // is worse than a slower one.
+  if (task === 'vital-signs' && front) return front.result
   if (task === 'vital-signs') return reviewVitalSigns(shared)
   if (task === 'transcript') return reviewTranscript({ ...shared, repair: Boolean(ctx.options.repair) })
   if (task === 'shock') return reviewShock({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider, activity: ctx.activity })
   if (task === 'sepsis') return reviewSepsis({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider, activity: ctx.activity })
-  if (task === 'shock-extraction') return reviewShockExtraction({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider, activity: ctx.activity })
-  if (task === 'sepsis-extraction') return reviewSepsisExtraction({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider, activity: ctx.activity })
+  // Both extraction arms read the ORIGINAL prose with the measured numbers appended as facts.
+  // They still run — the payloads they build need findings the vital-signs contract has no slot
+  // for, a jugular venous pressure and a lung exam and a GCS — but nothing is served by asking
+  // a second model pass to read a blood pressure the CLI has already parsed.
+  if (task === 'shock-extraction') return reviewShockExtraction({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: seededInput(shared.input, front), provider: shared.provider, activity: ctx.activity })
+  if (task === 'sepsis-extraction') return reviewSepsisExtraction({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: seededInput(shared.input, front), provider: shared.provider, activity: ctx.activity })
   if (task === 'shock-pipeline') {
     // Chain extraction → classification. The extraction step reads prose; the classification
     // step reads the extracted exam as JSON text, exactly as the standalone shock review does.
@@ -335,12 +468,31 @@ const executeClinicalTask = async (ctx: ReviewContext, shared: { pack: Pack; bas
   )
 }
 
+/**
+ * A prose document with the measured vitals appended, or the input untouched.
+ *
+ * A CASE input is resolved to its text first, because appending to a case NAME is nonsense and
+ * the alternative — leaving named cases unseeded — would make the eval corpus and a supplied
+ * note take measurably different paths through the same contract.
+ */
+const seededInput = (input: ReviewContext['input'], front?: FrontDoor): ReviewContext['input'] => {
+  if (!front?.measured) return input
+  if (input.kind === 'text') {
+    return { kind: 'text', text: seedWithMeasured(input.text, front.measured), label: input.label }
+  }
+  return input
+}
+
 const executeClinicalRoute = async (
   ctx: ReviewContext,
   shared: { pack: Pack; baseUrl?: string; trace: ReviewContext['trace']; constrain: boolean; input: ReviewContext['input']; calculate: boolean; provider?: Provider; activity?: Activity },
   tasks: Task[],
+  front?: FrontDoor,
 ): Promise<ReviewResult> => {
-  if (tasks.length === 1) return executeClinicalTask(ctx, shared, tasks[0]!)
+  if (tasks.length === 1) {
+    const only = await executeClinicalTask(ctx, shared, tasks[0]!, front)
+    return front && !front.result.ok ? { ...only, text: `${front.result.text}\n${only.text}` } : only
+  }
 
   /**
    * Which task feeds which, for the two arms that are a pipeline rather than a single pass.
@@ -371,7 +523,7 @@ const executeClinicalRoute = async (
       continue
     }
     const feed = upstream ? extracted.get(upstream) : undefined
-    const result = await executeClinicalTask(ctx, feed ? { ...shared, input: feed } : shared, task)
+    const result = await executeClinicalTask(ctx, feed ? { ...shared, input: feed } : shared, task, front)
     results.push({ task, result })
 
     if (task === 'shock-extraction' || task === 'sepsis-extraction') {
@@ -393,8 +545,13 @@ const executeClinicalRoute = async (
     return [task, { ok: result.ok, output: value ?? result.text }]
   }))
 
+  // A front-door reading that failed is not in `results` — `planWith` left it out so it cannot
+  // fail the run — but it is still the first thing that happened, and a report that omitted it
+  // would describe a route decided on evidence the reader never sees.
+  const preamble = front && !front.result.ok ? [front.result.text] : []
+
   return {
-    text: results.map(({ result }) => result.text).join('\n'),
+    text: [...preamble, ...results.map(({ result }) => result.text)].join('\n'),
     ok: results.every(({ result }) => result.ok),
     document: shared.input.kind === 'text' ? shared.input.text : undefined,
     label: shared.input.kind === 'text' ? shared.input.label : shared.input.name,
@@ -415,32 +572,53 @@ const reviewSingleStep = async (ctx: ReviewContext): Promise<ReviewResult> => {
   }
 
   let tasks: Task[]
+  let front: FrontDoor | undefined
   if (ctx.options.task === undefined || ctx.options.task === 'default') {
     const text = resolveInputText(ctx)
-    const route = routeClinicalShape(text, loadSettings(ctx.pack!).defaultTask)
+    front = await runFrontDoor(ctx, shared, text)
+    const route = routeClinicalShape(text, loadSettings(ctx.pack!).defaultTask, evidenceOf(front))
     ctx.activity?.emit({
       kind: 'stage',
       name: ROUTE_STAGE,
       operation: 'decision',
       status: 'completed',
-      detail: { shape: route.shape, confidence: route.confidence, task: route.task, tasks: route.tasks },
+      detail: { shape: route.shape, confidence: route.confidence, task: route.task, tasks: planWith(front, route.tasks), reason: route.reason },
     })
     ctx.trace.write({
       event: 'route',
       kind: 'clinical',
       shape: route.shape,
       task: route.task,
-      tasks: route.tasks,
+      tasks: planWith(front, route.tasks),
       confidence: route.confidence,
       reason: route.reason,
     })
-    tasks = route.tasks
+    tasks = planWith(front, route.tasks)
   } else {
     tasks = [reviewTask(ctx.options.task)]
   }
 
-  return executeClinicalRoute(ctx, shared, tasks)
+  return executeClinicalRoute(ctx, shared, tasks, front)
 }
+
+/** What the router is told, or nothing when the front door did not run. */
+const evidenceOf = (front?: FrontDoor) =>
+  front ? { measured: front.measured, thresholds: front.thresholds } : undefined
+
+/**
+ * The plan, with the pass the front door already made at the head of it.
+ *
+ * `vital-signs` goes in the plan whether or not a rule selected it, because it RAN: a plan that
+ * omitted it would be a report of four passes for a run that made five, and the reading a
+ * clinician is looking at would appear in the output under no task at all.
+ *
+ * A FAILED reading is the exception, and it is the same principle read the other way. The plan
+ * is what the run is judged on — every task in it has to succeed for the result to be `ok` —
+ * and a front-door pass that came back empty must not condemn a shock classification that went
+ * on to work perfectly well without it. Its output is still reported; see `executeClinicalRoute`.
+ */
+const planWith = (front: FrontDoor | undefined, tasks: Task[]): Task[] =>
+  front?.result.ok ? [...new Set<Task>(['vital-signs', ...tasks])] : tasks
 
 /**
  * Checkpointed review: the clinical profile splits into two logical steps —
@@ -466,6 +644,7 @@ const reviewWithCheckpoint = async (ctx: ReviewContext, contextDir: string): Pro
   // Caller explicitly named a task — skip the router and use it directly.
   let tasks: Task[]
   let text: string
+  let front: FrontDoor | undefined
   if (ctx.options.task !== undefined && ctx.options.task !== 'default') {
     tasks = [reviewTask(ctx.options.task)]
     text = resolveInputText(ctx)
@@ -473,31 +652,40 @@ const reviewWithCheckpoint = async (ctx: ReviewContext, contextDir: string): Pro
     // Resolve or resume the route.
     let route: ClinicalRouteResult
     if (existsSync(routeFile)) {
-      const cached = JSON.parse(readFileSync(routeFile, 'utf8')) as { route: ClinicalRouteResult; text: string }
+      // The front door's reading is part of the checkpoint, not a pass to make again. That is
+      // the whole point of the file: a resumed run must take the route the first run took, and
+      // a second extraction is a second chance to read the blood pressure differently.
+      const cached = JSON.parse(readFileSync(routeFile, 'utf8')) as {
+        route: ClinicalRouteResult
+        text: string
+        front?: FrontDoor
+      }
       route = cached.route
       text = cached.text
+      front = cached.front
     } else {
       text = resolveInputText(ctx)
-      route = routeClinicalShape(text, loadSettings(ctx.pack!).defaultTask)
+      front = await runFrontDoor(ctx, { ...ctx, pack: ctx.pack!, constrain: Boolean(ctx.options.constrain), input: ctx.input, activity: ctx.activity }, text)
+      route = routeClinicalShape(text, loadSettings(ctx.pack!).defaultTask, evidenceOf(front))
       ctx.activity?.emit({
         kind: 'stage',
         name: ROUTE_STAGE,
         operation: 'decision',
         status: 'completed',
-        detail: { shape: route.shape, confidence: route.confidence, task: route.task, tasks: route.tasks },
+        detail: { shape: route.shape, confidence: route.confidence, task: route.task, tasks: planWith(front, route.tasks), reason: route.reason },
       })
       ctx.trace.write({
         event: 'route',
         kind: 'clinical',
         shape: route.shape,
         task: route.task,
-        tasks: route.tasks,
+        tasks: planWith(front, route.tasks),
         confidence: route.confidence,
         reason: route.reason,
       })
-      writeFileSync(routeFile, JSON.stringify({ route, text }, null, 2))
+      writeFileSync(routeFile, JSON.stringify({ route, text, front }, null, 2))
     }
-    tasks = route.tasks ?? [route.task]
+    tasks = planWith(front, route.tasks ?? [route.task])
   }
 
   const shared = {
@@ -511,7 +699,7 @@ const reviewWithCheckpoint = async (ctx: ReviewContext, contextDir: string): Pro
     activity: ctx.activity,
   }
 
-  const result = await executeClinicalRoute(ctx, shared, tasks)
+  const result = await executeClinicalRoute(ctx, shared, tasks, front)
   // Only cache successful results so a transient failure (network, model not loaded)
   // can be retried on the next run without re-routing.
   if (result.ok) writeFileSync(resultFile, JSON.stringify(result, null, 2))

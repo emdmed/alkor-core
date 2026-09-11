@@ -134,7 +134,17 @@ export const reviewVitalSigns = async (o: VitalReviewOptions): Promise<ReviewRes
     contracts: o.pack.digest(),
   })
 
-  return { text, ok: Boolean(outcome.parsed), raw: outcome.raw, document, label }
+  // The parsed reading is handed back, not just rendered. The front door routes on these
+  // numbers — see `vitals-first.ts` — and re-parsing `raw` there would be a second parser for
+  // one contract, free to disagree with this one about a unit.
+  return {
+    text,
+    ok: Boolean(outcome.parsed),
+    raw: outcome.raw,
+    document,
+    label,
+    ...(outcome.parsed ? { report: { vitals: outcome.parsed } } : {}),
+  }
 }
 
 /** How a quote stood up to the note it claims to come from. */
