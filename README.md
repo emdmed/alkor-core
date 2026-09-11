@@ -241,6 +241,13 @@ Such a profile imports the package rather than relative paths:
 import { extract, openTrace, type ProfileModule } from 'medextract'
 ```
 
+That bare specifier resolves by **installing this repository from a path** — `npm install
+file:../medextract`, or `npm link` — which symlinks it. There is no registry package and
+there will not be one: Node runs this repository by stripping types, and it refuses to
+strip types for files under `node_modules`, so a copy placed there cannot be loaded at all.
+A symlink is read through to its real path and loads normally, which is why the path form
+is the supported one and a git dependency — which npm copies — is not.
+
 `src/index.ts` is the whole of what a profile may import: core, the modes and the
 transport. The profiles themselves and the CLI's wiring are not exported — they consume
 that contract rather than being part of it — and `exports` names the entry point and
@@ -441,7 +448,7 @@ eval's verifier-shape transform:
 node src/cli.ts eval --profile clinical-verified --input "<synthetic clinical note>"
 ```
 
-## Traces
+## Verification
 
 Verification operates at three levels:
 

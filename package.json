@@ -12,13 +12,7 @@
     "medextract-server": "./src/server.ts",
     "medextract-tui": "./src/tui.ts"
   },
-  "files": [
-    "src",
-    "scripts",
-    "spec",
-    "LICENSE",
-    "README.md"
-  ],
+  "private": true,
   "engines": {
     "node": ">=24"
   },
