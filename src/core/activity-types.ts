@@ -11,6 +11,13 @@
  */
 export const ACTIVITY_SPEC = 1
 
+/**
+ * Request header carrying the stream identity a resuming client's `Last-Event-ID` belongs
+ * to. Lives with the event contract because both ends of the wire need it: the client sends
+ * it, and the server replays its whole buffer when the id is not its own.
+ */
+export const ACTIVITY_INSTANCE_HEADER = 'x-activity-instance'
+
 /** Correlation ids stamped by `withActivityScope`; dashboards group events by them. */
 export interface ActivityScope {
   runId?: string
@@ -48,6 +55,15 @@ interface BaseActivityEvent {
   seq: number
   ts: string
   kind: string
+  /**
+   * Which bus produced this event — a fresh id per `createActivity`, so per server process.
+   *
+   * `seq` is only monotonic WITHIN one bus: a restarted server counts from 1 again, and a
+   * watermark that cannot tell the two apart discards the new stream as stale while still
+   * reporting itself live. Optional so a stream from an older server stays readable; a
+   * reader that sees it change must reset its watermark (see `spec/activity.md`).
+   */
+  instanceId?: string
   runId?: string
   sessionId?: string
   requestId?: string

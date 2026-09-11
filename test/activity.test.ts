@@ -56,6 +56,25 @@ test('activity stamps activitySpec, seq, and ts', () => {
   assert.ok(r[0]!.ts.length > 0)
 })
 
+/**
+ * `seq` alone cannot be a reader's watermark: two buses both count from 1. The instance id
+ * is what tells a resuming reader "different stream" instead of "already seen it all".
+ */
+test('every event is stamped with the bus instance, and two buses differ', () => {
+  const a = createActivity()
+  const b = createActivity()
+  a.emit(anyEvent('server.ready'))
+  a.emit(anyEvent('server.ready'))
+  b.emit(anyEvent('server.ready'))
+
+  assert.ok(a.instanceId)
+  assert.notEqual(a.instanceId, b.instanceId)
+  assert.ok(a.recent().every((e) => e.instanceId === a.instanceId))
+  assert.equal(b.recent(1)[0]!.instanceId, b.instanceId)
+  // Same seq, different stream: indistinguishable without the id.
+  assert.equal(a.recent()[0]!.seq, b.recent()[0]!.seq)
+})
+
 test('seq is monotonic', () => {
   const a = createActivity()
   for (let i = 0; i < 5; i++) a.emit(anyEvent('server.ready'))

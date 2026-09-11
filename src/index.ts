@@ -120,6 +120,7 @@ export {
 // --- Activity: metadata-only operational events ---------------------------------------
 export {
   ACTIVITY_SPEC,
+  ACTIVITY_INSTANCE_HEADER,
   createActivity,
   nullActivity,
   withActivity,

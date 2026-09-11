@@ -168,6 +168,36 @@ test('seq gap is tolerated (events are not dropped)', () => {
   assert.equal(s.lastSeq, 5)
 })
 
+/**
+ * A restart resets the server's seq to 1, so the watermark must be scoped to the instance —
+ * otherwise the reducer discards the entire new stream as already-seen.
+ */
+test('a new instance id restarts the seq space instead of dropping events', () => {
+  let s = emptyState()
+  s = applyEvent(s, mkEvent({ kind: 'run.started', seq: 400, instanceId: 'bus-a', runId: 'r1', profile: 'clinical', inputChars: 10, inputDigest: 'a' }))
+  assert.equal(s.lastSeq, 400)
+
+  s = applyEvent(s, mkEvent({ kind: 'profile.loaded', seq: 1, instanceId: 'bus-b', name: 'clinical', mode: 'extract' }))
+  assert.equal(s.lastSeq, 1)
+  assert.equal(s.instanceId, 'bus-b')
+  assert.equal(s.profiles.length, 1)
+  // The previous server's runs are dropped, not merged: both processes count seq from 1, so
+  // the `stage-${seq}` fallback identity would fuse unrelated nodes across restarts.
+  assert.equal(s.runs.size, 0)
+  // Dedup still applies within the new instance.
+  const before = s
+  s = applyEvent(s, mkEvent({ kind: 'profile.loaded', seq: 1, instanceId: 'bus-b', name: 'other', mode: 'extract' }))
+  assert.equal(s, before)
+})
+
+test('an event without an instance id is judged on seq alone', () => {
+  let s = emptyState()
+  s = applyEvent(s, mkEvent({ kind: 'profile.loaded', seq: 2, instanceId: 'bus-a', name: 'a', mode: 'extract' }))
+  s = applyEvent(s, mkEvent({ kind: 'profile.loaded', seq: 1, name: 'b', mode: 'extract' }))
+  assert.equal(s.lastSeq, 2, 'older stream shape must not look like a restart')
+  assert.equal(s.profiles.length, 1)
+})
+
 // --- ActivitySpec refusal --------------------------------------------------------------------
 
 test('wrong activitySpec sets refused state', () => {

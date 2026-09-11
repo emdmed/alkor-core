@@ -30,7 +30,7 @@ import { runAgent } from './modes/agentic.ts'
 import { createSession, type Session, type TurnResult } from './modes/session.ts'
 import { runPipeline, buildPipeline } from './modes/pipeline.ts'
 import { defaultProvider } from './core/client.ts'
-import { createActivity, withActivity, withActivityScope, LLM_CALL_STAGE, type Activity, type ActivityEvent } from './core/activity.ts'
+import { createActivity, withActivity, withActivityScope, LLM_CALL_STAGE, ACTIVITY_INSTANCE_HEADER, type Activity, type ActivityEvent } from './core/activity.ts'
 import { EXTRACT_STAGES } from './modes/extract.ts'
 import type { Pack } from './core/pack.ts'
 import type { ProfileModule } from './core/profile.ts'
@@ -82,7 +82,7 @@ const corsHeaders = (origin: string | undefined): Record<string, string> => {
   return {
     'Access-Control-Allow-Origin': origin,
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Accept, Last-Event-ID',
+    'Access-Control-Allow-Headers': `Content-Type, Accept, Last-Event-ID, ${ACTIVITY_INSTANCE_HEADER}`,
     'Access-Control-Max-Age': '86400',
   }
 }
@@ -90,6 +90,31 @@ const corsHeaders = (origin: string | undefined): Record<string, string> => {
 export interface ServerOptions {
   /** Process seams used by server tests; production uses the real llama-server lifecycle. */
   llamaManager?: Pick<LlamaManagerOptions, 'binary' | 'pollMs' | 'probe' | 'spawn' | 'startTimeoutMs'>
+  /** Per-SSE-client queue cap; a test shrinks it to reach the overflow path deliberately. */
+  sseBufferBytes?: number
+}
+
+/** The bounded-buffer part of an SSE response: what a fan-out may still use it for. */
+export type SseWriteVerdict = 'ok' | 'gone' | 'overflow'
+
+/**
+ * One write to one SSE client, with the two facts a fan-out must respect.
+ *
+ * A write to a response that has already gone away fails on a LATER tick, as an 'error'
+ * event rather than a throw, so the state is checked before writing instead of wrapped in a
+ * `try`. And an unread response queues in this process: past the cap the caller ends it, and
+ * the client recovers through the same reconnect-and-replay path as any dropped connection.
+ * Kept separate from the server closure so the overflow branch can be tested without
+ * arranging a megabyte of real backpressure.
+ */
+export const sseWrite = (
+  res: Pick<ServerResponse, 'write' | 'writableEnded' | 'destroyed' | 'writableLength'>,
+  payload: string,
+  bufferBytes: number,
+): SseWriteVerdict => {
+  if (res.writableEnded || res.destroyed) return 'gone'
+  res.write(payload)
+  return res.writableLength > bufferBytes ? 'overflow' : 'ok'
 }
 
 export const createServer = async (configPath?: string, options: ServerOptions = {}): Promise<Server> => {
@@ -369,7 +394,9 @@ export const createServer = async (configPath?: string, options: ServerOptions =
     output: output ?? null,
   })
 
-  // SSE helpers
+  // SSE helpers. A client that stops reading costs this server a bounded amount of memory
+  // and nothing else; 1 MiB is thousands of events of slack before the connection is cut.
+  const sseBufferBytes = options.sseBufferBytes ?? 1 << 20
   const sseClients = new Set<ServerResponse>()
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null
 
@@ -384,27 +411,31 @@ export const createServer = async (configPath?: string, options: ServerOptions =
     if (typeof sweepTimer.unref === 'function') sweepTimer.unref()
   }
 
+  const dropClient = (res: ServerResponse) => {
+    sseClients.delete(res)
+    if (!res.writableEnded) res.end()
+  }
+
+  /** One write to one SSE client, acting on the verdict from `sseWrite`. */
+  const writeToClient = (res: ServerResponse, payload: string) => {
+    const verdict = sseWrite(res, payload, sseBufferBytes)
+    if (verdict === 'gone') sseClients.delete(res)
+    else if (verdict === 'overflow') dropClient(res)
+  }
+
   const startHeartbeat = () => {
     if (heartbeatTimer) return
     heartbeatTimer = setInterval(() => {
       for (const res of sseClients) {
-        try {
-          res.write(': ping\n\n')
-        } catch {
-          // Client gone; cleanup happens on close.
-        }
+        writeToClient(res, ': ping\n\n')
       }
     }, 15_000)
+    // Unref'd like the idle sweep: a heartbeat must never be the reason the process lives.
+    if (typeof heartbeatTimer.unref === 'function') heartbeatTimer.unref()
   }
 
   const sendEvent = (res: ServerResponse, event: ActivityEvent) => {
-    try {
-      res.write(`id: ${event.seq}\n`)
-      res.write(`event: ${event.kind}\n`)
-      res.write(`data: ${JSON.stringify(event)}\n\n`)
-    } catch {
-      // Client disconnected mid-write.
-    }
+    writeToClient(res, `id: ${event.seq}\nevent: ${event.kind}\ndata: ${JSON.stringify(event)}\n\n`)
   }
 
   const activityUnsub = activity.subscribe((event) => {
@@ -505,6 +536,9 @@ export const createServer = async (configPath?: string, options: ServerOptions =
           activity: {
             buffered: activity.recent().length,
             subscribers: sseClients.size,
+            // The stream identity stamped on every event: a poller that sees it change knows
+            // the seq space restarted, without waiting for an event to prove it.
+            instance: activity.instanceId,
           },
         })
         done(200)
@@ -519,13 +553,28 @@ export const createServer = async (configPath?: string, options: ServerOptions =
           Connection: 'keep-alive',
           ...cors,
         })
+        // A write to a vanished client surfaces as an async 'error' on the response; with
+        // no listener that is an uncaught exception taking the server down mid-fan-out.
+        res.on('error', () => dropClient(res))
         res.write(':ok\n\n')
 
-        // Replay ring buffer from Last-Event-ID, or all recent.
-        const lastId = req.headers['last-event-id']
-        const recent = activity.recent()
-        const startSeq = typeof lastId === 'string' ? parseInt(lastId, 10) : 0
-        for (const event of recent) {
+        // Replay: resume from Last-Event-ID only when the seq it names was issued by THIS
+        // process. A restarted server counts from 1 again, so a stale watermark would skip
+        // the whole buffer — including the profile and model facts a dashboard renders from.
+        const header = (name: string): string | undefined => {
+          const raw = req.headers[name]
+          return Array.isArray(raw) ? raw[0] : raw
+        }
+        const lastId = Number.parseInt(header('last-event-id') ?? '', 10)
+        const claimed = header(ACTIVITY_INSTANCE_HEADER)
+        // A seq from a DIFFERENT process says nothing about what this one has sent, so it is
+        // discarded. A client that names no instance (a bare EventSource, which cannot set
+        // headers) is taken at its word — it has no way to tell us any better.
+        const resumable = claimed === undefined || claimed === activity.instanceId
+        // An unparseable header means "I don't know where I was", i.e. send everything —
+        // not the NaN comparison that silently suppressed every replayed event.
+        const startSeq = resumable && Number.isFinite(lastId) ? lastId : 0
+        for (const event of activity.recent()) {
           if (event.seq > startSeq) sendEvent(res, event)
         }
 
@@ -538,10 +587,12 @@ export const createServer = async (configPath?: string, options: ServerOptions =
             clearInterval(heartbeatTimer)
             heartbeatTimer = null
           }
+          // The envelope closes when the STREAM does. Reporting it at open told the feed a
+          // connection held for hours had completed in two milliseconds.
+          done(200)
         })
 
         // Keep the response open.
-        done(200)
         return
       }
 
@@ -1107,6 +1158,16 @@ export const createServer = async (configPath?: string, options: ServerOptions =
   })
 
   // Server-level cleanup
+  // `close()` waits for open connections to finish, and an SSE stream never finishes on its
+  // own — so a server with a dashboard attached would never close, and the cleanup below
+  // (which clears the heartbeat and stops managed backends) would never run. Ending the
+  // feeds is part of closing: each client reconnects if the server comes back.
+  const nativeClose = server.close.bind(server)
+  server.close = ((cb?: (err?: Error) => void) => {
+    for (const res of [...sseClients]) dropClient(res)
+    return nativeClose(cb)
+  }) as typeof server.close
+
   server.on('close', () => {
     activityUnsub()
     if (heartbeatTimer) {

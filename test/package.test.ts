@@ -43,6 +43,7 @@ const CONTRACT = [
   'stateRoot',
   // activity
   'ACTIVITY_SPEC',
+  'ACTIVITY_INSTANCE_HEADER',
   'createActivity',
   'nullActivity',
   'withActivity',

@@ -1,12 +1,23 @@
 # Activity event format
 
-The activity feed is an in-process bus of metadata-only operational events, exposed live over `GET /events` (SSE). Every event carries `activitySpec`, `seq`, `ts`, and `kind`.
+The activity feed is an in-process bus of metadata-only operational events, exposed live over `GET /events` (SSE). Every event carries `activitySpec`, `seq`, `ts`, `kind`, and `instanceId`.
 
 ## Versioning
 
 `activitySpec` mirrors `traceSpec`: the unit of the stream is the event, and a reader must be able to refuse a future shape. A consumer that does not recognise the `activitySpec` version should drop the connection rather than parse events it cannot trust.
 
 Current value: `1` (`ACTIVITY_SPEC`).
+
+## Stream identity: `instanceId`
+
+`seq` is monotonic **within one bus**, i.e. within one server process. A restarted server counts from 1 again, so a watermark held as a bare `seq` rejects the entire new stream as already-seen — silently, while the connection still reports itself live. `instanceId` (a fresh id per `createActivity`) is what makes the watermark a `(instanceId, seq)` pair.
+
+Rules for a reader:
+
+- Dedup and gap tolerance apply only while `instanceId` is unchanged.
+- A changed `instanceId` resets the watermark and invalidates everything derived from the old stream. Ids that fall back to `seq` — notably the reducer's `stage-${seq}` — would otherwise collide across processes and fuse unrelated nodes, so run history from the previous instance is dropped rather than merged.
+- The field is optional on the wire: a stream that omits it is judged on `seq` alone, exactly as before it existed.
+- `GET /health` reports the same value as `activity.instance`, so a poller can see a restart without waiting for an event.
 
 ## Event catalogue
 
@@ -82,9 +93,12 @@ A single `completed` emission (no `started` pair) is valid for a leaf decision �
 - `Content-Type: text/event-stream`
 - One frame per event: `id: <seq>` + `event: <kind>` + `data: <json>`
 - On connect, replay the ring buffer, then live events
-- `Last-Event-ID` resumes from `seq`
-- `: ping` heartbeat every 15s
-- Slow client overflow ends the response; the client reconnects and replays
+- `Last-Event-ID` resumes from `seq`, paired with `X-Activity-Instance` (`ACTIVITY_INSTANCE_HEADER`) naming the instance that seq belongs to. A seq from a *different* instance is discarded and the whole buffer is replayed, because it says nothing about what this process has sent; an unparseable value likewise replays everything rather than suppressing the replay. A client that names no instance — a bare `EventSource`, which cannot set headers — is taken at its word.
+- `: ping` heartbeat every 15s. It is there to be *measured*: a reader with no traffic for a few ping intervals drops the connection and reconnects, since a half-open socket is otherwise indistinguishable from a quiet server. Both shipped clients use a 45s idle timeout.
+- A client that stops reading is bounded, not accommodated: past 1 MiB queued for that response the server ends it, and the client recovers through the ordinary reconnect-and-replay path.
+- The `http.request`/`http.completed` envelope for `/events` itself closes when the *stream* does, so its `wallMs` is how long the feed was held open.
+- The server writes `id`/`event`/`data` with `: ` and LF terminators, but a reader parses the SSE grammar: optional space after the colon, CR / LF / CRLF terminators, repeated `data:` lines joined with newlines. A parser that only understands this server's exact bytes breaks on whatever ends up sitting between the two.
+- Closing the server ends attached streams. `close()` waits for open connections and an SSE stream never ends on its own, so the feeds are part of what gets closed; clients reconnect when the server returns.
 
 ## Metadata-only rule
 

@@ -4,7 +4,13 @@
  * this file is only the transport and the reconnect/backoff loop, mirroring `src/tui/sse.ts`.
  */
 import type { ActivityEvent } from '../../../src/core/activity-types.ts'
-import { SseFrameAccumulator, decideSseFrame, type SseConnectionStatus } from '../../../src/tui/sse-core.ts'
+import {
+  ACTIVITY_INSTANCE_HEADER,
+  SseFrameAccumulator,
+  decideSseFrame,
+  type SseConnectionStatus,
+  type SseWatermark,
+} from '../../../src/tui/sse-core.ts'
 
 export interface SseClient {
   /** Close the connection and stop reconnecting. */
@@ -20,14 +26,21 @@ export interface SseOptions {
   /** Initial backoff in ms; doubles each attempt, capped at maxBackoffMs. */
   backoffMs?: number
   maxBackoffMs?: number
+  /**
+   * Drop and reconnect after this long with no bytes at all. `fetch` has no read timeout,
+   * so a half-open connection otherwise leaves the dashboard reading "live" forever — the
+   * server pings every 15s precisely so silence is diagnosable.
+   */
+  idleTimeoutMs?: number
 }
 
 export const createSseClient = (o: SseOptions): SseClient => {
   const { url, onEvent, onConnection } = o
   const backoffMs = o.backoffMs ?? 1000
   const maxBackoffMs = o.maxBackoffMs ?? 30_000
+  const idleTimeoutMs = o.idleTimeoutMs ?? 45_000
 
-  let lastSeq = 0
+  let mark: SseWatermark = { lastSeq: 0 }
   let closed = false
   let reconnectAttempt = 0
   let controller: AbortController | null = null
@@ -40,17 +53,44 @@ export const createSseClient = (o: SseOptions): SseClient => {
     const headers: Record<string, string> = {
       Accept: 'text/event-stream',
     }
-    if (lastSeq > 0) {
+    if (mark.lastSeq > 0) {
       // Resume from the last seen seq instead of replaying the whole ring buffer.
-      headers['Last-Event-ID'] = String(lastSeq)
+      headers['Last-Event-ID'] = String(mark.lastSeq)
+      // A seq only means something to the process that issued it; name that process, so a
+      // restarted server replays from the start instead of the client dropping its stream.
+      if (mark.instanceId) headers[ACTIVITY_INSTANCE_HEADER] = mark.instanceId
     }
 
-    controller = new AbortController()
+    const abort = new AbortController()
+    controller = abort
+    let idleTimer: number | null = null
+    const armIdleTimer = () => {
+      if (idleTimer !== null) window.clearTimeout(idleTimer)
+      idleTimer = window.setTimeout(() => abort.abort(), idleTimeoutMs)
+    }
+
+    const accumulator = new SseFrameAccumulator()
+
+    /** Apply the wire policy to whatever frames a chunk completed. Returns false to stop. */
+    const consume = (chunk: string): boolean => {
+      for (const frame of accumulator.push(chunk)) {
+        const decision = decideSseFrame(frame, mark)
+        if (decision.kind === 'event') {
+          mark = decision.watermark
+          onEvent(decision.event)
+        } else if (decision.kind === 'refused') {
+          onConnection?.({ kind: 'refused', reason: decision.reason })
+          closed = true
+          return false
+        }
+      }
+      return true
+    }
 
     try {
       const res = await fetch(url, {
         headers,
-        signal: controller.signal,
+        signal: abort.signal,
         cache: 'no-store',
       })
 
@@ -61,41 +101,25 @@ export const createSseClient = (o: SseOptions): SseClient => {
 
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
-      const accumulator = new SseFrameAccumulator()
+      armIdleTimer()
 
       while (true) {
         if (closed) break
         const { done, value } = await reader.read()
         if (done) {
           // A multi-byte character may span chunks; flush the decoder tail.
-          for (const frame of accumulator.push(decoder.decode())) {
-            const decision = decideSseFrame(frame, lastSeq)
-            if (decision.kind === 'event') {
-              lastSeq = decision.nextSeq
-              onEvent(decision.event)
-            } else if (decision.kind === 'refused') {
-              onConnection?.({ kind: 'refused', reason: decision.reason })
-              closed = true
-              break
-            }
-          }
+          consume(decoder.decode())
           break
         }
-        for (const frame of accumulator.push(decoder.decode(value, { stream: true }))) {
-          const decision = decideSseFrame(frame, lastSeq)
-          if (decision.kind === 'event') {
-            lastSeq = decision.nextSeq
-            onEvent(decision.event)
-          } else if (decision.kind === 'refused') {
-            onConnection?.({ kind: 'refused', reason: decision.reason })
-            closed = true
-            break
-          }
-        }
+        // Any traffic counts as alive, comments included — that is what a ping is for.
+        armIdleTimer()
+        if (!consume(decoder.decode(value, { stream: true }))) break
       }
     } catch {
       if (closed) return
-      // Connection error — schedule reconnect.
+      // Connection error (or the idle abort above) — schedule reconnect.
+    } finally {
+      if (idleTimer !== null) window.clearTimeout(idleTimer)
     }
 
     if (closed) return

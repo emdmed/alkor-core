@@ -11,7 +11,7 @@ import { once } from 'node:events'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createServer as createMedextractServer } from '../src/server.ts'
+import { createServer as createMedextractServer, sseWrite } from '../src/server.ts'
 
 process.env.MEDPROTOCOL_BIN = join(import.meta.dirname, 'fixtures', 'medprotocol.js')
 
@@ -41,10 +41,19 @@ const request = async (url: string, method: string, body?: unknown): Promise<{ s
   return { status: res.status, data }
 }
 
-/** Collect SSE frames from a raw HTTP response until timeout or socket close. */
-const collectSse = (url: string, timeoutMs = 300): Promise<{ id: string; event: string; data: string }[]> => {
+/**
+ * Collect SSE frames from a raw HTTP response until `until` is satisfied, or the timeout, or
+ * the socket closes. The predicate matters: an SSE stream never ends on its own, so a test
+ * that wants a specific event must be able to wait for THAT rather than guess a duration.
+ */
+const collectSse = (
+  url: string,
+  timeoutMs = 300,
+  until?: (frames: { id: string; event: string; data: string }[]) => boolean,
+): Promise<{ id: string; event: string; data: string }[]> => {
   return new Promise((resolve) => {
     const frames: { id: string; event: string; data: string }[] = []
+    let settled = false
     const req = httpGet(url, { headers: { Accept: 'text/event-stream' } }, (res) => {
       let buffer = ''
       const collect = () => {
@@ -60,6 +69,11 @@ const collectSse = (url: string, timeoutMs = 300): Promise<{ id: string; event: 
             else if (line.startsWith('data: ')) data = line.slice(6)
           }
           if (event || data) frames.push({ id, event, data })
+        }
+        if (!settled && until?.(frames)) {
+          settled = true
+          req.destroy()
+          resolve(frames)
         }
       }
       res.on('data', (chunk: Buffer) => {
@@ -80,8 +94,13 @@ const collectSse = (url: string, timeoutMs = 300): Promise<{ id: string; event: 
 test('health endpoint returns activity stats', async () => {
   const { url, close } = await startServer()
   try {
-    // Connect an SSE client via raw HTTP so we can destroy it cleanly.
-    const ssePromise = collectSse(`${url}/events`, 200)
+    // Connect an SSE client via raw HTTP so we can destroy it cleanly. The stream is held
+    // until the /health envelope closes — probing model backends takes longer than a fixed
+    // window, and an SSE read that expires early proves nothing about the feed.
+    const ssePromise = collectSse(`${url}/events`, 3000, (frames) =>
+      frames.some((f) => f.event === 'server.ready') &&
+      frames.some((f) => f.event === 'http.request') &&
+      frames.some((f) => f.event === 'http.completed'))
 
     // Wait for the SSE connection to open.
     await new Promise((r) => setTimeout(r, 50))
@@ -95,7 +114,10 @@ test('health endpoint returns activity stats', async () => {
     const frames = await ssePromise
     assert.ok(frames.some((f) => f.event === 'server.ready'))
     assert.ok(frames.some((f) => f.event === 'http.request'))
-    assert.ok(frames.some((f) => f.event === 'http.completed'))
+    const completed = frames
+      .filter((f) => f.event === 'http.completed' && f.data)
+      .map((f) => JSON.parse(f.data) as { path: string })
+    assert.ok(completed.some((e) => e.path === '/health'), 'the /health envelope closes on the wire')
   } finally {
     await close()
   }
@@ -174,13 +196,166 @@ test('SSE with high Last-Event-ID skips replay', async () => {
       setTimeout(() => { req.destroy(); resolve(frames) }, 100)
     })
 
-    // Should not contain any replayed events (since we asked for seq > 99999).
-    assert.ok(frames.length > 0, 'at least the :ok frame arrives')
-    const replayed = frames.filter((f) => f.event === 'http.request')
-    assert.equal(replayed.length, 0, 'no replayed events with high Last-Event-ID')
+    // Should not contain any replayed events (since we asked for seq > 99999). The reader
+    // above drops comment-only frames, so a stream that replays nothing yields nothing —
+    // the `:ok` handshake and the `: ping`s are not events.
+    assert.equal(frames.length, 0, 'no replayed events with high Last-Event-ID')
   } finally {
     await close()
   }
+})
+
+/** Collect frames with extra request headers, reusing the framing reader above. */
+const collectSseWith = (
+  url: string,
+  headers: Record<string, string>,
+  timeoutMs = 150,
+): Promise<{ id: string; event: string; data: string }[]> => {
+  return new Promise((resolve) => {
+    const frames: { id: string; event: string; data: string }[] = []
+    const req = httpGet(url, { headers: { Accept: 'text/event-stream', ...headers } }, (res) => {
+      let buffer = ''
+      const collect = () => {
+        let cut: number
+        while ((cut = buffer.indexOf('\n\n')) !== -1) {
+          const frame = buffer.slice(0, cut)
+          buffer = buffer.slice(cut + 2)
+          let id = '', event = '', data = ''
+          for (const line of frame.split('\n')) {
+            if (line.startsWith('id: ')) id = line.slice(4)
+            else if (line.startsWith('event: ')) event = line.slice(7)
+            else if (line.startsWith('data: ')) data = line.slice(6)
+          }
+          if (event || data) frames.push({ id, event, data })
+        }
+      }
+      res.on('data', (chunk: Buffer) => { buffer += chunk.toString('utf8'); collect() })
+      res.on('end', () => { collect(); resolve(frames) })
+      res.on('close', () => { collect(); resolve(frames) })
+    })
+    req.on('error', () => resolve(frames))
+    setTimeout(() => { req.destroy(); resolve(frames) }, timeoutMs)
+  })
+}
+
+/**
+ * The bounded per-client buffer the spec promises. Before this the write's return value was
+ * ignored entirely, so a client that stopped reading grew this process without limit.
+ */
+test('sseWrite reports overflow once a client stops draining', () => {
+  const written: string[] = []
+  const client = {
+    writableEnded: false,
+    destroyed: false,
+    writableLength: 0,
+    write: (chunk: string) => {
+      written.push(chunk)
+      client.writableLength += chunk.length // nothing is draining
+      return true
+    },
+  }
+  assert.equal(sseWrite(client, 'data: small\n\n', 1000), 'ok')
+  client.writableLength = 999
+  assert.equal(sseWrite(client, 'x', 1000), 'ok', 'at the cap the client is still usable')
+  client.writableLength = 1000
+  assert.equal(sseWrite(client, 'x', 1000), 'overflow')
+  assert.equal(written.length, 3, 'the payload is written before the verdict is formed')
+})
+
+test('sseWrite refuses a response that has gone away instead of writing to it', () => {
+  const ended = { writableEnded: true, destroyed: false, writableLength: 0, write: () => { throw new Error('must not write') } }
+  assert.equal(sseWrite(ended, 'data: x\n\n', 1000), 'gone')
+  const destroyed = { writableEnded: false, destroyed: true, writableLength: 0, write: () => { throw new Error('must not write') } }
+  assert.equal(sseWrite(destroyed, 'data: x\n\n', 1000), 'gone')
+})
+
+test('every event carries this server instance id', async () => {
+  const { url, close } = await startServer()
+  try {
+    const health = await request(`${url}/health`, 'GET')
+    const instance = (health.data as { activity: { instance: string } }).activity.instance
+    assert.ok(instance, '/health reports the stream identity')
+
+    const frames = await collectSse(`${url}/events`, 150)
+    const events = frames.filter((f) => f.data).map((f) => JSON.parse(f.data) as { instanceId?: string })
+    assert.ok(events.length > 0)
+    assert.ok(events.every((e) => e.instanceId === instance), 'one identity for the whole stream')
+  } finally {
+    await close()
+  }
+})
+
+/**
+ * A seq issued by ANOTHER process is not a position in this one's buffer. Trusting it is how
+ * a dashboard reconnecting to a restarted server gets an empty stream and stays empty.
+ */
+test('SSE ignores a Last-Event-ID from a different instance and replays', async () => {
+  const { url, close } = await startServer()
+  try {
+    await request(`${url}/health`, 'GET')
+    const frames = await collectSseWith(`${url}/events`, {
+      'Last-Event-ID': '99999',
+      'x-activity-instance': 'some-other-server',
+    })
+    assert.ok(frames.some((f) => f.event === 'server.ready'), 'buffer replayed despite the high seq')
+  } finally {
+    await close()
+  }
+})
+
+test('SSE replays everything when Last-Event-ID is unparseable', async () => {
+  const { url, close } = await startServer()
+  try {
+    await request(`${url}/health`, 'GET')
+    const frames = await collectSseWith(`${url}/events`, { 'Last-Event-ID': 'not-a-number' })
+    assert.ok(frames.some((f) => f.event === 'server.ready'), 'a garbage header must not suppress replay')
+  } finally {
+    await close()
+  }
+})
+
+/**
+ * The http envelope belongs to the STREAM's lifetime. Closing it at open reported a
+ * connection held for hours as a two-millisecond request.
+ */
+test('SSE http.completed is emitted when the stream closes, not when it opens', async () => {
+  const { url, close } = await startServer()
+  try {
+    await collectSse(`${url}/events`, 150)
+    // Read the buffer through a second connection: the first one's envelope must be closed
+    // by now, and its duration must cover the time the stream was actually held open.
+    const frames = await collectSse(`${url}/events`, 150)
+    const completed = frames
+      .filter((f) => f.event === 'http.completed' && f.data)
+      .map((f) => JSON.parse(f.data) as { path: string; wallMs: number })
+      .filter((e) => e.path === '/events')
+    assert.equal(completed.length, 1, 'exactly the closed stream is reported completed')
+    assert.ok(completed[0]!.wallMs > 100, `envelope should span the stream, got ${completed[0]!.wallMs}ms`)
+  } finally {
+    await close()
+  }
+})
+
+/**
+ * `close()` waits for open connections, and an SSE stream never ends by itself. Without the
+ * feeds being closed as part of closing, a server with a dashboard attached shuts down never
+ * — and the cleanup that stops managed backends never runs.
+ */
+test('closing the server ends attached SSE streams instead of hanging', async () => {
+  const server = await createMedextractServer()
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const { port } = server.address() as { port: number }
+
+  // Hold a real SSE connection open, then close WITHOUT closeAllConnections().
+  const streaming = collectSse(`http://127.0.0.1:${port}/events`, 5000)
+  await new Promise((r) => setTimeout(r, 100))
+  const health = await request(`http://127.0.0.1:${port}/health`, 'GET')
+  assert.equal((health.data as { activity: { subscribers: number } }).activity.subscribers, 1)
+
+  server.close()
+  await once(server, 'close') // hangs forever if the stream is not ended
+  await streaming
 })
 
 // --- Pipeline handoff edge ------------------------------------------------------------------

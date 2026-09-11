@@ -26,6 +26,7 @@ import {
 // without dragging in node:async_hooks. This module owns the bus; it re-exports the shapes.
 export {
   ACTIVITY_SPEC,
+  ACTIVITY_INSTANCE_HEADER,
   type ActivityScope,
   type StageDetail,
   type TemplateRefEntry,
@@ -134,6 +135,8 @@ export interface Activity {
   emit(e: ActivityInput & Record<string, unknown>): void
   subscribe(fn: (e: ActivityEvent) => void): () => void
   recent(n?: number): ActivityEvent[]
+  /** Identity of THIS bus, stamped on every event so a reader can detect a restart. */
+  readonly instanceId: string
 }
 
 export interface ActivityOptions {
@@ -145,6 +148,10 @@ export const createActivity = (o: ActivityOptions = {}): Activity => {
   const subscribers = new Set<(e: ActivityEvent) => void>()
   const ring: ActivityEvent[] = []
   let seq = 0
+  // One id per bus, i.e. per server process. `seq` restarts at 1 in a new process, so this
+  // is what tells a resuming reader "different stream, drop your watermark" instead of
+  // silently discarding every event as already-seen.
+  const instanceId = randomUUID()
 
   const emit = (e: ActivityInput) => {
     assertMetadataOnly(e)
@@ -153,6 +160,7 @@ export const createActivity = (o: ActivityOptions = {}): Activity => {
       activitySpec: ACTIVITY_SPEC,
       seq: ++seq,
       ts: new Date().toISOString(),
+      instanceId,
       ...scope,
       ...e,
     } as ActivityEvent
@@ -179,7 +187,7 @@ export const createActivity = (o: ActivityOptions = {}): Activity => {
     return ring.slice(ring.length - take)
   }
 
-  return { emit, subscribe, recent }
+  return { emit, subscribe, recent, instanceId }
 }
 
 /** No-op activity, same role as `nullTrace()`. */
@@ -187,6 +195,7 @@ export const nullActivity = (): Activity => ({
   emit: () => {},
   subscribe: () => () => {},
   recent: () => [],
+  instanceId: 'null',
 })
 
 // --- Provider wrapper -----------------------------------------------------------------------

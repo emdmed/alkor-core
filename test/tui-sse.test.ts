@@ -82,11 +82,12 @@ const collectEvents = (url: string, o?: Partial<SseOptions>): {
   return { events, connections, client }
 }
 
-const baseEvent = (seq: number, kind: ActivityEvent['kind']): ActivityEvent => ({
+const baseEvent = (seq: number, kind: ActivityEvent['kind'], instanceId = 'bus-a'): ActivityEvent => ({
   activitySpec: ACTIVITY_SPEC,
   seq,
   ts: new Date().toISOString(),
   kind,
+  instanceId,
 } as ActivityEvent)
 
 test('SSE client receives events on connect', async () => {
@@ -218,6 +219,83 @@ test('SSE wrong activitySpec sets refused and stops reconnecting', async () => {
   badServer.closeAllConnections()
   badServer.close()
   await once(badServer, 'close')
+})
+
+/**
+ * The restart that actually happens: a NEW process, so `seq` counts from 1 again and the
+ * instance id changes. Judged on seq alone every event looks stale and the client goes
+ * permanently silent while reporting itself live.
+ */
+test('SSE reconnect to a restarted server whose seq resets still delivers events', async () => {
+  const port = 19_008
+  const first = await startSseServer(port)
+  const { events, connections, client } = collectEvents(`http://127.0.0.1:${port}/events`)
+
+  await setTimeout(50)
+  first.sendEvent(baseEvent(1, 'server.ready', 'bus-a'))
+  first.sendEvent(baseEvent(7, 'run.completed', 'bus-a'))
+  await setTimeout(50)
+  await first.close()
+
+  const second = await startSseServer(port)
+  await setTimeout(150) // reconnect
+  second.sendEvent(baseEvent(1, 'server.ready', 'bus-b'))
+  second.sendEvent(baseEvent(2, 'profile.loaded', 'bus-b'))
+  await setTimeout(50)
+
+  assert.deepEqual(
+    events.map((e) => `${e.instanceId}:${e.seq}`),
+    ['bus-a:1', 'bus-a:7', 'bus-b:1', 'bus-b:2'],
+  )
+  // The resume attempt names the instance its seq belongs to, so a server that does not
+  // recognise the id can replay from the start of its buffer instead of trusting the number.
+  const resume = second.headers()[0]!
+  assert.equal(resume['last-event-id'], '7')
+  assert.equal(resume['x-activity-instance'], 'bus-a')
+  assert.ok(connections.some((c) => c.kind === 'reconnecting'))
+
+  client.close()
+  await second.close()
+})
+
+/**
+ * The heartbeat exists so silence is diagnosable; nothing measured it before, so a
+ * half-open connection sat at `live` forever.
+ */
+test('SSE reconnects when no traffic arrives within the idle timeout', async () => {
+  const port = 19_014
+  const server = await startSseServer(port)
+  const { events, connections, client } = collectEvents(`http://127.0.0.1:${port}/events`, {
+    idleTimeoutMs: 150,
+  })
+  // Connection counts, not elapsed time: a reconnect is a second request on the same port.
+  const connects = () => server.headers().length
+  const until = async (what: string, done: () => boolean) => {
+    for (let i = 0; i < 100 && !done(); i++) await setTimeout(20)
+    assert.ok(done(), what)
+  }
+
+  try {
+    await until('client should connect', () => connects() === 1)
+
+    // A ping is traffic: it must postpone the drop, not be ignored for liveness.
+    for (let i = 0; i < 4; i++) {
+      server.sendHeartbeat()
+      await setTimeout(100)
+    }
+    assert.equal(connects(), 1, 'heartbeats should have held the connection open')
+
+    // Now go quiet past the timeout.
+    await until('idle connection should be dropped and reopened', () => connects() > 1)
+    assert.ok(connections.some((c) => c.kind === 'reconnecting'))
+
+    // The reopened connection is a working one.
+    server.sendEvent(baseEvent(1, 'server.ready'))
+    await until('reopened connection should deliver', () => events.length === 1)
+  } finally {
+    client.close()
+    await server.close()
+  }
 })
 
 test('SSE reconnect on server kill resumes without duplicates', async () => {

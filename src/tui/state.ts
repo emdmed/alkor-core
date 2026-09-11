@@ -176,6 +176,8 @@ export interface ProjectState {
   eventLog: ActivityEvent[]
   connection: ConnectionStatus
   lastSeq: number
+  /** Which server process `lastSeq` counts in; a change means the seq space restarted. */
+  instanceId?: string
   activitySpecRefused?: boolean
 }
 
@@ -247,8 +249,17 @@ export const tokPerSec = (r: LlmRequestEntry): number | undefined => {
 }
 
 export const applyEvent = (state: ProjectState, event: ActivityEvent): ProjectState => {
+  // A different bus is a different seq space, so the watermark below does not apply to it.
+  // Its history is dropped rather than merged: stage ids fall back to `stage-${seq}`, which
+  // two processes both counting from 1 would collide on, fusing unrelated nodes into one.
+  const restarted =
+    state.instanceId !== undefined &&
+    event.instanceId !== undefined &&
+    event.instanceId !== state.instanceId
+  const from = restarted ? clearExecutionHistory(state) : state
+
   // Defensive: seq should be monotonic, but tolerate gaps and ignore duplicates.
-  if (event.seq <= state.lastSeq) {
+  if (!restarted && event.seq <= state.lastSeq) {
     return state // duplicate or out of order — ignore
   }
 
@@ -263,9 +274,10 @@ export const applyEvent = (state: ProjectState, event: ActivityEvent): ProjectSt
   }
 
   const next: ProjectState = {
-    ...state,
+    ...from,
     lastSeq: event.seq,
-    eventLog: [...state.eventLog, event].slice(-1000),
+    instanceId: event.instanceId ?? from.instanceId,
+    eventLog: [...from.eventLog, event].slice(-1000),
   }
 
   switch (event.kind) {
