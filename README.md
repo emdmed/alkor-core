@@ -96,8 +96,10 @@ src/profiles/ clinical/    the reference profile: four tasks, names no vital sig
                            eval.ts      vital signs over the corpus, scored and gated
                            set-eval.ts  summary, note-format, transcript: set extraction, cited
                            clinical-router.ts  shape-based routing inside clinical (dialogue, dictation, exam-json, vitals-note, note)
+                           vitals-first.ts  the front door: read the vitals, run the CLI, then route
                            shock.ts     shock-category classification with rule-based reference arm
                            router-eval.ts   60-case confusion-matrix eval for the clinical router
+                           syndrome-routing-eval.ts  does a note reach shock, sepsis, or both arms
                            shock-eval.ts    20-case eval for shock category
                            review-note-format.ts   post-processing for note-format
                            review-shock.ts       post-processing for shock
