@@ -44,7 +44,7 @@ sentence. It cannot change the run's verdict; `stoppedEarly` is decided before i
 
 Which syndrome a document raises is a property of the *document*, and is decided one level
 down by the clinical router reading the note. A rule in the pipeline router should name a
-workflow that processes input **differently** — a coding task, a batch summary — never a
+workflow that processes input **differently** — a batch summary over many records — never a
 clinical question asked of the same workflow. See `src/profiles/workflow-router/profile.ts`.
 
 ## Stage is not a level

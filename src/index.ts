@@ -9,8 +9,8 @@
  *
  * **The rule is: everything a profile is written against, and nothing that is itself a
  * profile.** So `core/` and `modes/` are here in full — including the transport, because a
- * profile that measures tool-calling behaviour reaches it directly, as `profiles/coding`
- * does. What is deliberately absent is the layer above: the profiles, the CLI's argument
+ * profile that measures tool-calling behaviour reaches it directly. What is deliberately
+ * absent is the layer above: the profiles, the CLI's argument
  * wiring, and the window. Those are consumers of this contract, not part of it, and a
  * stranger who imports one has coupled to a decision rather than to an interface.
  *

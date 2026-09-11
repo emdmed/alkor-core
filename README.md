@@ -131,7 +131,7 @@ src/core/     config.ts    profiles.toml — which profiles exist, and what each
 src/modes/    extract.ts   single-shot constrained extraction; one retry, transport only
               agentic.ts   the tool loop, for one task run to completion
               session.ts   the same loop, multi-turn, with a consent gate
-              router.ts    rule-based intent routing (clinical / coding / transcriptor / verifier)
+              router.ts    rule-based intent routing (clinical / transcriptor / verifier)
               workflow.ts  generic multi-profile orchestration
 src/profiles/ clinical/    the reference profile: four tasks, names no vital sign
                            settings.ts  what the pack declares, and the refusals that make
@@ -149,7 +149,6 @@ src/profiles/ clinical/    the reference profile: four tasks, names no vital sig
                            shock-eval.ts    20-case eval for shock category
                            review-note-format.ts   post-processing for note-format
                            review-shock.ts       post-processing for shock
-              coding/      the agentic worked example: six tools, no pack
               router/      the top-level router profile: rule-based + model fallback
               verifier/    the verification specialist: checks extraction for hallucinations
               clinical-verified/   the verified workflow: extract → verify
@@ -310,10 +309,7 @@ npm run check           # npm test && npm run typecheck — what CI runs
 npm run profiles        # what is configured
 
 # start a server yourself — its flags are part of the measurement
-LLAMA_PORT=8082 LLAMA_MODEL=~/models/Qwen3-4B-Q4_K_M.gguf scripts/llama-server.sh -ngl 99
-
-node src/cli.ts eval  --profile coding
-node src/cli.ts agent --profile coding --task "fix the failing test" --workspace /tmp/wk
+LLAMA_PORT=8081 LLAMA_MODEL=~/models/gemma-4-E4B-it-Q4_0.gguf scripts/llama-server.sh -ngl 99
 
 # single-note extraction
 node src/cli.ts extract --profile clinical --note ward-round.txt --constrain
@@ -839,7 +835,6 @@ longer exists, so an entry there gets a new date rather than an edit.
 | pack format (`spec = 3`) | done — with a changelog the loader quotes when a pack is older |
 | out-of-tree profiles and packs | done |
 | public API (`medextract` entry point) | done |
-| agentic worked example (`coding`) | done |
 | reference clinical pack + corpus | done — 59 notes, 132 graded slots + 103 required items, rated 1-5 |
 | multi-task packs (`--task`, per-task floors, sub-gates) | done, tested |
 | provenance: quote verification + deletion-only derivation | done, tested |

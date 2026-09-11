@@ -30,7 +30,7 @@ const withEnv = (key: string, value: string | undefined, fn: () => void) => {
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'profile-seam-'))
 
 test('a profile with no module resolves to the built-in directory', () => {
-  assert.equal(resolveProfileModule('coding', { base: '/anywhere' }), undefined)
+  assert.equal(resolveProfileModule('clinical', { base: '/anywhere' }), undefined)
 })
 
 test('a configured module resolves against the config file, not the cwd', () => {

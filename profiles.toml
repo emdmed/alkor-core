@@ -61,16 +61,11 @@ router = "workflow-router"
 workflows = ["clinical-verified"]
 default = "clinical-verified"
 
-# The agentic worked example: six tools, no pack, no domain. It is here to exercise the
-# tool loop and to be read by someone writing their own profile.
-#
-# Needs a model whose chat template supports tools. gemma-3 does not, and the loop then
-# sees prose where it expects tool_calls.
-[coding]
-mode = "agentic"
-url = "http://127.0.0.1:8082"
-model = "~/models/Qwen3-4B-Q4_K_M.gguf"
-ctx = 32768
+# `mode = "agentic"` — the tool-calling loop — remains a mode this harness runs, and the
+# session endpoint is built on it, but no profile here declares one: a software-engineering
+# agent is not part of a medical project. A deployment that wants one points `module` at its
+# own profile, which needs a model whose chat template supports tools (gemma-3 does not, and
+# the loop then sees prose where it expects tool_calls).
 
 # The reference pack: vital-sign extraction from twelve synthetic clinical notes, English
 # and Spanish. Unlike every other pack the harness reads, this one lives IN this repository

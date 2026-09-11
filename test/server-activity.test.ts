@@ -15,6 +15,9 @@ import { createServer as createMedextractServer, sseWrite } from '../src/server.
 
 process.env.MEDPROTOCOL_BIN = join(import.meta.dirname, 'fixtures', 'medprotocol.js')
 
+/** A profile in agentic mode for the session tests; this project ships no built-in one. */
+const AGENT_PROFILE = join(import.meta.dirname, 'fixtures', 'agent-profile.mjs')
+
 const startServer = async (configPath?: string): Promise<{ server: Server; url: string; close: () => Promise<void> }> => {
   const server = await createMedextractServer(configPath)
   server.listen(0, '127.0.0.1')
@@ -529,8 +532,9 @@ test('session send emits turn.started and turn.completed', async () => {
   const tomlPath = join(dir, 'profiles.toml')
   writeFileSync(
     tomlPath,
-    `[coding]
+    `[assistant]
 mode = "agentic"
+module = "${AGENT_PROFILE}"
 url = "http://127.0.0.1:${stubPort}"
 `,
   )
@@ -538,7 +542,7 @@ url = "http://127.0.0.1:${stubPort}"
   const { url, close } = await startServer(tomlPath)
   try {
     const { status, data } = await request(`${url}/session`, 'POST', {
-      profile: 'coding',
+      profile: 'assistant',
       workspace: '/tmp',
       stream: false,
     })
@@ -571,12 +575,12 @@ test('session delete emits session.destroyed', async () => {
   const tomlPath = join(dir, 'profiles.toml')
   writeFileSync(
     tomlPath,
-    `[coding]\nmode = "agentic"\nurl = "http://127.0.0.1:${stubPort}"\n`,
+    `[assistant]\nmode = "agentic"\nmodule = "${AGENT_PROFILE}"\nurl = "http://127.0.0.1:${stubPort}"\n`,
   )
 
   const { url, close } = await startServer(tomlPath)
   try {
-    const { status, data } = await request(`${url}/session`, 'POST', { profile: 'coding', workspace: '/tmp' })
+    const { status, data } = await request(`${url}/session`, 'POST', { profile: 'assistant', workspace: '/tmp' })
     assert.equal(status, 200)
     const id = (data as any).id
 

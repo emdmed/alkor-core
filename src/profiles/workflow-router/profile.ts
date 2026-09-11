@@ -22,7 +22,7 @@ import { ConfigError, loadConfig, type PipelineConfig } from '../../core/config.
  * redundant in the same run.
  *
  * The mechanism stays because the vocabulary is right: a rule here should name a workflow
- * that processes input DIFFERENTLY — a coding task, a batch summary — not a clinical
+ * that processes input DIFFERENTLY — a batch summary over many records — not a clinical
  * question asked of the same pipeline.
  */
 export const WORKFLOW_RULES: RouteRule[] = []

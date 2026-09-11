@@ -15,6 +15,9 @@ import { join } from 'node:path'
 import { createServer as createMedextractServer } from '../src/server.ts'
 import type { SpawnFn } from '../src/core/llama-manager.ts'
 
+/** A profile in agentic mode for the session tests; this project ships no built-in one. */
+const AGENT_PROFILE = join(import.meta.dirname, 'fixtures', 'agent-profile.mjs')
+
 const startServer = async (configPath?: string): Promise<{ server: Server; url: string; close: () => Promise<void> }> => {
   const server = await createMedextractServer(configPath)
   server.listen(0, '127.0.0.1')
@@ -182,7 +185,7 @@ test('a session keeps its prompt in memory while its llama-server starts on dema
   const tomlPath = join(dir, 'profiles.toml')
   writeFileSync(
     tomlPath,
-    `[coding]\nmode = "agentic"\nurl = "http://127.0.0.1:${port}"\nmodel = "/models/fake.gguf"\n`,
+    `[assistant]\nmode = "agentic"\nmodule = "${AGENT_PROFILE}"\nurl = "http://127.0.0.1:${port}"\nmodel = "/models/fake.gguf"\n`,
   )
 
   const prompts: string[] = []
@@ -258,7 +261,7 @@ test('a session keeps its prompt in memory while its llama-server starts on dema
   const url = `http://127.0.0.1:${(medextract.address() as { port: number }).port}`
 
   try {
-    const created = await request(`${url}/session`, 'POST', { profile: 'coding', stream: false })
+    const created = await request(`${url}/session`, 'POST', { profile: 'assistant', stream: false })
     assert.equal(created.status, 200)
     assert.equal(starts, 0, 'creating an empty session does not wake the model')
 
@@ -555,17 +558,22 @@ module = "worker.mjs"
 })
 
 test('session create, reset, load, and delete', async () => {
-  const { url, close } = await startServer()
+  // Its own config, because the session lifecycle is what is under test and this project
+  // configures no agentic profile — a medical deployment has no reason to.
+  const dir = mkdtempSync(join(tmpdir(), 'medextract-session-test-'))
+  const tomlPath = join(dir, 'profiles.toml')
+  writeFileSync(tomlPath, `[assistant]\nmode = "agentic"\nmodule = "${AGENT_PROFILE}"\n`)
+  const { url, close } = await startServer(tomlPath)
 
   // Create
   const { status: createStatus, data: createData } = await request(`${url}/session`, 'POST', {
-    profile: 'coding',
+    profile: 'assistant',
     workspace: '/tmp',
   })
   assert.equal(createStatus, 200)
   const id = (createData as any).id
   assert.ok(typeof id === 'string')
-  assert.equal((createData as any).profile, 'coding')
+  assert.equal((createData as any).profile, 'assistant')
 
   // Reset
   const { status: resetStatus, data: resetData } = await request(`${url}/session/${id}/reset`, 'POST', {})
@@ -592,6 +600,7 @@ test('session create, reset, load, and delete', async () => {
   assert.equal(del2Status, 404)
 
   await close()
+  rmSync(dir, { recursive: true, force: true })
 })
 
 test('session send to nonexistent session', async () => {
@@ -630,13 +639,14 @@ test('session send with stub llama-server', async () => {
   await once(stub, 'listening')
   const { port: stubPort } = stub.address() as { port: number }
 
-  // Create a temp profiles.toml that points the coding profile at the stub.
+  // Create a temp profiles.toml that points the fixture agent profile at the stub.
   const dir = mkdtempSync(join(tmpdir(), 'medextract-server-test-'))
   const tomlPath = join(dir, 'profiles.toml')
   writeFileSync(
     tomlPath,
-    `[coding]
+    `[assistant]
 mode = "agentic"
+module = "${AGENT_PROFILE}"
 url = "http://127.0.0.1:${stubPort}"
 `,
   )
@@ -645,7 +655,7 @@ url = "http://127.0.0.1:${stubPort}"
 
   // Create session with stream: false so the server uses toolChat instead of streamChat.
   const { status, data } = await request(`${url}/session`, 'POST', {
-    profile: 'coding',
+    profile: 'assistant',
     workspace: '/tmp',
     stream: false,
   })
@@ -690,8 +700,9 @@ test('session send with streaming stub returns answer, not aborted', async () =>
   const tomlPath = join(dir, 'profiles.toml')
   writeFileSync(
     tomlPath,
-    `[coding]
+    `[assistant]
 mode = "agentic"
+module = "${AGENT_PROFILE}"
 url = "http://127.0.0.1:${stubPort}"
 `,
   )
@@ -699,7 +710,7 @@ url = "http://127.0.0.1:${stubPort}"
   const { url, close } = await startServer(tomlPath)
 
   const { status, data } = await request(`${url}/session`, 'POST', {
-    profile: 'coding',
+    profile: 'assistant',
     workspace: '/tmp',
     stream: true,
   })
@@ -755,8 +766,9 @@ test('session send with tool-calling stub returns tool result, not aborted', asy
   const tomlPath = join(dir, 'profiles.toml')
   writeFileSync(
     tomlPath,
-    `[coding]
+    `[assistant]
 mode = "agentic"
+module = "${AGENT_PROFILE}"
 url = "http://127.0.0.1:${stubPort}"
 `,
   )
@@ -764,7 +776,7 @@ url = "http://127.0.0.1:${stubPort}"
   const { url, close } = await startServer(tomlPath)
 
   const { status, data } = await request(`${url}/session`, 'POST', {
-    profile: 'coding',
+    profile: 'assistant',
     workspace: '/tmp',
     stream: false,
   })
