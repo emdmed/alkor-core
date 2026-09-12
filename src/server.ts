@@ -18,6 +18,7 @@
  *   DELETE /session/:id             — destroy a session
  */
 import { createServer as httpCreateServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http'
+import { corsAllowedOrigin, corsHeaders, json, replyFor, sseWrite, type Reply, type SseWriteVerdict } from './server/reply.ts'
 import { randomUUID, createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { statSync } from 'node:fs'
@@ -59,38 +60,7 @@ const isMain = (() => {
 /** SHA-256 digest of input text, truncated for event size. */
 const inputDigest = (text: string): string => createHash('sha256').update(text).digest('hex').slice(0, 16)
 
-/**
- * CORS is loopback-only by default. A browser dashboard is cross-origin by definition
- * (`localhost:5173` vs `127.0.0.1:3000`), but opening the feed to every website would let
- * any page you visit read it. Only loopback origins are accepted unless MEDEXTRACT_CORS
- * names others, or is `*` for an explicit blanket.
- */
-const corsAllowedOrigin = (rawOrigin: string | undefined): string | undefined => {
-  if (!rawOrigin) return undefined
-  const configured = (process.env.MEDEXTRACT_CORS ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)
-  if (configured.includes('*')) return '*'
-  if (configured.length > 0) return configured.includes(rawOrigin) ? rawOrigin : undefined
-  try {
-    const host = new URL(rawOrigin).hostname
-    if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return rawOrigin
-  } catch {
-    // Not a URL — a non-browser client; nobody reads it in a page, so no CORS contract.
-  }
-  return undefined
-}
-
-const corsHeaders = (origin: string | undefined): Record<string, string> => {
-  if (!origin) return {}
-  return {
-    'Access-Control-Allow-Origin': origin,
-    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': `Content-Type, Accept, Last-Event-ID, ${ACTIVITY_INSTANCE_HEADER}`,
-    'Access-Control-Max-Age': '86400',
-  }
-}
+export { sseWrite, type SseWriteVerdict }
 
 export interface ServerOptions {
   /** Process seams used by server tests; production uses the real llama-server lifecycle. */
@@ -99,29 +69,6 @@ export interface ServerOptions {
   sseBufferBytes?: number
   /** Resident-model budget in bytes; overrides MEDEXTRACT_MODEL_BUDGET. 0 is unbounded. */
   budgetBytes?: number
-}
-
-/** The bounded-buffer part of an SSE response: what a fan-out may still use it for. */
-export type SseWriteVerdict = 'ok' | 'gone' | 'overflow'
-
-/**
- * One write to one SSE client, with the two facts a fan-out must respect.
- *
- * A write to a response that has already gone away fails on a LATER tick, as an 'error'
- * event rather than a throw, so the state is checked before writing instead of wrapped in a
- * `try`. And an unread response queues in this process: past the cap the caller ends it, and
- * the client recovers through the same reconnect-and-replay path as any dropped connection.
- * Kept separate from the server closure so the overflow branch can be tested without
- * arranging a megabyte of real backpressure.
- */
-export const sseWrite = (
-  res: Pick<ServerResponse, 'write' | 'writableEnded' | 'destroyed' | 'writableLength'>,
-  payload: string,
-  bufferBytes: number,
-): SseWriteVerdict => {
-  if (res.writableEnded || res.destroyed) return 'gone'
-  res.write(payload)
-  return res.writableLength > bufferBytes ? 'overflow' : 'ok'
 }
 
 /**
@@ -495,11 +442,6 @@ export const createServer = async (configPath?: string, options: ServerOptions =
 
   // Response helpers take the request's CORS headers so every response (not just the
   // routes that use `ok` directly) can carry them.
-  const json = (res: ServerResponse, status: number, data: unknown, cors: Record<string, string> = {}) => {
-    res.writeHead(status, { 'Content-Type': 'application/json', ...cors })
-    res.end(JSON.stringify(data, null, 2))
-  }
-
   // POST /run has mode-specific detail, but every caller gets one stable place to read the
   // produced value. Keep the existing fields as diagnostics and compatibility surface.
   const runResult = <T extends object>(result: T, output: unknown): T & { output: unknown } => ({
@@ -567,12 +509,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
     // `extra` exists for one fact: the run id. An error that omits it tells a dashboard
     // that something failed but not WHICH run failed, so the feed cannot be searched for
     // what led up to it. Every refusal raised after a run id is minted carries it.
-    type ErrorExtra = Record<string, unknown> | undefined
-    const ok = (res: ServerResponse, data: unknown) => json(res, 200, data, cors)
-    const bad = (res: ServerResponse, message: string, extra?: ErrorExtra) => json(res, 400, { error: message, ...extra }, cors)
-    const notFound = (res: ServerResponse, message: string) => json(res, 404, { error: message }, cors)
-    const serverError = (res: ServerResponse, message: string, extra?: ErrorExtra) => json(res, 500, { error: message, ...extra }, cors)
-    const serviceUnavailable = (res: ServerResponse, message: string, extra?: ErrorExtra) => json(res, 503, { error: message, ...extra }, cors)
+    const { ok, bad, notFound, serverError, serviceUnavailable } = replyFor(res, cors)
 
     // Preflight for cross-origin PUT-ish requests (the dashboard's POSTs to /run, /session).
     // Resolved before the activity emit so the feed does not log browser noise.
@@ -602,7 +539,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
             topology: await topologyForProfile(name, mode),
           })),
         )
-        ok(res, {
+        ok({
           profiles: Object.keys(cfg.profiles),
           topology: {
             pipeline: cfg.pipeline,
@@ -681,7 +618,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
       // opened-file set, so browsing cannot write itself into a later run's digest.
       if (method === 'GET' && url.pathname === '/corpus') {
         const documents = listCorpus(declaredPacks())
-        ok(res, {
+        ok({
           documents,
           // Stated rather than counted by the client: a reader deciding whether to paste
           // one of these into a clinical tool should be told what they are, next to them.
@@ -696,11 +633,11 @@ export const createServer = async (configPath?: string, options: ServerOptions =
         const id = decodeURIComponent(url.pathname.slice('/corpus/'.length))
         try {
           const { document, text } = readCorpusDocument(declaredPacks(), id)
-          ok(res, { ...document, text })
+          ok({ ...document, text })
           done(200)
         } catch (e) {
           if (!(e instanceof CorpusError)) throw e
-          notFound(res, (e as Error).message)
+          notFound((e as Error).message)
           done(404)
         }
         return
@@ -762,7 +699,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
         const body = (await readBody(req)) as Record<string, unknown> | undefined
         const input = String(body?.input ?? '')
         if (!input) {
-          bad(res, 'input is required')
+          bad('input is required')
           done(400)
           return
         }
@@ -789,7 +726,6 @@ export const createServer = async (configPath?: string, options: ServerOptions =
             if (!ready) {
               backendReachability.set(routerUrl, false)
               serviceUnavailable(
-                res,
                 `no model backend is reachable at ${routerUrl} — ${manager.describe(routerUrl)}. ` +
                   'Start llama-server on it first (scripts/llama-server.sh), or check MEDEXTRACT_MANAGE_MODELS.',
               )
@@ -801,7 +737,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
           }
 
           if (!profile.review) {
-            serverError(res, `pinned router profile '${pinned.name}' exposes no review (mode ${profile.mode})`)
+            serverError(`pinned router profile '${pinned.name}' exposes no review (mode ${profile.mode})`)
             done(500)
             return
           }
@@ -815,7 +751,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
             activity,
           })
           if (!review.report || typeof review.report !== 'object') {
-            serverError(res, `pinned router profile '${pinned.name}' produced no route report`)
+            serverError(`pinned router profile '${pinned.name}' produced no route report`)
             done(500)
             return
           }
@@ -830,7 +766,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
           reason: result.reason,
           ruleVsModel: result.reason.startsWith('model:') ? 'model' : 'rule',
         })
-        ok(res, result)
+        ok(result)
         done(200)
         return
       }
@@ -843,12 +779,12 @@ export const createServer = async (configPath?: string, options: ServerOptions =
         let profileName = String(body?.profile ?? '')
         let pipelineRoute: RouteResult | undefined
         if (!automatic && !profileName) {
-          bad(res, 'profile is required')
+          bad('profile is required')
           done(400)
           return
         }
         if (!input) {
-          bad(res, 'input is required')
+          bad('input is required')
           done(400)
           return
         }
@@ -856,14 +792,14 @@ export const createServer = async (configPath?: string, options: ServerOptions =
         const runId = randomUUID()
         if (automatic) {
           if (!cfg.pipeline) {
-            bad(res, 'no product pipeline is configured', { runId })
+            bad('no product pipeline is configured', { runId })
             done(400)
             return
           }
           const forcedWorkflow = typeof body?.workflow === 'string' ? body.workflow : undefined
           if (forcedWorkflow) {
             if (!cfg.pipeline.workflows.includes(forcedWorkflow)) {
-              bad(res, `workflow '${forcedWorkflow}' is not in the pipeline catalogue`, { runId })
+              bad(`workflow '${forcedWorkflow}' is not in the pipeline catalogue`, { runId })
               done(400)
               return
             }
@@ -871,7 +807,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
           } else {
             const router = await loadProfile(cfg.pipeline.router)
             if (!router.profile.review) {
-              serverError(res, `pipeline router '${cfg.pipeline.router}' exposes no review`, { runId })
+              serverError(`pipeline router '${cfg.pipeline.router}' exposes no review`, { runId })
               done(500)
               return
             }
@@ -883,7 +819,6 @@ export const createServer = async (configPath?: string, options: ServerOptions =
               backendReachability.set(routerUrl, ready)
               if (!ready) {
                 serviceUnavailable(
-                  res,
                   `no model backend is reachable at ${routerUrl} — ${manager.describe(routerUrl)}. ` +
                     'Start llama-server on it first (scripts/llama-server.sh), or check MEDEXTRACT_MANAGE_MODELS.',
                   { runId },
@@ -903,14 +838,14 @@ export const createServer = async (configPath?: string, options: ServerOptions =
               activity,
             }))
             if (!review.report || typeof review.report !== 'object') {
-              serverError(res, `pipeline router '${cfg.pipeline.router}' produced no workflow route`, { runId })
+              serverError(`pipeline router '${cfg.pipeline.router}' produced no workflow route`, { runId })
               done(500)
               return
             }
             pipelineRoute = review.report as RouteResult
           }
           if (!cfg.pipeline.workflows.includes(pipelineRoute.profile)) {
-            serverError(res, `pipeline router selected workflow '${pipelineRoute.profile}' outside its catalogue`, { runId })
+            serverError(`pipeline router selected workflow '${pipelineRoute.profile}' outside its catalogue`, { runId })
             done(500)
             return
           }
@@ -933,7 +868,6 @@ export const createServer = async (configPath?: string, options: ServerOptions =
         // emits: it is the only key that ties the answer a caller holds to the feed that
         // explains how it was produced. A dashboard uses it to assemble the run's log.
         const respond = <T extends object>(result: T, output: unknown) => ok(
-          res,
           automatic
             ? { ...runResult(result, output), runId, workflow: profileName, route: pipelineRoute }
             : { ...runResult(result, output), runId },
@@ -1009,7 +943,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
             }
           }
           if (unusable[0]) {
-            serviceUnavailable(res, unusable[0], { runId })
+            serviceUnavailable(unusable[0], { runId })
             done(503)
             return
           }
@@ -1031,7 +965,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
             // Extract / router / code — one review call, three declared shapes.
             if (profile.mode === 'extract' || profile.mode === 'router' || profile.mode === 'code') {
               if (!profile.review) {
-                serverError(res, `profile '${profileName}' has no review implementation`, { runId })
+                serverError(`profile '${profileName}' has no review implementation`, { runId })
                 done(500)
                 return
               }
@@ -1057,7 +991,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
             // Agentic
             if (profile.mode === 'agentic') {
               if (!profile.tools) {
-                serverError(res, `profile '${profileName}' declares no tools`, { runId })
+                serverError(`profile '${profileName}' declares no tools`, { runId })
                 done(500)
                 return
               }
@@ -1086,7 +1020,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
             if (profile.mode === 'workflow') {
               const steps = profileConfig.steps as Array<Record<string, unknown>> | undefined
               if (!steps || !Array.isArray(steps)) {
-                serverError(res, `profile '${profileName}' has no 'steps' array in its config`, { runId })
+                serverError(`profile '${profileName}' has no 'steps' array in its config`, { runId })
                 done(500)
                 return
               }
@@ -1160,7 +1094,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
               return
             }
 
-            serverError(res, `mode '${profile.mode}' is not supported by the server`, { runId })
+            serverError(`mode '${profile.mode}' is not supported by the server`, { runId })
             done(500)
           } catch (e) {
             activity.emit({
@@ -1186,7 +1120,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
         const body = (await readBody(req)) as Record<string, unknown> | undefined
         const profileName = String(body?.profile ?? '')
         if (!profileName) {
-          bad(res, 'profile is required')
+          bad('profile is required')
           done(400)
           return
         }
@@ -1215,7 +1149,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
         // Retaining the URL here lets the first (and every post-idle) send wait for it.
         sessions.set(id, { profile: profileName, baseUrl: effectiveBaseUrl, session })
         activity.emit({ kind: 'session.created', sessionId: id, profile: profileName })
-        ok(res, { id, profile: profileName })
+        ok({ id, profile: profileName })
         done(200)
         return
       }
@@ -1225,13 +1159,13 @@ export const createServer = async (configPath?: string, options: ServerOptions =
       if (sessionMatch && method === 'POST') {
         const [, id, action] = sessionMatch
         if (!id) {
-          notFound(res, 'unknown route')
+          notFound('unknown route')
           done(404)
           return
         }
         const entry = sessions.get(id)
         if (!entry) {
-          notFound(res, `session '${id}' not found`)
+          notFound(`session '${id}' not found`)
           done(404)
           return
         }
@@ -1241,7 +1175,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
         if (action === 'send') {
           const text = String(body?.text ?? '')
           if (!text) {
-            bad(res, 'text is required')
+            bad('text is required')
             done(400)
             return
           }
@@ -1253,7 +1187,6 @@ export const createServer = async (configPath?: string, options: ServerOptions =
           backendReachability.set(entry.baseUrl, ready)
           if (!ready) {
             serviceUnavailable(
-              res,
               `no model backend is reachable at ${entry.baseUrl} — ${manager.describe(entry.baseUrl)}. ` +
                 'Start llama-server on it first (scripts/llama-server.sh), or check MEDEXTRACT_MANAGE_MODELS.',
             )
@@ -1303,14 +1236,14 @@ export const createServer = async (configPath?: string, options: ServerOptions =
                   }
                 : undefined,
             })
-            ok(res, result)
+            ok(result)
             done(200)
           })
         }
 
         if (action === 'reset') {
           entry.session.reset()
-          ok(res, { ok: true })
+          ok({ ok: true })
           done(200)
           return
         }
@@ -1318,17 +1251,17 @@ export const createServer = async (configPath?: string, options: ServerOptions =
         if (action === 'load') {
           const messages = body?.messages as unknown[] | undefined
           if (!messages || !Array.isArray(messages)) {
-            bad(res, 'messages array is required')
+            bad('messages array is required')
             done(400)
             return
           }
           entry.session.load(messages)
-          ok(res, { ok: true })
+          ok({ ok: true })
           done(200)
           return
         }
 
-        notFound(res, `unknown session action '${action}'`)
+        notFound(`unknown session action '${action}'`)
         done(404)
         return
       }
@@ -1337,26 +1270,26 @@ export const createServer = async (configPath?: string, options: ServerOptions =
         const match = url.pathname.match(/^\/session\/([^/]+)$/)
         const id = match?.[1]
         if (!id || !sessions.has(id)) {
-          notFound(res, `session '${id}' not found`)
+          notFound(`session '${id}' not found`)
           done(404)
           return
         }
         sessions.delete(id)
         activity.emit({ kind: 'session.destroyed', sessionId: id })
-        ok(res, { ok: true })
+        ok({ ok: true })
         done(200)
         return
       }
 
-      notFound(res, `unknown route ${method} ${url.pathname}`)
+      notFound(`unknown route ${method} ${url.pathname}`)
       done(404)
     } catch (e) {
       done(500)
       if (e instanceof ConfigError || e instanceof PackError || e instanceof ProfileError) {
-        return bad(res, e.message)
+        return bad(e.message)
       }
       console.error('Server error:', e)
-      return serverError(res, (e as Error).message)
+      return serverError((e as Error).message)
     }
   })
 
