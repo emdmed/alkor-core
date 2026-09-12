@@ -61,11 +61,21 @@ error. Always run `npm run check` (test + typecheck) before committing.
 
 1. Add the prompt, schema, and golden under `packs/clinical/`.
 2. Add the eval cases under `packs/clinical/evals/`.
-3. Update `src/profiles/clinical/contracts.ts` to register the task.
-4. Add scoring logic in `src/profiles/clinical/review-<task>.ts` or extend existing review.
-5. Update `src/profiles/clinical/eval.ts` to run the eval and set the floor.
-6. Update the corpus pin in `test/clinical.test.ts` if the denominator moves.
-7. Run `npm test` and the eval against the corpus; commit numbers with the change.
+3. Add a `CONTRACTS` entry in `src/profiles/clinical/contracts.ts` — the pack keys, the
+   sampling table and the document kind.
+4. Add a `TASK_SPECS` entry beside it. That one line is what makes the task exist: `TASKS`,
+   `GRADED_TASKS`, `TOOLING_TASKS`, `CLINICAL_TASKS`, `UNREVIEWABLE_TASKS`, `TASK_FEEDS`,
+   `TASK_ORDER` and the `Task` union are all derived from it. Set `graded: false` until the
+   eval in step 6 exists — a task that promises a number nobody computes is the one failure
+   `test/clinical.test.ts` checks for.
+5. Add scoring logic in `src/profiles/clinical/review-<task>.ts`, and wire it into the
+   `reviewers` table in `executeClinicalTask` (`profile.ts`). Anything declared
+   `reviewable: true` with no entry there fails the wiring test.
+6. Write the eval in `src/profiles/clinical/<task>-eval.ts` — build it on the shared helpers in
+   `eval-run.ts` rather than copying another eval's preamble — and wire it into the `EVALS`
+   table in `runEval`. Set the floor in the pack, not in the code.
+7. Update the corpus pin in `test/clinical.test.ts` if the denominator moves.
+8. Run `npm test` and the eval against the corpus; commit numbers with the change.
 
 ### Add a new mode
 
@@ -103,7 +113,7 @@ These are taken from `CONTRIBUTING.md` and are enforced by design, not by policy
 1. **No patient data, ever.** `packs/clinical/notes/` is synthetic and written for this
    repository. A note derived from, edited from, or "inspired by" a real record does not
    belong here. This is the one rule where a good-faith mistake is still unacceptable.
-2. **No number that was not measured.** Figures in the README and `RESULTS.md` come from a
+2. **No number that was not measured.** Figures in `docs/measured.md` and `RESULTS.md` come from a
    run on the corpus in this repository, and name the model, quantisation, and sampling.
    Do not round up, do not carry a number over, and do not edit an old result — add a new
    dated entry instead.
@@ -158,7 +168,8 @@ every number measured before it. Rules:
   moves. Update the pin in `test/clinical.test.ts` in the same commit and say what moved and why.
 - Changing a **prompt** means re-measuring. Say in the commit message what the numbers were
   before and after.
-- Changing a **floor** means updating `packs/clinical/evals/*-cases.json` and the README table.
+- Changing a **floor** means updating `packs/clinical/evals/*-cases.json` and the task table
+  in `docs/tasks.md`.
 - Adding a **new task** means adding its own floor, its own eval, and its own entry in the
   status table. Never let a new task inherit a floor from an old one.
 

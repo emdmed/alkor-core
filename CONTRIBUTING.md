@@ -51,7 +51,7 @@ writes completions verbatim only for a pack that says so — a pack that is sile
 trace content elided to a digest. Do not set that key on a pack of real notes to make a trace
 easier to read. It is the one line in a manifest that can put a record on disk.
 
-**No number that was not measured.** Figures in the README and in `RESULTS.md` come from a
+**No number that was not measured.** Figures in `docs/measured.md` and in `RESULTS.md` come from a
 run on the corpus in this repository, and name the model, the quantisation and the sampling
 that produced them. Do not round up, do not carry a number over from another corpus, and do
 not quote a result for contracts that have since changed — that gets a new dated entry, not

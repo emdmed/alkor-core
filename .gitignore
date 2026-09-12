@@ -10,12 +10,15 @@ node_modules/
 # the top level; source HTML lives in an app directory and is not this pattern's business.
 eval/
 /*.html
-shock_eval.txt
 
-# Workspace / planning scratch files
-next_steps.md
-k3_project_analysis.md
-clinical_routing_plan.md
+# Working notes and exploratory artifacts. One directory instead of a rule per filename:
+# the old arrangement meant every new scratch file needed a line here, and the ones nobody
+# added showed up as untracked noise in `git status`.
+scratch/
+
+# Kept at the repository root on purpose, and ignored by name rather than moved:
+# `shock_siagnostic_test.md` is cited as evidence of record in PRODUCT.md, and report.html
+# is the root-level report surface PRODUCT.md specifies (already covered by /*.html above).
 shock_siagnostic_test.md
 
 # Editor / tool artifacts
