@@ -193,7 +193,7 @@ wall-clock numbers are scrubbed.
 
 ---
 
-## 3. Split `src/server.ts` into a route table
+## 3. Split `src/server.ts` into a route table — DONE, `src/server/`
 
 **The problem.** 1375 lines, one request handler, one if-chain over `url.pathname`
 (lines 564, 649, 700, 778, 1124, 1163, 1275). The `POST /pipeline|/run` handler alone runs from
@@ -216,6 +216,36 @@ where it belongs.
 
 **Payoff.** The pipeline logic becomes testable without a server, and the CORS/error/activity
 policy stops being interleaved with domain work.
+
+### What actually shipped
+
+**server.ts 1436 -> 654 lines**, in four commits. The dispatcher is 32 lines; every handler is
+a module under `src/server/routes/`: `health.ts` (94), `corpus.ts` (35), `events.ts` (54),
+`route.ts` (89), `pipeline.ts` (370), `session.ts` (172). Alongside them: `reply.ts` (103,
+CORS + the five status replies), `sse.ts` (74, the fan-out), `deps.ts` (72).
+
+**`ServerDeps` states what the handlers share.** Every field was already reachable from every
+handler — they were one closure, so the dependency was total and invisible. Writing it down does
+not add coupling, it makes the coupling countable. The live objects are passed by reference: a
+handler with its own copy of the reachability map would answer from a second opinion about which
+backends are up.
+
+**The SSE fan-out had to become an object**, not loose functions, because two of its five members
+are mutable and shared — `heartbeatTimer` cannot be passed by value at all, and a handler
+receiving a copy of the client set would add itself to a set nobody broadcasts to.
+
+**Three things the typechecker caught that the tests did not.** Three `ServerDeps` signatures
+were guesses and all three were wrong (`loadPackForProfile` takes three arguments, `sessions`
+holds a wrapper around `Session`, `sseClients` is a `Set<ServerResponse>`); a `spawnable` map I
+had listed does not exist, because the grep suggesting it matched a comment. Removing the dead
+`createSession` import took `type Session` with it, and the full suite still passed — Node strips
+the type — which is exactly the trap `tsconfig.json`'s own header describes. And the mechanical
+rewrite of closure refs to `deps.*` broke object shorthand every time it touched one (`activity,`
+-> `deps.activity,`), eight times across two files.
+
+**Smoke-tested live, beyond the suite**: `/health`, `/corpus`, `/corpus/:id`, a 404 on an unknown
+document, an unknown route, session create with and without a profile, session delete, and the
+SSE handshake. 839/839 tests pass, typecheck clean.
 
 ---
 
