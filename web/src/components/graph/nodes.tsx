@@ -14,8 +14,10 @@ import { CompactWorkflowNode } from './CompactWorkflowNode.tsx'
 const statusClass = (status: GraphNodeData['status']): string =>
   status === 'active' ? 'g-active' : status === 'failed' ? 'g-failed' : status === 'done' ? 'g-done' : 'g-idle'
 
+// Sized here as well as in CSS: lucide defaults to 24px and Tailwind's preflight makes every
+// svg a block, so an unsized status glyph rendered at nearly twice its card's line height.
 const StatusGlyph = ({ status }: { status: GraphNodeData['status'] }) =>
-  status === 'active' ? <LoaderCircle className="status-spin" /> : status === 'done' ? <Check /> : status === 'failed' ? <X /> : <Circle />
+  status === 'active' ? <LoaderCircle size={13} className="status-spin" /> : status === 'done' ? <Check size={13} /> : status === 'failed' ? <X size={13} /> : <Circle size={13} />
 
 /** Small coloured graph node card — every real (non-group) node is one of these. */
 const Card = ({ data, children }: { data: GraphNodeData; children?: React.ReactNode }) => (
@@ -44,12 +46,12 @@ const Title = ({ data, chevron }: { data: GraphNodeData; chevron?: boolean }) =>
 
 const OperationBadge = ({ operation }: { operation: NonNullable<GraphNodeData['operation']> }) => {
   const content = operation === 'model'
-    ? { label: 'model', icon: <Cpu /> }
+    ? { label: 'model', icon: <Cpu size={11} /> }
     : operation === 'code'
-      ? { label: 'code', icon: <Braces /> }
+      ? { label: 'code', icon: <Braces size={11} /> }
       : operation === 'decision'
-        ? { label: 'route', icon: <GitBranch /> }
-        : { label: 'flow', icon: <Orbit /> }
+        ? { label: 'route', icon: <GitBranch size={11} /> }
+        : { label: 'flow', icon: <Orbit size={11} /> }
   return <span className={`g-work-badge g-work-badge-${operation}`}>{content.icon}{content.label}</span>
 }
 
@@ -64,7 +66,7 @@ export const InputNode = (props: NodeProps<GraphNode>) => {
   return (
     <div className="g-input">
       <Card data={data}>
-        <FileInput className="g-terminal-icon" aria-hidden="true" />
+        <FileInput size={12} className="g-terminal-icon" aria-hidden="true" />
         <Title data={data} />
         {data.detailText && <Meta>{data.detailText}</Meta>}
       </Card>
@@ -78,7 +80,7 @@ export const OutputNode = (props: NodeProps<GraphNode>) => {
   return (
     <div className="g-output">
       <Card data={data}>
-        <FileOutput className="g-terminal-icon" aria-hidden="true" />
+        <FileOutput size={12} className="g-terminal-icon" aria-hidden="true" />
         <Title data={data} />
         {data.wallMs != null && <Meta>{fmtSec(data.wallMs)}</Meta>}
         {data.detailText && <Meta className="g-err-text">{data.detailText}</Meta>}
@@ -222,7 +224,7 @@ export const BranchNode = (props: NodeProps<GraphNode>) => {
               data.onToggle?.()
             }}
           >
-            {data.expanded ? <ChevronDown /> : <ChevronRight />}
+            {data.expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
           </button>
         )}
       </Card>
@@ -273,7 +275,7 @@ export const GatewayNode = (props: NodeProps<GraphNode>) => {
             {/* Same sentence the compact cards use for a routing decision, so one canvas
                 does not name the same act two different ways. */}
             <span className="g-route-label">Route</span>
-            <ArrowRight aria-hidden="true" />
+            <ArrowRight size={11} aria-hidden="true" />
             <span className="g-route-line">{data.chosenProfile}</span>
             {data.confidence != null && <span className="g-conf">{(data.confidence * 100).toFixed(0)}% confidence</span>}
             {data.ruleVsModel && <span className="g-rule-vs">{data.ruleVsModel}</span>}

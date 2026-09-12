@@ -897,10 +897,12 @@ button, input, textarea, select { font: inherit; color: inherit; }
   color: var(--muted-foreground);
 }
 
-.legend-edge { width: 18px; height: 0; border-top: 2px solid var(--edge); flex: none; }
-.legend-edge-data { border-top-style: solid; border-color: var(--edge); }
-.legend-edge-branch { border-color: var(--edge-taken); }
-.legend-edge-ghost { border-top-style: dashed; border-color: var(--edge-ghost); }
+/* Each swatch is drawn at the weight and dash of the edge it names. A legend whose "possible
+   route" is a heavy dash while the canvas draws a fine dot is describing a different board. */
+.legend-edge { width: 18px; height: 0; flex: none; }
+.legend-edge-data { border-top: 1.5px solid var(--edge); }
+.legend-edge-branch { border-top: 2px solid var(--edge-taken); }
+.legend-edge-ghost { border-top: 1.5px dotted var(--edge-ghost); }
 
 .legend-now {
   width: 10px; height: 10px; flex: none;
@@ -990,8 +992,10 @@ button, input, textarea, select { font: inherit; color: inherit; }
   box-shadow: none;
 }
 
-/* A workflow the run did not take keeps its row in the catalogue, quietly. */
-.g-compact.is-muted { opacity: 0.6; }
+/* A workflow the run did not take keeps its row in the catalogue, quietly. Quietly, not
+   illegibly: at 0.6 the note that says WHY it is quiet — "not raised by this note" — fell
+   under the 4.5:1 floor against the canvas it sits on. */
+.g-compact.is-muted { opacity: 0.75; }
 .g-compact.is-muted:hover { opacity: 1; }
 
 .g-compact.is-active { border-color: var(--primary-border); }
@@ -1228,11 +1232,14 @@ button, input, textarea, select { font: inherit; color: inherit; }
   flex: none;
 }
 
+/* A profile name is an identifier, so it is compared rather than skimmed, and the 110px
+   cap this had cut `clinical-verifier` and `clinical-assessment` to `clinical-verif…` on a
+   card with room to spare. Wide enough for the names this product actually ships. */
 .c-step-profile {
   font-family: var(--font-mono);
   font-size: var(--t-data);
   color: var(--muted-foreground);
-  max-width: 110px;
+  max-width: 152px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1488,9 +1495,19 @@ button, input, textarea, select { font: inherit; color: inherit; }
   min-width: 0;
 }
 
-.g-meta, .g-detail, .g-prof, .g-shape, .g-conf, .g-rule-vs, .g-transfer, .g-entry-tag {
+.g-meta, .g-detail, .g-prof, .g-shape, .g-conf, .g-rule-vs, .g-transfer {
   font-size: var(--t-data);
   color: var(--muted-foreground);
+}
+
+/* Read once to find the front door, never compared — which is the 11px label step's whole
+   job, and the reason ENTRY is not a measured value set in mono. */
+.g-entry-tag {
+  font-size: var(--t-label);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--muted-foreground);
+  flex: none;
 }
 
 /*
@@ -1502,7 +1519,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
  * purely for flavour. On a surface whose audience was defined as wanting to see the
  * machinery WITHOUT reading JSON, that is the costume working against the brief.
  */
-.g-time, .g-profile, .g-entry-tag {
+.g-time, .g-profile {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
@@ -1513,9 +1530,11 @@ button, input, textarea, select { font: inherit; color: inherit; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 14px; height: 14px;
   flex: none;
   color: var(--muted-foreground);
 }
+.g-glyph svg { width: 13px; height: 13px; }
 .g-glyph.ok { color: var(--ok); }
 .g-glyph.err { color: var(--danger); }
 .g-glyph.faint { color: var(--g-300); }
@@ -1526,17 +1545,23 @@ button, input, textarea, select { font: inherit; color: inherit; }
 
 .g-terminal-icon { color: var(--muted-foreground); }
 
+/* What performs the work, as an orientation label: the 11px step, uppercase, on the muted
+   wash — never louder than the name of the node it sits beside. */
 .g-work-badge {
   display: inline-flex;
   align-items: center;
   gap: var(--s-1);
+  flex: none;
   padding: 1px var(--s-2);
   border-radius: var(--r-sm);
   font-size: var(--t-label);
   font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   background: var(--muted);
   color: var(--muted-foreground);
 }
+.g-work-badge svg { width: 11px; height: 11px; flex: none; }
 
 .g-route-label, .g-route-plan, .g-group-label, .g-decide {
   font-size: var(--t-data);
@@ -1568,14 +1593,29 @@ button, input, textarea, select { font: inherit; color: inherit; }
   white-space: nowrap;
 }
 .g-chip-dot { width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--g-500); flex: none; }
-.g-chip-meta { font-family: var(--font-mono); color: var(--muted-foreground); }
-.g-chip-copy, .g-chip-toggle {
+.g-chip-meta { color: var(--muted-foreground); }
+
+/*
+ * `.g-chip-copy` is the chip's TEXT — its name and its one line of metadata — and it was
+ * grouped with `.g-chip-toggle` here, so the whole run of words was laid out inside an
+ * 18x18 icon-button box and clipped to three characters. A route the note did not raise
+ * rendered as a pill reading "rai".
+ */
+.g-chip-copy {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  min-width: 0;
+  white-space: nowrap;
+}
+.g-chip-toggle {
   width: 18px; height: 18px;
   display: inline-flex; align-items: center; justify-content: center;
+  flex: none;
   border: none; border-radius: var(--r-sm);
   background: transparent; color: var(--muted-foreground); cursor: pointer;
 }
-.g-chip-copy:hover, .g-chip-toggle:hover { background: var(--muted); color: var(--foreground); }
+.g-chip-toggle:hover { background: var(--muted); color: var(--foreground); }
 
 .g-chev { color: var(--muted-foreground); }
 

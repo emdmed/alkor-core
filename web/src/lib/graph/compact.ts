@@ -600,6 +600,9 @@ const explodeWorkflow = (
   /** Place one trunk card on the spine and close any fan hanging above it. */
   const trunk = (card: GraphNode, width = COMPACT_W): void => {
     card.position = { x: TRUNK_CENTER_X - width / 2, y }
+    // Anything narrower than a workflow card is drawn at its text's width unless it is told
+    // otherwise, and then its centred handle no longer sits on the spine the layout put it on.
+    if (width !== COMPACT_W) card.style = { width }
     nodes.push(card)
     for (const { card: branch, taken } of merging) {
       // The merge says where a branch rejoins the workflow. A branch the note did not raise
@@ -719,7 +722,13 @@ export const buildCompactGraph = (
       detailText: `${gateway.workflows.length} workflow${gateway.workflows.length === 1 ? '' : 's'}${gateway.defaultWorkflow ? ` · default: ${gateway.defaultWorkflow}` : ''}`,
       operation: 'decision',
     })
-    gatewayNode.position = { x: MAIN_X, y: MAIN_Y }
+    // On the spine, at the column's width. A node with no width of its own is drawn as wide
+    // as its text, so the gateway's centred handle sat wherever its label happened to end —
+    // some 40px left of the card below it, and an orthogonal edge answers that with a
+    // dogleg. Telling the DOM the width the layout already reserved makes the edge a
+    // straight line, which is what a front door with one destination actually is.
+    gatewayNode.position = { x: TRUNK_CENTER_X - layoutWidthOf(gatewayNode) / 2, y: MAIN_Y }
+    gatewayNode.style = { width: layoutWidthOf(gatewayNode) }
     nodes.push(gatewayNode)
     yOffset = MAIN_Y + layoutHeightOf(gatewayNode) + ROW_GAP
 

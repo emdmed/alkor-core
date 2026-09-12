@@ -127,16 +127,21 @@ export const flowEdge = (
   sourceHandle = 's',
   targetHandle = 't',
 ): GraphEdge => {
+  // One weight per meaning, and the three are told apart by weight and dash before colour:
+  // a reference is the thinnest solid line, the path the run took is the heaviest, and a
+  // path it did not take is a fine dotted rule that reads as an absence rather than as the
+  // border of some container. The data stroke is `--edge` because that is the value the
+  // legend's own swatch paints, and a legend that does not match its edge explains nothing.
   const COLORS: Record<typeof kind, { stroke: string; width: number; dash?: string }> = {
-    data: { stroke: 'var(--secondary-foreground)', width: 1.5 },
-    branch: { stroke: 'var(--route-selected)', width: 2.4 },
-    ghost: { stroke: 'var(--route-possible)', width: 1.2, dash: '5 4' },
+    data: { stroke: 'var(--edge)', width: 1.5 },
+    branch: { stroke: 'var(--route-selected)', width: 2 },
+    ghost: { stroke: 'var(--route-possible)', width: 1.25, dash: '2 5' },
   }
-  // The edge into a node that is running right now carries the document: it takes the
-  // live colour and the marching dash, so "where is the work" is answerable from the
-  // canvas at any zoom, without reading a single label.
+  // The edge into a node that is running right now carries the document: it takes the live
+  // colour, so "where is the work" is answerable from the canvas at any zoom, without
+  // reading a single label.
   const live = target.data.status === 'active'
-  const c = live ? { stroke: 'var(--primary)', width: 2.4, dash: undefined } : COLORS[kind]
+  const c = live ? { stroke: 'var(--primary)', width: 2, dash: undefined } : COLORS[kind]
   return {
     id: `${source.id}→${target.id}${label ? `:${label}` : ''}`,
     source: source.id,
@@ -144,13 +149,26 @@ export const flowEdge = (
     className: live ? 'is-live' : undefined,
     sourceHandle,
     targetHandle,
-    type: kind === 'ghost' ? 'smoothstep' : 'smoothstep',
+    type: 'smoothstep',
+    // Orthogonal, but not mitred: a hard 90° corner is the default every node editor ships
+    // with, and on a board of 10px-radius cards it is the one shape that says nobody chose
+    // it. The radius is the card radius, so a turn and a corner are the same gesture.
+    pathOptions: { borderRadius: 10 },
     animated: false,
     label,
-    labelStyle: { fill: 'var(--muted-foreground)', fontSize: 10, fontFamily: 'inherit' as const },
+    // An edge label is read once to find your place, which is exactly what the 11px label
+    // step is for. It was set at 10px, below every step in the ramp.
+    labelStyle: {
+      fill: 'var(--muted-foreground)',
+      fontSize: 11,
+      fontWeight: 600,
+      letterSpacing: '0.04em',
+      textTransform: 'uppercase' as const,
+      fontFamily: 'inherit' as const,
+    },
     labelBgStyle: { fill: 'var(--card)', fillOpacity: 0.94 },
-    labelBgPadding: [3, 1] as [number, number],
-    labelBgBorderRadius: 4,
+    labelBgPadding: [5, 2] as [number, number],
+    labelBgBorderRadius: 5,
     style: {
       stroke: c.stroke,
       strokeWidth: c.width,
@@ -158,8 +176,8 @@ export const flowEdge = (
     },
     markerEnd: {
       type: 'arrowclosed' as const,
-      width: 13,
-      height: 13,
+      width: 11,
+      height: 11,
       color: c.stroke,
     },
     data: { kind, label },
@@ -304,8 +322,11 @@ export const layoutWidthOf = (n: GraphNode): number => {
     case 'branch': return CHIP_W
     case 'profile': return 196
     case 'group': return 0
-    case 'gateway': return 340
-    case 'compact-workflow': return 360
+    // The front door stands in the same column, at the same width, as every workflow card it
+    // opens. At 340 against the cards' 360 it was a box that nearly lined up, which on a
+    // single-column board reads as a mistake — and its centred handle sat 10px off the spine.
+    case 'gateway': return COMPACT_W
+    case 'compact-workflow': return COMPACT_W
   }
 }
 
@@ -317,9 +338,9 @@ export const graphBounds = (nodes: GraphNode[], includeGroups = false): { left: 
   let bottom = -Infinity
   for (const n of nodes) {
     if (n.data.kind === 'group' && !includeGroups) continue
-    const width = typeof n.style?.width === 'number' ? n.style.width : n.measured?.width ?? (
-      n.data.kind === 'step' ? STEP_W : n.data.kind === 'stage' || n.data.kind === 'route' ? STAGE_W : n.data.kind === 'profile' ? 196 : n.data.kind === 'branch' ? CHIP_W : n.data.kind === 'compact-workflow' ? 360 : n.data.kind === 'gateway' ? 340 : 240
-    )
+    // One table of widths, not two: this used to restate `layoutWidthOf` inline and the two
+    // had already drifted apart on the gateway.
+    const width = typeof n.style?.width === 'number' ? n.style.width : n.measured?.width ?? layoutWidthOf(n)
     const height = typeof n.style?.height === 'number' ? n.style.height : layoutHeightOf(n)
     left = Math.min(left, n.position.x)
     top = Math.min(top, n.position.y)

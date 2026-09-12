@@ -7,7 +7,7 @@
  * picture. No module in `graph/` touches the DOM or knows about React components — it
  * only says which nodes and edges a run paints.
  */
-import type { Edge, Node } from '@xyflow/react'
+import type { Edge, Node, SmoothStepPathOptions } from '@xyflow/react'
 import type { LlmRequestEntry, ProjectState, RunEntry } from '../../../../src/monitor/state.ts'
 import type { NodeState } from '../format.ts'
 
@@ -149,7 +149,12 @@ export interface GraphNodeData {
 }
 
 export type GraphNode = Node<GraphNodeData>
-export type GraphEdge = Edge
+/**
+ * Every edge on this board is a `smoothstep`, and `pathOptions` is where its corner radius
+ * lives — the base `Edge` type does not carry it, because the option belongs to that one
+ * built-in edge rather than to edges in general.
+ */
+export type GraphEdge = Edge & { pathOptions?: SmoothStepPathOptions }
 
 export interface GraphBuild {
   nodes: GraphNode[]

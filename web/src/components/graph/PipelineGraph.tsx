@@ -41,6 +41,20 @@ const RunStatusIcon = ({ status }: { status: GraphNodeData['status'] }) =>
 const fitMaxZoom = (canvasWidth: number): number =>
   canvasWidth >= 1400 ? 1.25 : canvasWidth >= 1100 ? 1.1 : 1
 
+/**
+ * Every node that shares a horizontal band with one of the framed nodes.
+ *
+ * The board is a single column of cards except where a workflow fans out, and there the
+ * siblings sit side by side at one `y`. Any framing that counts nodes rather than rows can
+ * therefore cut a fan in half, so the frame is widened to the rows it touches before the
+ * camera is pointed at it. Bands are compared by top edge, which is exactly what
+ * `placeRouteRow` guarantees the members of a fan share.
+ */
+const widenToRows = (framed: GraphNode[], trail: GraphNode[]): GraphNode[] => {
+  const bands = new Set(framed.map((node) => node.position.y))
+  return trail.filter((node) => bands.has(node.position.y) || framed.includes(node))
+}
+
 const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspect }: PipelineGraphProps) => {
   const { fitView, getNodes, getViewport, setViewport } = useReactFlow()
   const canvasWidth = useStore((store) => store.width)
@@ -234,7 +248,14 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
     .join('|')
   useEffect(() => {
     if (nodes.length === 0 || viewportPinned) return
-    const frame = requestAnimationFrame(() => {
+    // Two frames, not one. A card that just grew — a disclosed step, a workflow the operator
+    // expanded — is re-measured by the canvas after the browser has laid it out, and a fit
+    // scheduled one frame after the commit was measuring the card's OLD box: the camera stayed
+    // framed on the board as it was before the disclosure, at maximum zoom, with the fan it
+    // had just been asked to reveal hanging off both edges of the canvas. The second frame is
+    // what makes the fit see the board that is actually on screen.
+    let second = 0
+    const frame = requestAnimationFrame(() => { second = requestAnimationFrame(() => {
       const trail = nodes.filter((node) => node.data.kind !== 'group')
       const currentIndex = trail.findIndex((node) => node.data.current)
       // While work is in flight the camera holds the live neighbourhood. When nothing is
@@ -265,7 +286,12 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
       // even the dot grid, since the background pattern rides the same transform. The
       // whole board is the honest fallback while the new ids land.
       const known = new Set(getNodes().map((node) => node.id))
-      const focus = framed?.filter((node) => known.has(node.id)) ?? []
+      // Whatever the window picked, take the whole horizontal band it lands in. The window
+      // counts nodes in BUILD order, and a fan is several nodes wide at one height: framing
+      // five of them cut `vital-signs` off the right edge of the canvas and left `shock`
+      // half off the left, which reads as a board that does not fit rather than as a
+      // decision with three arms. A row is shown whole or not at all.
+      const focus = (framed ? widenToRows(framed, trail) : []).filter((node) => known.has(node.id))
       void (async () => {
         await fitView({ nodes: focus.length > 0 ? focus : undefined, padding: canvasWidth < 620 ? 0.22 : 0.1, minZoom: 0.45, maxZoom: fitMaxZoom(canvasWidth) })
         // Belt and braces: an unusable viewport is silent and unrecoverable without a
@@ -275,17 +301,25 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
         const recovered = await fitView({ padding: 0.1, minZoom: 0.45, maxZoom: fitMaxZoom(canvasWidth) })
         if (!recovered) setViewport({ x: 0, y: 0, zoom: 1 })
       })()
-    })
-    return () => cancelAnimationFrame(frame)
+    }) })
+    return () => {
+      cancelAnimationFrame(frame)
+      cancelAnimationFrame(second)
+    }
   }, [fitView, getNodes, getViewport, setViewport, geometryKey, nodes.length, isFullscreen, canvasWidth, viewportPinned])
 
   // The board's default is execution, so "expand" is the operator saying they want to see
   // the whole catalogue and not only what ran.
+  // Opening or shutting the whole board changes what there is to look at, so it also
+  // releases the camera: asking to see the catalogue and being left framed on the one card
+  // that was already on screen is the control appearing not to have worked.
   const expandAll = () => {
+    setViewportPinned(false)
     setCompactExpanded(new Set(disclosures ?? []))
     setCompactCollapsed(new Set())
   }
   const collapseAll = () => {
+    setViewportPinned(false)
     setCompactExpanded(new Set())
     setCompactCollapsed(new Set(disclosures ?? []))
   }
