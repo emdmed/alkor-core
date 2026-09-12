@@ -433,7 +433,7 @@ export const applyEvent = (state: ProjectState, event: ActivityEvent): ProjectSt
       if (runId) {
         runs.set(runId, { ...runs.get(runId)!, status: 'completed', wallMs: event.wallMs })
       }
-      return { ...next, runs }
+      return settleRun({ ...next, runs }, runId, false)
     }
     case 'run.failed': {
       const runs = new Map(next.runs)
@@ -447,7 +447,7 @@ export const applyEvent = (state: ProjectState, event: ActivityEvent): ProjectSt
       if (runId) {
         runs.set(runId, { ...runs.get(runId)!, status: 'failed', wallMs: event.wallMs, error: event.error })
       }
-      return { ...next, runs }
+      return settleRun({ ...next, runs }, runId, true)
     }
     case 'workflow.started': {
       const runId = event.runId ?? `workflow-${event.seq}`
@@ -562,6 +562,59 @@ export const applyEvent = (state: ProjectState, event: ActivityEvent): ProjectSt
       return next
     }
   }
+}
+
+/**
+ * Close out the work a terminated run left open.
+ *
+ * A run's own terminal event says the run is over, but the step and stage records beneath
+ * it only move when their OWN terminal events arrive — and those can be missing, dropped,
+ * or simply never emitted for the step a failure stopped on. The result was a dashboard
+ * asserting two contradictory things in one frame: a green "run complete 755.0s" in the
+ * run bar, and a spinning `Running` badge on the workflow card for the same run.
+ *
+ * This is inference, not invention, and the inference is sound in one direction only: a
+ * run cannot reach a terminal state while a step inside it is still executing, so anything
+ * still marked `started` when the run ends has, in fact, ended. What it does NOT know is
+ * whether that work succeeded, which is why the outcome is taken from the run: a completed
+ * run's leftovers are completed, and a failed run's leftover step is marked `ok: false`,
+ * because the step still open when a run failed is the step it failed on.
+ *
+ * Stages are settled to `completed` without an opinion on success — `stageState` reads
+ * failure from the stage's own detail and from its LLM request, and neither is ours to
+ * overwrite with a guess.
+ *
+ * Lives in the reducer rather than in a view because both dashboards read this state and
+ * the contradiction was visible in both.
+ */
+const settleRun = (state: ProjectState, runId: string | undefined, failed: boolean): ProjectState => {
+  if (!runId) return state
+
+  const workflow = state.workflows.get(runId)
+  const openSteps = workflow?.steps.some((s) => s.status === 'started') ?? false
+  const openStages = [...state.stages.values()].some((s) => s.runId === runId && s.status === 'started')
+  if (!openSteps && !openStages) return state
+
+  let workflows = state.workflows
+  if (workflow && openSteps) {
+    workflows = new Map(workflows)
+    workflows.set(runId, {
+      ...workflow,
+      steps: workflow.steps.map((s) =>
+        s.status === 'started' ? { ...s, status: 'completed' as const, ok: failed ? false : s.ok } : s,
+      ),
+    })
+  }
+
+  let stages = state.stages
+  if (openStages) {
+    stages = new Map(stages)
+    for (const [id, s] of stages) {
+      if (s.runId === runId && s.status === 'started') stages.set(id, { ...s, status: 'completed' })
+    }
+  }
+
+  return { ...state, workflows, stages }
 }
 
 /** Build a stage tree (parent → children) for a given runId. */

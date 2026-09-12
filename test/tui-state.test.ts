@@ -82,6 +82,51 @@ test('run.started then run.completed', () => {
   assert.equal(r!.wallMs, 200)
 })
 
+test('a terminated run leaves no step or stage still reading as live', () => {
+  // The dashboard asserted two contradictory things in one frame before this: a green
+  // "run complete" in the run bar, and a spinning Running badge on the same run's card,
+  // because the run's terminal event moved only the run record. A run cannot finish while
+  // a step inside it is still executing, so anything still `started` here has ended.
+  let s = emptyState()
+  s = applyEvent(s, mkEvent({ kind: 'run.started', seq: 1, runId: 'r1', profile: 'clinical', inputChars: 100, inputDigest: 'abc' }))
+  s = applyEvent(s, mkEvent({ kind: 'workflow.started', seq: 2, runId: 'r1' }))
+  s = applyEvent(s, mkEvent({ kind: 'workflow.step.started', seq: 3, runId: 'r1', step: 0, name: 'extract', profile: 'clinical' }))
+  s = applyEvent(s, mkEvent({ kind: 'stage', seq: 4, runId: 'r1', stageId: 'st1', name: 'llm-call', status: 'started' }))
+  s = applyEvent(s, mkEvent({ kind: 'run.completed', seq: 5, profile: 'clinical', wallMs: 755000 }))
+
+  assert.equal(s.runs.get('r1')!.status, 'completed')
+  assert.equal(s.workflows.get('r1')!.steps[0]!.status, 'completed', 'the dangling step is settled')
+  assert.equal(s.workflows.get('r1')!.steps[0]!.ok, undefined, 'a completed run does not invent a failure')
+  assert.equal(s.stages.get('st1')!.status, 'completed', 'the dangling stage is settled')
+})
+
+test('the step a failed run stopped on is marked failed, not quietly completed', () => {
+  let s = emptyState()
+  s = applyEvent(s, mkEvent({ kind: 'run.started', seq: 1, runId: 'r1', profile: 'clinical', inputChars: 100, inputDigest: 'abc' }))
+  s = applyEvent(s, mkEvent({ kind: 'workflow.started', seq: 2, runId: 'r1' }))
+  s = applyEvent(s, mkEvent({ kind: 'workflow.step.started', seq: 3, runId: 'r1', step: 0, name: 'extract', profile: 'clinical' }))
+  s = applyEvent(s, mkEvent({ kind: 'run.failed', seq: 4, profile: 'clinical', wallMs: 120, error: 'boom' }))
+
+  assert.equal(s.workflows.get('r1')!.steps[0]!.status, 'completed')
+  assert.equal(s.workflows.get('r1')!.steps[0]!.ok, false, 'the step still open when the run failed is where it failed')
+})
+
+test('settling a run never touches a different run still in flight', () => {
+  let s = emptyState()
+  s = applyEvent(s, mkEvent({ kind: 'run.started', seq: 1, runId: 'r1', profile: 'clinical', inputChars: 10, inputDigest: 'a' }))
+  s = applyEvent(s, mkEvent({ kind: 'workflow.started', seq: 2, runId: 'r1' }))
+  s = applyEvent(s, mkEvent({ kind: 'workflow.step.started', seq: 3, runId: 'r1', step: 0, name: 'extract', profile: 'clinical' }))
+  s = applyEvent(s, mkEvent({ kind: 'run.started', seq: 4, runId: 'r2', profile: 'router', inputChars: 10, inputDigest: 'b' }))
+  s = applyEvent(s, mkEvent({ kind: 'workflow.started', seq: 5, runId: 'r2' }))
+  s = applyEvent(s, mkEvent({ kind: 'workflow.step.started', seq: 6, runId: 'r2', step: 0, name: 'route', profile: 'router' }))
+  s = applyEvent(s, mkEvent({ kind: 'stage', seq: 7, runId: 'r2', stageId: 'st2', name: 'llm-call', status: 'started' }))
+  s = applyEvent(s, mkEvent({ kind: 'run.completed', seq: 8, profile: 'clinical', wallMs: 200 }))
+
+  assert.equal(s.workflows.get('r1')!.steps[0]!.status, 'completed', 'the run that ended is settled')
+  assert.equal(s.workflows.get('r2')!.steps[0]!.status, 'started', 'the run still going is untouched')
+  assert.equal(s.stages.get('st2')!.status, 'started', 'and so are its stages')
+})
+
 test('run.failed increments failures', () => {
   let s = emptyState()
   s = applyEvent(s, mkEvent({ kind: 'run.started', seq: 1, runId: 'r1', profile: 'clinical', inputChars: 100, inputDigest: 'abc' }))

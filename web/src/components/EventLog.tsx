@@ -17,20 +17,19 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuChe
 /**
  * The correlation ids a clicked node can narrow the feed by.
  *
- * A node carries its `runId` directly. A stage node was built from an underlying activity
- * record, and when that record kept its `stageId` the feed can be narrowed to the one
- * stage rather than the whole run — which is the difference between forty lines and four.
- * When it did not, the run is the honest granularity, and the chip below says so rather
+ * `stageId` is the one that makes this interaction worth having: it narrows the feed to
+ * what a single node actually did, where `runId` narrows it to the whole run — which, for
+ * a four-step workflow, is every line the reader already had. Stage and route nodes carry
+ * it from the activity record they were drawn from, and a stage row inspected out of a
+ * compact card carries it too.
+ *
+ * A node assembled from configuration rather than observed from a run has no stage to
+ * point at, so the run is the honest granularity and the bar below says so in words rather
  * than claiming a precision the filter does not have.
  */
 const focusOf = (node: GraphNodeData | null): { runId?: string; stageId?: string } => {
   if (!node) return {}
-  const detail = node.detail
-  const stageId =
-    detail != null && typeof detail === 'object' && 'stageId' in detail && typeof (detail as { stageId?: unknown }).stageId === 'string'
-      ? (detail as { stageId: string }).stageId
-      : undefined
-  return { runId: node.runId, stageId }
+  return { runId: node.runId, stageId: node.stageId }
 }
 
 export const EventLog = memo(({ state, selected, onClearSelection }: {
@@ -47,15 +46,28 @@ export const EventLog = memo(({ state, selected, onClearSelection }: {
   const focus = focusOf(selected ?? null)
   const focused = Boolean(focus.stageId || focus.runId)
 
-  const events = useMemo(() => {
+  /*
+   * Selecting a node is a question about that node, and this is the third surface that
+   * answers it: the canvas highlights it, the inspector describes it, and the feed narrows
+   * to what it produced.
+   *
+   * The narrowing degrades rather than failing. A stage id is the sharpest filter, but the
+   * feed only holds a window of recent events and a stage that ran early in a long run can
+   * have scrolled out of it — in which case filtering to the stage yields an empty panel,
+   * which tells the reader nothing and looks like a bug. So an empty stage match falls back
+   * to the run, and `scope` below carries which one actually applied so the bar can say so
+   * instead of claiming a precision the result does not have.
+   */
+  const { events, scope } = useMemo(() => {
     const recent = state.eventLog.slice(-600)
     const byKind = group === 'all' ? recent : recent.filter((e) => kindMatches(e.kind, group))
-    // Selecting a node is a question about that node, and this is the third surface that
-    // answers it — the canvas highlights it and the inspector describes it, and here the
-    // feed narrows to the events it actually produced.
-    if (focus.stageId) return byKind.filter((e) => e.stageId === focus.stageId)
-    if (focus.runId) return byKind.filter((e) => e.runId === focus.runId)
-    return byKind
+
+    if (focus.stageId) {
+      const byStage = byKind.filter((e) => e.stageId === focus.stageId)
+      if (byStage.length > 0) return { events: byStage, scope: 'stage' as const }
+    }
+    if (focus.runId) return { events: byKind.filter((e) => e.runId === focus.runId), scope: 'run' as const }
+    return { events: byKind, scope: 'none' as const }
   }, [state.eventLog, group, focus.stageId, focus.runId])
 
   useEffect(() => {
@@ -103,7 +115,7 @@ export const EventLog = memo(({ state, selected, onClearSelection }: {
       {focused && selected && (
         <div className="eventlog-focus">
           <span className="eventlog-focus-label">
-            {focus.stageId ? 'Showing' : 'Showing run for'}
+            {scope === 'stage' ? 'Showing' : 'Showing run for'}
           </span>
           <span className="eventlog-focus-name">{selected.label}</span>
           {onClearSelection && (

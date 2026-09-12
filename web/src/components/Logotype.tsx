@@ -32,26 +32,43 @@ export const Logotype = ({ className }: { className?: string }) => (
 )
 
 /**
- * The star pair: Mizar, and Alcor beside it.
+ * The star pair: Mizar, with Alcor passing behind it.
  *
  * Alcor is the faint companion of Mizar in the handle of the Plough, and for centuries
  * resolving it was a test of eyesight — whether you could split the pair told you whether
  * your instrument was good enough. That is the same job a corpus of discriminating cases
- * does, which is why the mark carries it and why the second dot is drawn faint rather than
- * merely smaller: the point is that it is hard to see, not that it is secondary.
+ * does, which is why the mark carries it.
+ *
+ * The two discs overlap rather than sit apart, because a pair that is *hard to split* is
+ * the thing the story is about; separated dots state the pair instead of testing it. Alcor
+ * is drawn first and Mizar covers it, so the companion is genuinely behind, and it is held
+ * at 54% rather than cut away by a gap of ground — the faintness is the point, not the
+ * silhouette. Geometry, in the 30-unit space of the viewBox: Mizar r30 at the origin, Alcor
+ * r14.70 (0.49x) at 28.0 units (0.93 R) and 25 degrees. The surviving crescent is ~12.7
+ * units, which at the 13px lockup height lands near 2.3 device pixels on a 2x screen — it
+ * holds, and reads there as a companion dot rather than a crescent. Below about 11px it
+ * closes into the edge.
+ *
+ * That 54% is the mark's one cost: it carries the pair in alpha, so any medium that
+ * flattens to a single value (a stencil, a two-colour favicon) loses the companion. Screens
+ * are the only target today; a gapped variant is the fallback if that ever changes.
+ *
+ * Ink only inside the product. An indigo mark reads as a control next to the run chips,
+ * which is exactly what the One Accent Rule exists to prevent (DESIGN.md); the accent is
+ * permitted on the app icon and favicon, which are outside that rule's reach.
  *
  * It accompanies the wordmark and is never a bullet or a section ornament (DESIGN.md).
  * `aria-hidden` because the mark beside it already carries the accessible name — a
- * screen reader announcing "alkor, two dots" is worse than one announcing "alkor".
+ * screen reader announcing "alkor, two circles" is worse than one announcing "alkor".
  */
 export const StarPair = ({ className }: { className?: string }) => (
   <svg
     className={className}
-    viewBox="0 0 26 8"
+    viewBox="-30.60 -30.60 71.28 61.20"
     aria-hidden="true"
     focusable="false"
   >
-    <circle cx="4" cy="4" r="3.2" fill="currentColor" />
-    <circle cx="20" cy="4" r="2.4" fill="currentColor" opacity="0.38" />
+    <circle cx="25.38" cy="-11.83" r="14.70" fill="currentColor" opacity="0.54" />
+    <circle cx="0" cy="0" r="30" fill="currentColor" />
   </svg>
 )

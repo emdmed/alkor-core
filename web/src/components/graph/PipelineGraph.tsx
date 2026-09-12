@@ -10,7 +10,7 @@ import { Check, ChevronDown, ChevronsDownUp, ChevronsUpDown, Circle, LoaderCircl
 import { Background, BackgroundVariant, Controls, ReactFlow, ReactFlowProvider, useReactFlow, useStore } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import type { GraphNode, GraphNodeData, CompactStepData } from '../../lib/graph/index.ts'
-import { buildCompactGraph, buildExpandedWorkflowsGraph, layoutHeightOf } from '../../lib/graph/index.ts'
+import { buildCompactGraph, layoutHeightOf } from '../../lib/graph/index.ts'
 import { fmtSec } from '../../lib/format.ts'
 import { NODE_TYPES } from './nodes.tsx'
 import { Button } from '../ui/button'
@@ -19,8 +19,6 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuCheckboxItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
 } from '../ui/dropdown-menu'
 import type { ProjectState } from '../../../../src/tui/state.ts'
 
@@ -34,102 +32,20 @@ export interface PipelineGraphProps {
 
 const shortId = (id: string): string => `#${id.slice(0, 6)}`
 
-const statusColor = (status: GraphNodeData['status']): string =>
-  status === 'active' || status === 'done' ? 'var(--success)' : status === 'failed' ? 'var(--destructive)' : 'var(--muted-foreground)'
-
 const RunStatusIcon = ({ status }: { status: GraphNodeData['status'] }) =>
   status === 'active' ? <LoaderCircle className="status-spin" /> : status === 'done' ? <Check /> : status === 'failed' ? <X /> : <Circle />
 
-const miniNodeSize = (node: GraphNode): { width: number; height: number } => {
-  if (typeof node.style?.width === 'number' && typeof node.style?.height === 'number') {
-    return { width: node.style.width, height: node.style.height }
-  }
-  switch (node.data.kind) {
-    case 'step': return { width: 264, height: 90 }
-    case 'stage':
-    case 'route': return { width: 248, height: 74 }
-    case 'branch': return { width: 168, height: 44 }
-    case 'profile': return { width: 196, height: 62 }
-    case 'compact-workflow': return { width: 360, height: layoutHeightOf(node) }
-    case 'gateway': return { width: 340, height: 56 }
-    default: return { width: 240, height: 60 }
-  }
-}
-
-const GraphMiniMap = ({ nodes }: { nodes: GraphNode[] }) => {
-  const { setCenter, fitView } = useReactFlow()
-  const transform = useStore((store) => store.transform)
-  const flowWidth = useStore((store) => store.width)
-  const flowHeight = useStore((store) => store.height)
-  // Memoize bounds from the stable node input, not from the fresh `filter()` array.
-  const bounds = useMemo(() => {
-    const visible = nodes.filter((node) => node.data.kind !== 'group')
-    if (visible.length === 0) return undefined
-    const padding = 80
-    const left = Math.min(...visible.map((node) => node.position.x)) - padding
-    const top = Math.min(...visible.map((node) => node.position.y)) - padding
-    const right = Math.max(...visible.map((node) => node.position.x + miniNodeSize(node).width)) + padding
-    const bottom = Math.max(...visible.map((node) => node.position.y + miniNodeSize(node).height)) + padding
-    return { left, top, width: right - left, height: bottom - top }
-  }, [nodes])
-  if (!bounds) return null
-
-  const visible = nodes.filter((node) => node.data.kind !== 'group')
-  const [translateX, translateY, zoom] = transform
-  const viewport = {
-    x: -translateX / zoom,
-    y: -translateY / zoom,
-    width: flowWidth / zoom,
-    height: flowHeight / zoom,
-  }
-  const moveToPoint = (event: React.MouseEvent<SVGSVGElement>) => {
-    const matrix = event.currentTarget.getScreenCTM()
-    if (!matrix) return
-    const point = event.currentTarget.createSVGPoint()
-    point.x = event.clientX
-    point.y = event.clientY
-    const world = point.matrixTransform(matrix.inverse())
-    void setCenter(world.x, world.y, { zoom, duration: 180 })
-  }
-
-  return (
-    <svg
-      className="graph-minimap"
-      viewBox={`${bounds.left} ${bounds.top} ${bounds.width} ${bounds.height}`}
-      preserveAspectRatio="xMidYMid meet"
-      role="button"
-      tabIndex={0}
-      aria-label="Workflow overview. Click to move the viewport, or press Enter to fit the graph."
-      onClick={moveToPoint}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') void fitView({ nodes, padding: 0.08 })
-      }}
-    >
-      <title>Workflow overview and current viewport</title>
-      {visible.map((node) => {
-        const size = miniNodeSize(node)
-        return (
-          <rect
-            key={node.id}
-            className={`graph-minimap-node${node.data.traversed ? ' is-traversed' : ''}${node.data.muted ? ' is-muted' : ''}`}
-            x={node.position.x}
-            y={node.position.y}
-            width={size.width}
-            height={size.height}
-            rx={12}
-            fill={statusColor(node.data.status)}
-          />
-        )
-      })}
-      {/* The viewport frame is only information while something is outside it. When the
-          whole board is on screen it draws a box around the entire thumbnail, which reads
-          as the loudest object in the workspace while saying nothing at all. */}
-      {(viewport.width < bounds.width * 0.98 || viewport.height < bounds.height * 0.98) && (
-        <rect className="graph-minimap-viewport" {...viewport} />
-      )}
-    </svg>
-  )
-}
+/**
+ * How far a fit is allowed to zoom in, given the room it has.
+ *
+ * The compact board is a single column of 360px cards, so a hard cap of 1 left several
+ * hundred pixels of dead margin either side on a wide monitor — the board declining to use
+ * the space it was given. Spending that room on legibility is the better trade for a
+ * surface someone watches for an hour. It stays under the canvas's own 1.35 ceiling so a
+ * card is never blown up, and narrow canvases keep the old behaviour exactly.
+ */
+const fitMaxZoom = (canvasWidth: number): number =>
+  canvasWidth >= 1400 ? 1.25 : canvasWidth >= 1100 ? 1.1 : 1
 
 const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspect }: PipelineGraphProps) => {
   const { fitView, getNodes, getViewport, setViewport } = useReactFlow()
@@ -141,8 +57,6 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
   const selectedChipRef = useRef<HTMLButtonElement>(null)
   const runs = useMemo(() => [...state.runs.values()], [state.runs])
   const [selectedId, setSelectedId] = useState<string>()
-  const [userExpanded, setUserExpanded] = useState<Set<string>>(new Set())
-  const [userCollapsed, setUserCollapsed] = useState<Set<string>>(new Set())
   // Compact disclosure is derived from execution, not from the last click, so the operator's
   // intent needs both directions: a card that opens itself when it runs must be closable, and
   // a card that stays shut must be openable.
@@ -183,17 +97,10 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
   }, [runs.length])
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [fullscreenFallback, setFullscreenFallback] = useState(false)
-  // Compact is the board at rest. Full detail cannot be both complete and legible on a
-  // canvas this size — fitting the whole catalogue puts its type near five pixels — and
-  // the compact board was built for exactly this: one card per workflow, a list of names
-  // until a run lights a path through it. Full detail is one click away under View, and
-  // that is the right way round, because detail is what you ask for once you know where
-  // to look.
-  const [graphMode, setGraphMode] = useState<'full' | 'compact'>('compact')
   // Once the operator pans or zooms, the viewport is theirs. A run changes the board's
   // geometry on every event, and refitting through that is the view yanking itself out
   // from under someone who deliberately went to look at one card. Auto-fit resumes when
-  // they ask for it — the fit control, a mode switch, or picking a different run.
+  // they ask for it — the fit control, or picking a different run.
   const [viewportPinned, setViewportPinned] = useState(false)
 
   const selected = runs.find((r) => r.runId === selectedId)
@@ -253,19 +160,7 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
     }
   }
 
-  const toggleNode = (id: string, isExpanded: boolean) => {
-    if (isExpanded) {
-      setUserExpanded((prev) => new Set([...prev].filter((candidate) => candidate !== id)))
-      setUserCollapsed((prev) => new Set(prev).add(id))
-    } else {
-      setUserCollapsed((prev) => new Set([...prev].filter((candidate) => candidate !== id)))
-      setUserExpanded((prev) => new Set(prev).add(id))
-    }
-  }
-
-  // Compact view expands a card, or a step embedded in one, so its disclosure state is
-  // deliberately separate from Full view's: neither mode mutates the other mode's state, and
-  // toggling between them preserves each mode's own state.
+  // The board expands a card, or a step embedded in one.
   const toggleCompact = (key: string, isOpen: boolean) => {
     setCompactExpanded((prev) => {
       const next = new Set(prev)
@@ -282,52 +177,46 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
   }
 
   const graphView = useMemo(() => {
-    if (graphMode === 'compact') {
-      const graph = buildCompactGraph(state, selected?.runId, compactExpanded, compactCollapsed)
-      const nodes: GraphNode[] = graph.nodes.map((n) => {
-        const steps = (n.data.steps as CompactStepData[] | undefined) ?? []
-        return {
-          ...n,
-          data: {
-            ...n.data,
-            steps: steps.map((step) => ({
-              ...step,
-              onToggle: step.stages.length > 0 && step.expandKey
-                ? () => toggleCompact(step.expandKey!, Boolean(step.expanded))
-                : undefined,
-            })),
-            // A collapsible card shares the step disclosure state, so a workflow reopened by
-            // hand stays open while the run it is standing next to keeps updating.
-            onToggle: n.data.collapsible === true && n.data.expandKey
-              ? () => toggleCompact(n.data.expandKey!, n.data.collapsed !== true)
+    const graph = buildCompactGraph(state, selected?.runId, compactExpanded, compactCollapsed)
+    const nodes: GraphNode[] = graph.nodes.map((n) => {
+      const steps = (n.data.steps as CompactStepData[] | undefined) ?? []
+      return {
+        ...n,
+        data: {
+          ...n.data,
+          steps: steps.map((step) => ({
+            ...step,
+            onToggle: step.stages.length > 0 && step.expandKey
+              ? () => toggleCompact(step.expandKey!, Boolean(step.expanded))
               : undefined,
-            onInspect: () => onInspect(n.data),
-          },
-        }
-      })
-      return { nodes, edges: graph.edges, title: graph.title, expanded: graph.expanded, disclosures: graph.disclosures }
-    }
-    const graph = buildExpandedWorkflowsGraph(state, selected?.runId, userExpanded, userCollapsed)
-    const expandedKeys = graph.expanded
-    // The model keeps the complete active lineage for navigation while identifying one
-    // most-specific visible operation for the NOW badge.
-    const nodes: GraphNode[] = graph.nodes.map((n) =>
-      n.data.kind === 'group'
-        ? n
-        : {
-            ...n,
-            data: {
-              ...n.data,
-              expanded: expandedKeys.has(n.data.expandKey ?? n.id),
-              onToggle: (n.data.childCount ?? 0) > 0
-                ? () => toggleNode(n.data.expandKey ?? n.id, expandedKeys.has(n.data.expandKey ?? n.id))
-                : undefined,
-              onInspect: () => onInspect(n.data),
-            },
-          },
-    )
-    return { nodes, edges: graph.edges, title: graph.title, expanded: expandedKeys, disclosures: undefined }
-  }, [state, selected, userCollapsed, userExpanded, compactExpanded, compactCollapsed, onInspect, graphMode])
+          })),
+          // A collapsible card shares the step disclosure state, so a workflow reopened by
+          // hand stays open while the run it is standing next to keeps updating.
+          onToggle: n.data.collapsible === true && n.data.expandKey
+            ? () => toggleCompact(n.data.expandKey!, n.data.collapsed !== true)
+            : undefined,
+          onInspect: () => onInspect(n.data),
+          // A stage row is the finest thing on the board that corresponds to a real
+          // activity record, so it is the one click that can narrow the feed to a stage
+          // instead of to the whole run. The row is not a graph node, so the inspector is
+          // handed a node-shaped view of it rather than a node.
+          onInspectStage: (stage) => onInspect({
+            kind: 'stage',
+            label: stage.name,
+            status: stage.status,
+            stageId: stage.stageId,
+            wallMs: stage.wallMs,
+            operation: stage.operation,
+            llm: stage.llm,
+            detailText: stage.detailText,
+            runId: n.data.runId,
+            profile: n.data.profile,
+          }),
+        },
+      }
+    })
+    return { nodes, edges: graph.edges, title: graph.title, expanded: graph.expanded, disclosures: graph.disclosures }
+  }, [state, selected, compactExpanded, compactCollapsed, onInspect])
   const { nodes, edges, expanded } = graphView
 
   // Compact disclosure keys embed the workflow node identity and step number; when a
@@ -337,12 +226,12 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
   // is OPEN would erase every deliberate collapse on the next rebuild.
   const disclosures = graphView.disclosures
   useEffect(() => {
-    if (graphMode !== 'compact' || !disclosures) return
+    if (!disclosures) return
     const keep = (prev: Set<string>): Set<string> =>
       [...prev].every((key) => disclosures.has(key)) ? prev : new Set([...prev].filter((key) => disclosures.has(key)))
     setCompactExpanded(keep)
     setCompactCollapsed(keep)
-  }, [graphMode, disclosures])
+  }, [disclosures])
 
   // Keep the current neighborhood readable. Fitting an arbitrarily long run into the
   // viewport recreates a minimap where the operator needs legible execution detail.
@@ -384,55 +273,36 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
       const known = new Set(getNodes().map((node) => node.id))
       const focus = framed?.filter((node) => known.has(node.id)) ?? []
       void (async () => {
-        await fitView({ nodes: focus.length > 0 ? focus : undefined, padding: canvasWidth < 620 ? 0.22 : 0.1, minZoom: 0.45, maxZoom: 1 })
+        await fitView({ nodes: focus.length > 0 ? focus : undefined, padding: canvasWidth < 620 ? 0.22 : 0.1, minZoom: 0.45, maxZoom: fitMaxZoom(canvasWidth) })
         // Belt and braces: an unusable viewport is silent and unrecoverable without a
         // pan, so never keep one.
         const { x, y, zoom } = getViewport()
         if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(zoom) && zoom > 0) return
-        const recovered = await fitView({ padding: 0.1, minZoom: 0.45, maxZoom: 1 })
+        const recovered = await fitView({ padding: 0.1, minZoom: 0.45, maxZoom: fitMaxZoom(canvasWidth) })
         if (!recovered) setViewport({ x: 0, y: 0, zoom: 1 })
       })()
     })
     return () => cancelAnimationFrame(frame)
   }, [fitView, getNodes, getViewport, setViewport, geometryKey, nodes.length, isFullscreen, canvasWidth, viewportPinned])
 
+  // The board's default is execution, so "expand" is the operator saying they want to see
+  // the whole catalogue and not only what ran.
   const expandAll = () => {
-    // In compact mode the board's default is execution, so "expand" is the operator saying
-    // they want to see the whole catalogue and not only what ran.
-    if (graphMode === 'compact') {
-      setCompactExpanded(new Set(disclosures ?? []))
-      setCompactCollapsed(new Set())
-      return
-    }
-    const all = new Set<string>()
-    for (const n of nodes) if ((n.data.childCount ?? 0) > 0) all.add(n.data.expandKey ?? n.id)
-    setUserExpanded(all)
-    setUserCollapsed(new Set())
+    setCompactExpanded(new Set(disclosures ?? []))
+    setCompactCollapsed(new Set())
   }
   const collapseAll = () => {
-    if (graphMode === 'compact') {
-      setCompactExpanded(new Set())
-      setCompactCollapsed(new Set(disclosures ?? []))
-      return
-    }
-    setUserExpanded(new Set())
-    setUserCollapsed(new Set(nodes.filter((n) => (n.data.childCount ?? 0) > 0).map((n) => n.data.expandKey ?? n.id)))
+    setCompactExpanded(new Set())
+    setCompactCollapsed(new Set(disclosures ?? []))
   }
 
-  const hasDisclosures = graphMode === 'compact'
-    ? (disclosures?.size ?? 0) > 0
-    : nodes.some((n) => (n.data.childCount ?? 0) > 0)
+  const hasDisclosures = (disclosures?.size ?? 0) > 0
 
   // Whether every step that can open is already open, so a single control can name the move
   // it is about to make rather than offering both and letting one of them do nothing.
-  const everyStepOpen = graphMode === 'compact'
-    ? (disclosures?.size ?? 0) > 0
-      && compactCollapsed.size === 0
-      && compactExpanded.size >= (disclosures?.size ?? 0)
-    : userCollapsed.size === 0
-      && nodes
-        .filter((n) => (n.data.childCount ?? 0) > 0)
-        .every((n) => userExpanded.has(n.data.expandKey ?? n.id))
+  const everyStepOpen = (disclosures?.size ?? 0) > 0
+    && compactCollapsed.size === 0
+    && compactExpanded.size >= (disclosures?.size ?? 0)
 
   return (
     <div ref={graphShellRef} className={`graph-wrap${isFullscreen ? ' is-graph-fullscreen' : ''}`}>
@@ -483,20 +353,6 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-52">
-              <DropdownMenuLabel>Detail</DropdownMenuLabel>
-              <DropdownMenuCheckboxItem
-                checked={graphMode === 'full'}
-                onCheckedChange={() => { setGraphMode('full'); setViewportPinned(false) }}
-              >
-                Full topology
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem
-                checked={graphMode === 'compact'}
-                onCheckedChange={() => { setGraphMode('compact'); setViewportPinned(false) }}
-              >
-                Compact
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuSeparator />
               <DropdownMenuCheckboxItem
                 checked={showLegend}
                 onCheckedChange={(next) => setShowLegend(next === true)}
@@ -537,20 +393,15 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
             const d = node.data as GraphNodeData
             if (d.kind !== 'group') onInspect(d)
           }}
-          onNodeDoubleClick={(_e, node) => {
-            const d = node.data as GraphNodeData
-            if ((d.childCount ?? 0) > 0) toggleNode(d.expandKey ?? node.id, expanded.has(d.expandKey ?? node.id))
-          }}
         >
           <Background variant={BackgroundVariant.Dots} gap={24} size={1.2} color="var(--graph-grid)" />
           <Controls
             showInteractive={false}
             onFitView={() => {
               setViewportPinned(false)
-              void fitView({ padding: canvasWidth < 620 ? 0.22 : 0.1, minZoom: 0.45, maxZoom: 1 })
+              void fitView({ padding: canvasWidth < 620 ? 0.22 : 0.1, minZoom: 0.45, maxZoom: fitMaxZoom(canvasWidth) })
             }}
           />
-          {graphMode === 'full' && nodes.filter((node) => node.data.kind !== 'group').length > 6 && <GraphMiniMap nodes={nodes} />}
         </ReactFlow>
 
         {/* Three corners, one thing in each: legend reads top-left, zoom sits bottom-left

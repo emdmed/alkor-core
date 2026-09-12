@@ -120,12 +120,24 @@ export interface GraphNodeData {
   expandKey?: string
   llm?: GraphLlm
   runId?: string
+  /**
+   * The activity `stageId` this node was drawn from, when it was drawn from one.
+   *
+   * It is the only correlation id fine-grained enough to answer "what did THIS node do":
+   * `runId` narrows the event feed to the whole run, which for a four-step workflow is
+   * every line the reader already had. Present on stage and route nodes and on a stage row
+   * inspected out of a compact card; absent on anything assembled from configuration
+   * rather than observed from a run, which is why it is optional rather than defaulted.
+   */
+  stageId?: string
   /** What performs this operation; used to separate model boundaries from deterministic code. */
   operation?: GraphOperation
   /** Injected by the view layer: toggles this node's sub-graph. */
   onToggle?: () => void
   /** Injected by the view layer: opens the inspector on this node. */
   onInspect?: () => void
+  /** Injected by the view layer: opens the inspector on one stage row inside this card. */
+  onInspectStage?: (stage: CompactStageData) => void
   /** This node belongs to the active execution lineage. */
   current?: boolean
   /** The single most specific visible operation; this node alone receives the NOW badge. */

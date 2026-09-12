@@ -53,8 +53,8 @@ export const Header = memo(({ state, serverUrl, onServerUrlChange, onConnect, pa
     <header className="topbar">
       <div className="topbar-identity">
         <span className="brand-lockup">
-          <Logotype className="brand-mark" />
           <StarPair className="brand-stars" />
+          <Logotype className="brand-mark" />
         </span>
         {/* The mark is a word nobody can read the product out of, so the descriptor rides
             beside it for the reader arriving cold. It is the first thing cut when the bar

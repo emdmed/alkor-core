@@ -174,6 +174,21 @@
   --edge-taken: var(--primary);
   --edge-ghost: var(--g-300);
 
+  /*
+   * Role names the graph layer paints by.
+   *
+   * `lib/graph/**` is pure and renderer-free, so it names colours by what they MEAN and
+   * never by what they are — it emits `var(--route-selected)` and leaves the value to this
+   * file. That contract is right and stays; what broke is that the redesign retired the
+   * old names without re-declaring them, so every one of these resolved to nothing: route
+   * edges, the canvas dot grid, and the minimap's node fills were painting with an invalid
+   * value. They are aliases rather than new colours, so there is still one source of truth.
+   */
+  --route-selected: var(--edge-taken);
+  --route-possible: var(--edge-ghost);
+  --graph-grid: var(--canvas-dot);
+  --success: var(--ok);
+
   --radius: var(--r-lg);
 }
 
@@ -242,6 +257,13 @@
   --edge: var(--g-300);
   --edge-taken: var(--primary);
   --edge-ghost: var(--g-200);
+
+  /* The aliases follow their sources, so they need no dark overrides of their own —
+     listed here only so the set is visible in both blocks. */
+  --route-selected: var(--edge-taken);
+  --route-possible: var(--edge-ghost);
+  --graph-grid: var(--canvas-dot);
+  --success: var(--ok);
 }
 
 /* ==========================================================================
@@ -397,12 +419,14 @@ button, input, textarea, select { font: inherit; color: inherit; }
   min-width: 0;
 }
 
-/* Mark and star pair are one lockup. The stars sit on the baseline beside the word, not
-   above or inside it — they accompany the mark, they are not part of the lettering. */
+/* Mark and star pair are one lockup.
+   The pair rides at the wordmark's optical centre rather than on its baseline: sitting on
+   the baseline it read as trailing punctuation — a full stop and a faint one — instead of
+   as two stars beside the word, which is the whole point of it. */
 .brand-lockup {
   display: inline-flex;
-  align-items: flex-end;
-  gap: var(--s-2);
+  align-items: center;
+  gap: var(--s-3);
   flex: none;
 }
 
@@ -413,12 +437,19 @@ button, input, textarea, select { font: inherit; color: inherit; }
   flex: none;
 }
 
+/* Cap height, not x-height: the mark leads the lockup now and is a single object with
+   real geometry rather than two dots riding beside the word, so it matches the wordmark's
+   height exactly.
+
+   The mark carries the accent, which is the one place in the product the One Accent Rule
+   is deliberately spent on something that is not an action. It is a standing decision, not
+   an oversight: identity gets the colour, the word beside it stays ink so the lockup does
+   not turn into a control. Nothing else on this surface may follow it. */
 .brand-stars {
-  height: 5px;
+  height: 13px;
   width: auto;
-  color: var(--foreground);
+  color: var(--primary);
   flex: none;
-  margin-bottom: 2px;
 }
 
 /* The mark is a word nobody can read the product out of, so the descriptor rides beside
@@ -879,16 +910,22 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .graph-legend-row .g-glyph.err { background: var(--danger); }
 .graph-legend-row .g-glyph.faint { background: var(--g-300); }
 
+/* An <svg> with a viewBox and no intrinsic size falls back to 300x150 or stretches to its
+   container — in Full topology that put a giant unstyled overview across the bottom of the
+   canvas. The box is stated explicitly; `preserveAspectRatio` on the element does the rest. */
 .graph-minimap {
   position: absolute;
   right: var(--s-4);
   bottom: var(--s-4);
   z-index: 10;
+  width: 190px;
+  height: 118px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-md);
   padding: var(--s-2);
+  cursor: pointer;
 }
 .graph-minimap-node { fill: var(--g-300); }
 .graph-minimap-node.is-traversed { fill: var(--primary); }
@@ -1109,6 +1146,30 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .c-step { border-bottom: 1px solid var(--border); }
 .c-step:last-child { border-bottom: none; }
 
+/*
+ * The one authored moment on this surface.
+ *
+ * A run here takes minutes and the reader is genuinely sitting and watching it, so the
+ * instant a step's work lands is the only event worth animating — and it gets animated
+ * once, here, instead of the budget being spread over a dozen hover fades. The row takes
+ * the state's own wash and lets it drain away, so the eye is pulled to the row that just
+ * changed and then released.
+ *
+ * It animates `background` and nothing else on purpose: every height in this card is a
+ * LAYOUT CONTRACT with core.ts, and an animation that touched geometry would make the
+ * canvas mislay its edges for the length of the transition.
+ */
+@keyframes step-commit {
+  from { background-color: var(--ok-soft); }
+  to { background-color: transparent; }
+}
+@keyframes step-commit-failed {
+  from { background-color: var(--danger-soft); }
+  to { background-color: transparent; }
+}
+.c-step.is-settling > .c-step-main { animation: step-commit 900ms ease-out; }
+.c-step.is-settling.is-failed > .c-step-main { animation: step-commit-failed 900ms ease-out; }
+
 /* 36px LAYOUT CONTRACT (COMPACT_STEP_H) */
 .c-step-main {
   min-height: 36px;
@@ -1242,7 +1303,11 @@ button, input, textarea, select { font: inherit; color: inherit; }
   border-left: 1px solid var(--border);
 }
 
-/* 20px LAYOUT CONTRACT (COMPACT_STAGE_H): 2px pad top/bottom + 16px line */
+/* 20px LAYOUT CONTRACT (COMPACT_STAGE_H): 2px pad top/bottom + 16px line.
+   A stage row that ran is a <button> so it can send the event feed to that one stage; the
+   geometry is identical either way, which is what keeps the contract intact. The button
+   resets are explicit because a bare `button` would otherwise bring its own font, border
+   and background into a row whose height is load-bearing. */
 .c-stage {
   min-height: 20px;
   display: flex;
@@ -1253,7 +1318,17 @@ button, input, textarea, select { font: inherit; color: inherit; }
   font-size: var(--t-data);
   white-space: nowrap;
   min-width: 0;
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font-family: inherit;
+  color: inherit;
 }
+
+.c-stage.is-inspectable { cursor: pointer; }
+.c-stage.is-inspectable:hover { background: var(--muted); }
+.c-stage.is-inspectable:hover .c-stage-name { color: var(--foreground); }
 
 .c-stage-glyph {
   display: inline-flex;
@@ -1343,8 +1418,26 @@ button, input, textarea, select { font: inherit; color: inherit; }
   border-radius: var(--r-pill);
 }
 
-.g-card.is-active { border-color: var(--primary-border); }
-.g-card.is-failed { border-color: var(--danger-border); }
+/*
+ * Expanded-graph nodes name their state `g-active` / `g-done` / `g-failed` / `g-idle`,
+ * while the compact card uses `is-active` and friends. Both vocabularies are answered
+ * here deliberately: styling only the `is-` set, as an earlier pass did, left every node
+ * in Full topology with no state colour whatsoever — 26 stage nodes rendering identically
+ * whether they had run, failed or never been visited.
+ */
+.g-card.is-active,
+.g-card.g-active { border-color: var(--primary-border); }
+.g-card.is-failed,
+.g-card.g-failed { border-color: var(--danger-border); }
+.g-card.g-done { border-color: var(--ok-border); }
+.g-card.g-idle { border-color: var(--border); }
+
+.g-card.g-active .g-glyph { color: var(--primary); }
+.g-card.g-done .g-glyph { color: var(--ok); }
+.g-card.g-failed .g-glyph { color: var(--danger); }
+.g-card.g-idle .g-glyph { color: var(--g-300); }
+.g-card.g-idle .g-label { color: var(--muted-foreground); }
+
 .g-card.g-muted-path { opacity: 0.6; }
 .g-card.g-current { border-color: var(--primary); }
 

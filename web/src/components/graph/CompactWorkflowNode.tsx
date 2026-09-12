@@ -9,7 +9,7 @@
  * surface, and a word that only appears when something is actually happening. A board
  * where nothing has run yet stays quiet, so the first colour on it means work.
  */
-import { memo, useLayoutEffect } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Handle, Position, useUpdateNodeInternals, type NodeProps } from '@xyflow/react'
 import type { GraphNode, GraphNodeData, CompactStepData, CompactStageData } from '../../lib/graph/index.ts'
 import { compactChrome } from '../../lib/graph/index.ts'
@@ -69,38 +69,101 @@ const Progress = ({ steps }: { steps: CompactStepData[] }) => {
   )
 }
 
-const StageRow = ({ stage }: { stage: CompactStageData }) => (
-  <div
-    className={`c-stage ${statusClass(stage.status)}`}
-    aria-label={`${stage.name}: ${statusLabel(stage.status)}`}
-    style={stage.depth > 0 ? { paddingLeft: stage.depth * 14, marginLeft: 0 } : undefined}
-  >
-    <span className="c-stage-glyph" title={statusLabel(stage.status)}>
-      <OperationIcon operation={stage.operation} />
-    </span>
-    <span className="c-stage-name">{stage.name}</span>
-    {(stage.wallMs != null || stage.llm) && (
-      <span className="c-stage-meta">
-        {stage.llm && <span className="c-stage-llm">{stage.llm.constrained ? 'constrained' : 'unconstrained'}{stage.llm.tokens ? ` · ${stage.llm.tokens}` : ''}</span>}
-        {stage.wallMs != null && <span className="c-stage-time">{fmtSec(stage.wallMs)}</span>}
+/**
+ * One stage inside a step.
+ *
+ * It is a button rather than a div because it is the finest thing on this board that maps
+ * to a single activity record, and clicking it is what narrows the event feed to that
+ * stage instead of to the whole run. The element keeps its exact 20px row height either
+ * way — see the LAYOUT CONTRACT note in styles.css — so making it interactive is a change
+ * of affordance, not of geometry.
+ */
+const StageRow = ({ stage, onInspect }: { stage: CompactStageData; onInspect?: (stage: CompactStageData) => void }) => {
+  const content = (
+    <>
+      <span className="c-stage-glyph" title={statusLabel(stage.status)}>
+        <OperationIcon operation={stage.operation} />
       </span>
-    )}
-  </div>
-)
+      <span className="c-stage-name">{stage.name}</span>
+      {(stage.wallMs != null || stage.llm) && (
+        <span className="c-stage-meta">
+          {stage.llm && <span className="c-stage-llm">{stage.llm.constrained ? 'constrained' : 'unconstrained'}{stage.llm.tokens ? ` · ${stage.llm.tokens}` : ''}</span>}
+          {stage.wallMs != null && <span className="c-stage-time">{fmtSec(stage.wallMs)}</span>}
+        </span>
+      )}
+    </>
+  )
+  const indent = stage.depth > 0 ? { paddingLeft: stage.depth * 14, marginLeft: 0 } : undefined
 
-const StepRow = ({ step, ownerProfile, expanded, onToggle }: {
+  // A stage that never ran has no events to show, so it stays inert rather than offering a
+  // click that would filter the feed to nothing.
+  if (!onInspect || stage.status === 'idle') {
+    return (
+      <div className={`c-stage ${statusClass(stage.status)}`} aria-label={`${stage.name}: ${statusLabel(stage.status)}`} style={indent}>
+        {content}
+      </div>
+    )
+  }
+  return (
+    <button
+      type="button"
+      className={`c-stage is-inspectable ${statusClass(stage.status)}`}
+      aria-label={`${stage.name}: ${statusLabel(stage.status)}. Show this stage in the event feed.`}
+      style={indent}
+      onClick={(event) => { event.stopPropagation(); onInspect(stage) }}
+    >
+      {content}
+    </button>
+  )
+}
+
+/**
+ * True for a moment after a row's work lands.
+ *
+ * This dashboard's whole activity is watching slow work arrive — a median case takes 19.5
+ * seconds and a run takes minutes — so the instant a step stops being in flight is the
+ * event the watcher has been sitting there for. It is the one authored moment in the
+ * surface, and it is spent here rather than scattered across hover states.
+ *
+ * It fires only on a real transition OUT of `active`, which matters more than it looks:
+ * these cards rebuild on every event the feed delivers, and an effect keyed on anything
+ * looser would replay the moment several times a second. A row that was already finished
+ * when it first mounted stays quiet, because nothing happened — the reader just arrived.
+ *
+ * Honouring `prefers-reduced-motion` is not this hook's job; the global rule in styles.css
+ * collapses the animation for everyone who asked for that.
+ */
+const useJustSettled = (status: CompactStepData['status']): boolean => {
+  const previous = useRef(status)
+  const [settling, setSettling] = useState(false)
+
+  useEffect(() => {
+    const wasActive = previous.current === 'active'
+    previous.current = status
+    if (!wasActive || status === 'active' || status === 'idle') return
+    setSettling(true)
+    const id = window.setTimeout(() => setSettling(false), 900)
+    return () => window.clearTimeout(id)
+  }, [status])
+
+  return settling
+}
+
+const StepRow = ({ step, ownerProfile, expanded, onToggle, onInspectStage }: {
   step: CompactStepData
   ownerProfile?: string
   expanded: boolean
   onToggle: () => void
+  onInspectStage?: (stage: CompactStageData) => void
 }) => {
   const hasStages = step.stages.length > 0
   // The card already names the profile it runs; repeating it on every row spends the
   // widest column in the card on a word the reader just read, and truncates the one
   // case that matters — a step that hands off to a DIFFERENT profile.
   const profile = step.profile && step.profile !== ownerProfile ? step.profile : undefined
+  const settling = useJustSettled(step.status)
   return (
-    <div className={`c-step ${statusClass(step.status)}${step.router ? ' c-step-router' : ''}`}>
+    <div className={`c-step ${statusClass(step.status)}${step.router ? ' c-step-router' : ''}${settling ? ' is-settling' : ''}`}>
       <div className="c-step-main">
         <span className="c-step-num">{step.stepNo + 1}</span>
         <span className="c-step-status" title={statusLabel(step.status)}>
@@ -134,7 +197,7 @@ const StepRow = ({ step, ownerProfile, expanded, onToggle }: {
       )}
       {expanded && hasStages && (
         <div className="c-stages">
-          {step.stages.map((stage) => <StageRow key={stage.stageId} stage={stage} />)}
+          {step.stages.map((stage) => <StageRow key={stage.stageId} stage={stage} onInspect={onInspectStage} />)}
         </div>
       )}
     </div>
@@ -236,6 +299,7 @@ export const CompactWorkflowNode = memo(({ id, data }: NodeProps<GraphNode>) => 
             ownerProfile={d.profile}
             expanded={Boolean(step.expanded)}
             onToggle={step.onToggle ?? (() => {})}
+            onInspectStage={d.onInspectStage}
           />
         ))}
         {steps.length === 0 && d.reason ? (
