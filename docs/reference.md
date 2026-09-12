@@ -44,7 +44,7 @@ One exception, deliberate: the clinical task **`shock-pipeline`** is not a pipel
 tasks chained under one `--task` flag, and the name survives because it is public surface — a
 `--task` value, a pack data key, a row in the eval tables. Read it as a fixed proper noun.
 
-`mode = "pipeline"` and the `medextract pipeline` command are still accepted as retired
+`mode = "pipeline"` and the `alkor pipeline` command are still accepted as retired
 spellings of `workflow`, resolved at the edge so exactly one spelling exists downstream. The
 activity event kinds were renamed with them (`pipeline.*` → `workflow.*`), which is a wire
 change: `ACTIVITY_SPEC` is `2`.

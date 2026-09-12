@@ -64,7 +64,7 @@ Verification operates at three levels:
 
 ## Traces
 
-Every run writes JSONL to `${XDG_STATE_HOME:-~/.local/state}/medextract/traces/<profile>/`
+Every run writes JSONL to `${XDG_STATE_HOME:-~/.local/state}/alkor/traces/<profile>/`
 — **outside any repository**, deliberately. A trace line contains the raw prompt and the
 raw completion, which for a clinical profile means the note. A profile that handles patient
 data supplies a `redact` hook and must set one before tracing anything real.

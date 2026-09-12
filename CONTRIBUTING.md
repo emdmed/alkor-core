@@ -2,7 +2,7 @@
 
 ## The shape of the thing
 
-`medextract` extracts medical data from clinical notes with a small local model, and gates
+`alkor` extracts medical data from clinical notes with a small local model, and gates
 itself on whether that worked. Most of its rules follow from what the two halves have in
 common: **neither a wrong reading nor a wrong measurement looks like an error.** One looks
 like a vital sign and the other looks like a score. A crash gets fixed in an hour; a

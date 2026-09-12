@@ -4,7 +4,7 @@ Status: planned. Decisions confirmed with the user.
 
 ## Goal
 
-Every meaningful thing that happens inside the medextract server — profile loads, model
+Every meaningful thing that happens inside the alkor server — profile loads, model
 identification, prompt dispatched → processing → completion, router decisions, pipeline
 handoffs, session turns, tool calls — is emitted as a structured event on an in-process bus,
 and streamed live over `GET /events` (SSE) for a future real-time dashboard.
@@ -23,7 +23,7 @@ at each stage.
 
 - No persistence / journal across restarts.
 - No prompt/completion/note **content** in events (metadata only — see below).
-- No llama-server process lifecycle (model-manager stays out; the medextract server cannot
+- No llama-server process lifecycle (model-manager stays out; the alkor server cannot
   see those processes boot).
 - No control channel (no pause/cancel/approve over the wire).
 - No token-level streaming.
@@ -247,6 +247,6 @@ No dependencies — a subscriber set and a ring buffer, hand-rolled in the codeb
   arm per case, still no `pipeline.*` framing). Real fix: make the pipeline wiring pass
   document + extraction to the verifier in the shape it expects so `--fidelity` can run
   through `runPipeline` as its own header intends.
-- Journal to `${stateRoot()}/medextract/activity/` for cross-restart history.
+- Journal to `${stateRoot()}/alkor/activity/` for cross-restart history.
 - Standalone `dashboard.html` consuming `GET /events` (no-build, `report.html` pattern).
 - `medprotocol` subprocess as its own `stage`.

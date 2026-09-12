@@ -66,7 +66,7 @@ export class RunFailure extends Error {
   }
 }
 
-export interface UseMedextract {
+export interface UseAlkor {
   state: ProjectState
   /** What the URL input currently displays (the draft). */
   serverUrl: string
@@ -97,7 +97,7 @@ export interface ModelHealth {
   state?: string
 }
 
-export const useMedextract = (initialUrl: string): UseMedextract => {
+export const useAlkor = (initialUrl: string): UseAlkor => {
   const [source, dispatchSource] = useReducer(sourceReducer, initialUrl, initialSource)
   const sourceRef = useRef(source)
   sourceRef.current = source

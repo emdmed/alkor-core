@@ -18,7 +18,6 @@ import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuCheckboxItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -122,7 +121,12 @@ const GraphMiniMap = ({ nodes }: { nodes: GraphNode[] }) => {
           />
         )
       })}
-      <rect className="graph-minimap-viewport" {...viewport} />
+      {/* The viewport frame is only information while something is outside it. When the
+          whole board is on screen it draws a box around the entire thumbnail, which reads
+          as the loudest object in the workspace while saying nothing at all. */}
+      {(viewport.width < bounds.width * 0.98 || viewport.height < bounds.height * 0.98) && (
+        <rect className="graph-minimap-viewport" {...viewport} />
+      )}
     </svg>
   )
 }
@@ -146,7 +150,13 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
   const [showLegend, setShowLegend] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [fullscreenFallback, setFullscreenFallback] = useState(false)
-  const [graphMode, setGraphMode] = useState<'full' | 'compact'>('full')
+  // Compact is the board at rest. Full detail cannot be both complete and legible on a
+  // canvas this size — fitting the whole catalogue puts its type near five pixels — and
+  // the compact board was built for exactly this: one card per workflow, a list of names
+  // until a run lights a path through it. Full detail is one click away under View, and
+  // that is the right way round, because detail is what you ask for once you know where
+  // to look.
+  const [graphMode, setGraphMode] = useState<'full' | 'compact'>('compact')
   // Once the operator pans or zooms, the viewport is theirs. A run changes the board's
   // geometry on every event, and refitting through that is the view yanking itself out
   // from under someone who deliberately went to look at one card. Auto-fit resumes when
@@ -320,9 +330,18 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
       const center = currentIndex >= 0 ? currentIndex : 0
       const start = Math.max(0, Math.min(center - Math.floor(windowSize / 2), trail.length - windowSize))
       const traversed = trail.filter((node) => node.data.traversed)
-      const framed = currentIndex >= 0 || traversed.length === 0
+      // Three cases, not two. Work in flight holds the live neighbourhood; a landed run
+      // frames the route it actually took; and a board where nothing has run yet has no
+      // route to frame, so it fits whole. Slicing the catalogue in that last case is the
+      // one framing this view exists to avoid — it parks the canvas on empty paper.
+      const framed = currentIndex >= 0
         ? trail.slice(start, start + windowSize)
-        : traversed
+        : traversed.length > 0
+          ? traversed
+          // Nothing has run and there is no route to frame, so fit the board. Note that
+          // `trail` is in build order, not layout order, so it cannot be sliced to pick
+          // "the start" — the first element is not the leftmost card.
+          : undefined
       // Fit only what the flow store actually holds. A run replaces every node id at
       // once (the catalogue card becomes the run's card), and this frame can land before
       // the store has them: fitting a set it cannot match measures an empty box and
@@ -330,7 +349,7 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
       // even the dot grid, since the background pattern rides the same transform. The
       // whole board is the honest fallback while the new ids land.
       const known = new Set(getNodes().map((node) => node.id))
-      const focus = framed.filter((node) => known.has(node.id))
+      const focus = framed?.filter((node) => known.has(node.id)) ?? []
       void (async () => {
         await fitView({ nodes: focus.length > 0 ? focus : undefined, padding: canvasWidth < 620 ? 0.22 : 0.1, minZoom: 0.45, maxZoom: 1 })
         // Belt and braces: an unusable viewport is silent and unrecoverable without a
@@ -371,6 +390,17 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
     ? (disclosures?.size ?? 0) > 0
     : nodes.some((n) => (n.data.childCount ?? 0) > 0)
 
+  // Whether every step that can open is already open, so a single control can name the move
+  // it is about to make rather than offering both and letting one of them do nothing.
+  const everyStepOpen = graphMode === 'compact'
+    ? (disclosures?.size ?? 0) > 0
+      && compactCollapsed.size === 0
+      && compactExpanded.size >= (disclosures?.size ?? 0)
+    : userCollapsed.size === 0
+      && nodes
+        .filter((n) => (n.data.childCount ?? 0) > 0)
+        .every((n) => userExpanded.has(n.data.expandKey ?? n.id))
+
   return (
     <div ref={graphShellRef} className={`graph-wrap${isFullscreen ? ' is-graph-fullscreen' : ''}`}>
       {/* One bar, and it answers one question: which run am I looking at, and where has it
@@ -397,6 +427,22 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
         <RunPosition run={selected} nodes={nodes} />
 
         <div className="stagebar-tools">
+          {/* Disclosure is the one canvas control that does not live under View: on the
+              compact board it is the move an operator makes constantly, and a menu trip per
+              use is a menu trip too many. It names the direction it is about to go, so it is
+              never a control that would do nothing. */}
+          {hasDisclosures && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="stagebar-disclose"
+              onClick={everyStepOpen ? collapseAll : expandAll}
+              title={everyStepOpen ? 'Collapse every step' : 'Expand every step'}
+            >
+              {everyStepOpen ? <ChevronsDownUp aria-hidden="true" /> : <ChevronsUpDown aria-hidden="true" />}
+              {everyStepOpen ? 'Collapse all' : 'Expand all'}
+            </Button>
+          )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" title="How the canvas is drawn">
@@ -417,13 +463,6 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
               >
                 Compact
               </DropdownMenuCheckboxItem>
-              {hasDisclosures && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onSelect={expandAll}><ChevronsUpDown aria-hidden="true" />Expand every step</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={collapseAll}><ChevronsDownUp aria-hidden="true" />Collapse every step</DropdownMenuItem>
-                </>
-              )}
               <DropdownMenuSeparator />
               <DropdownMenuCheckboxItem
                 checked={showLegend}
@@ -455,6 +494,9 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
           nodeTypes={NODE_TYPES}
           minZoom={0.12}
           maxZoom={1.35}
+          // The canvas is the product's primary surface; the library's credit belongs in
+          // NOTICE, not rendered over the board at 10px in the lowest contrast on screen.
+          proOptions={{ hideAttribution: true }}
           nodesConnectable={false}
           elementsSelectable={false}
           onMove={(event) => { if (event) setViewportPinned(true) }}

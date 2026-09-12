@@ -1,10 +1,16 @@
 /*
  * Dashboard styling, rebuilt on Tailwind v4 + shadcn/ui.
  *
- * The base colour surface is the same GitHub-dark control room the terminal TUI uses
- * (see `src/tui/app.ts`), captured here as shadcn HSL tokens. LUMINANCES are measured
- * against the greys they couple to, not chosen from a racial palette. "oak-dark" only
- * means these tokens make a shadcn theme that is dark, like the surface it sits in.
+ * The world is DESIGN.md's Care Workspace: a warm near-white paper base, clinical sky as
+ * the single action colour, mint as the quiet supporting state. It is deliberately not the
+ * terminal TUI's palette — `src/tui/app.ts` keeps its own dark control room, and the two
+ * do not cross. Long-running workflow state has to stay readable for an hour, which is
+ * what the low-glare base buys.
+ *
+ * Two contracts in here are floors rather than preferences, and both have bitten before:
+ * the type scale below (a measured value never renders under 12px) and contrast (body and
+ * placeholder text at 4.5:1, state-bearing borders at 3:1). The pale register makes both
+ * easy to lose by accident.
  */
 
 @import "tailwindcss";
@@ -52,6 +58,20 @@
   /* Below this the rail overlays the canvas instead of taking width from it. */
   --bp-narrow: 900px;
 
+  /* Type scale. Five steps, because a screen whose sizes all sit within two pixels of
+     each other cannot say which of them matters. Two of these are floors rather than
+     preferences (DESIGN.md): every measured value sits at --t-data or above, since a
+     measurement nobody can read is not a measurement, and --t-label is reserved for the
+     uppercase words that name a region — read once for orientation, never compared, which
+     is the only reason they may go below the value floor. --t-lead is the display step, spent
+     at most once per state, on the one thing the operator came to find out. No state spends it
+     today: the chat empty state used to, and it was costing more height than it returned. */
+  --t-label: 10px;
+  --t-data: 12px;
+  --t-body: 14px;
+  --t-title: 17px;
+  --t-lead: 22px;
+
   /* The palette is light; keep form controls, scrollbars, and the caret in that register. */
   color-scheme: light;
   caret-color: var(--primary);
@@ -73,11 +93,21 @@
   --accent-foreground: oklch(29% 0.045 220);
   --destructive: oklch(55% 0.15 25);
   --destructive-foreground: oklch(98% 0 0);
-  --border: oklch(86% 0.018 210);
+  /* Two border roles, because one token was doing two jobs at one strength. A divider
+     only separates and may stay faint; a border that is the sole thing telling a card,
+     chip or field apart from the paper is carrying state, and the surface brief puts a
+     3:1 floor under it. The pale register is a stated risk of this palette, not a licence
+     to fall below its own contract. */
+  --border: oklch(80% 0.02 210);
+  --border-state: oklch(68% 0.03 210);
   --input: oklch(91% 0.018 205);
-  --ring: oklch(66% 0.095 205);
-  --caution: #dfbd78;
-  --success: #46957e;
+  /* The focus ring is the one control a keyboard user cannot do without; at 66% it sat
+     near 2.9:1 on paper before the button layer halved its alpha. */
+  --ring: oklch(52% 0.12 205);
+  /* caution and success are read as 10-12px bold words ("LIVE", "route"), which is small
+     text under WCAG however emphatic it looks — so both clear 4.5:1 on paper, not 3:1. */
+  --caution: oklch(52% 0.10 80);
+  --success: oklch(46% 0.085 165);
 
   /* graph surface tokens (Phase 6: all graph colors flow through the token system) */
   --graph-grid: oklch(90% 0.012 190);
@@ -107,7 +137,7 @@ html, body, #root { height: 100%; }
 
 body {
   margin: 0;
-  font-family: "Adwaita Sans", "Noto Sans", ui-sans-serif, system-ui, sans-serif;
+  font-family: "Inter Variable", "Adwaita Sans", "Noto Sans", ui-sans-serif, system-ui, sans-serif;
   background: var(--background);
   color: var(--foreground);
   font-size: 14px;
@@ -121,12 +151,12 @@ body {
 
 ::selection { background: color-mix(in oklab, var(--primary) 25%, white); color: var(--foreground); }
 input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-json {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 /* Inside a graph node, monospace marks machine output — identifiers, timings, token
    counts — and never the node's own name or its explanatory line. */
 .g-meta, .g-time, .g-prof, .g-detail, .g-shape, .g-chip-meta, .g-transfer code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 .app {
@@ -141,24 +171,64 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
 .topbar {
   min-height: var(--h-topbar);
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--s-3);
+  gap: var(--s-2);
   padding: var(--s-half) var(--s-2);
   border-bottom: 1px solid var(--border);
   background: var(--card);
   color: var(--card-foreground);
 }
+/* The rack: connection state, the model, and the counters read as one right-hand instrument
+   rather than as separate groups drifting across the band. Hairlines divide its cells, so the
+   identity keeps the left edge and everything measured sits together under one reading. */
+.topbar-rack {
+  grid-column: 2;
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+/* Qualified by .topbar on purpose: `.topbar-rack > * + *` scores (0,1,0) — the universal
+   selectors count for nothing — so `.counters { margin: 0; padding: 0 }` further down the
+   file tied on specificity and won on order, leaving the divider with no space around it. */
+.topbar .topbar-rack > * + * {
+  margin-left: var(--s-2);
+  padding-left: var(--s-2);
+  border-left: 1px solid color-mix(in oklab, var(--border) 72%, transparent);
+}
+.topbar-rack .counter:first-child { padding-left: 0; }
+.topbar-rack .counter:last-child { padding-right: 0; }
 /* Actuators hold to 30px so the band stays at 46px with usable hit targets. */
 .topbar [data-slot="button"] { height: 30px; }
+/* The actuators sit under the session's own type: they were the only 14px words here. */
+.topbar-actions [data-slot="button"] { font-size: var(--t-data); }
 
 .topbar-identity { display: inline-flex; align-items: center; gap: var(--s-1); min-width: 0; }
-.brand-name {
-  color: var(--foreground);
-  font-weight: 750;
-  font-size: 14px;
-  letter-spacing: -0.02em;
+/* An armed Clear says so in the destructive hue. It is the only place in the workspace a
+   warning colour sits on a control rather than on state, and it lasts four seconds. */
+.topbar-actions .is-confirming {
+  color: var(--destructive);
+  background: color-mix(in oklab, var(--destructive) 8%, transparent);
+}
+/* Sits at the label step and drops out below the narrow breakpoint: the bar has to carry
+   session truth first, and a descriptor is for the first visit, not the hundredth. */
+.brand-descriptor {
+  color: var(--muted-foreground);
+  font-size: var(--t-data);
   white-space: nowrap;
+  padding-left: 2px;
+}
+@media (max-width: 1100px) { .brand-descriptor { display: none; } }
+/* The wordmark is outlines, not text -- see Logotype.tsx for why. Height rather than
+   font-size drives it, and the viewBox fixes the aspect at 2.894. 11px of glyph height is
+   the optical match for the 14px text it replaces (the bbox is 1514/2048 of the em). */
+.brand-mark {
+  color: var(--foreground);
+  height: 11px;
+  width: auto;
+  display: block;
+  flex: none;
 }
 
 /* The server address: a chip that reads at a glance, a form only when you mean to move. */
@@ -173,8 +243,8 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
   border-radius: 999px;
   background: var(--muted);
   color: var(--muted-foreground);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.75rem;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--t-data);
   line-height: 1.3;
   cursor: pointer;
   white-space: nowrap;
@@ -202,7 +272,7 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
 }
 .conn-pop-label {
   color: var(--foreground);
-  font-size: 0.7rem;
+  font-size: var(--t-label);
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -211,10 +281,10 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
 .conn-input {
   min-width: 0;
   height: 32px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.78rem;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--t-body);
 }
-.conn-pop-note { margin: 0; color: var(--muted-foreground); font-size: 0.7rem; line-height: 1.45; }
+.conn-pop-note { margin: 0; color: var(--muted-foreground); font-size: var(--t-data); line-height: 1.45; }
 
 /* Connection state, the model that answered, and anything wrong with either. */
 .topbar-state {
@@ -229,9 +299,10 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
   align-items: center;
   gap: 6px;
   flex: none;
-  font-size: 0.7rem;
-  font-weight: 800;
-  letter-spacing: 0.09em;
+  font-size: var(--t-label);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
   white-space: nowrap;
 }
 .health-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
@@ -241,15 +312,16 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
 .health-state.tone-warn .health-dot { background: var(--caution); }
 .health-state.tone-err { color: var(--destructive); }
 .health-state.tone-err .health-dot { background: var(--destructive); }
-.topbar-state .health-chip { flex: none; font-size: 0.7rem; line-height: 1.2; }
+.topbar-state .health-chip { flex: none; font-size: var(--t-data); line-height: 1.2; }
 .topbar-model, .topbar-error { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topbar-model {
   color: var(--primary);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.75rem;
+  letter-spacing: -0.01em;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--t-data);
   max-width: 260px;
 }
-.topbar-error { color: var(--destructive); font-size: 0.75rem; max-width: min(320px, 30vw); }
+.topbar-error { color: var(--destructive); font-size: var(--t-data); max-width: min(320px, 30vw); }
 
 /* Counters: what is in flight, what has landed, and the ratios that stay quiet at zero. */
 .counters {
@@ -266,23 +338,38 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
   gap: 5px;
   padding: 0 11px;
   color: var(--muted-foreground);
-  font-size: 0.72rem;
+  font-size: var(--t-data);
 }
 .counter + .counter { border-left: 1px solid color-mix(in oklab, var(--border) 72%, transparent); }
 .counter dd {
   margin: 0;
   color: var(--foreground);
+  font-size: var(--t-data);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
-.counter.is-live dd { color: var(--success); }
+.counter dt {
+  font-size: var(--t-label);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+/* The one display step this band spends, and it spends it conditionally: a run in flight is
+   the number that changes what the operator does next, so it takes --t-title while that is
+   true and returns to the data step when it is not. A permanent 17px zero would be decoration. */
+.counter.is-live dd {
+  color: var(--success);
+  font-size: var(--t-title);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
 .counter.is-danger dd { color: var(--destructive); }
 
 .topbar-actions {
   display: flex;
   align-items: center;
   gap: 2px;
-  padding-left: 10px;
+  padding-left: var(--s-2);
   border-left: 1px solid var(--border);
 }
 
@@ -306,7 +393,7 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
   gap: 4px;
   flex-wrap: wrap;
   padding: 4px 0 8px 0;
-  font-size: 0.9rem;
+  font-size: var(--t-title);
 }
 .arrow { color: var(--secondary-foreground); }
 
@@ -325,13 +412,13 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
   display: flex;
   align-items: baseline;
   gap: 6px;
-  font-size: 0.85rem;
+  font-size: var(--t-body);
   padding: 1px 0;
   white-space: nowrap;
 }
 .dtree-name { color: var(--foreground); }
-.dtree-meta { color: var(--secondary-foreground); font-size: 0.75rem; white-space: nowrap; }
-.dtree-detail { color: var(--muted-foreground); font-size: 0.75rem; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; white-space: nowrap; }
+.dtree-meta { color: var(--secondary-foreground); font-size: var(--t-data); white-space: nowrap; }
+.dtree-detail { color: var(--muted-foreground); font-size: var(--t-data); overflow: hidden; text-overflow: ellipsis; max-width: 40vw; white-space: nowrap; }
 
 /* Column-rule marks a vertical data-flow edge from a parent onto its children. */
 .dtree-children {
@@ -348,7 +435,7 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
   margin: 1px 0 1px 1.3em;
   padding: 0 0.4em;
   align-self: flex-start;
-  font-size: 0.75rem;
+  font-size: var(--t-data);
   color: var(--primary);
   font-style: normal;
   border: 1px dashed var(--secondary);
@@ -362,7 +449,7 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 0.75rem;
+  font-size: var(--t-data);
   color: var(--foreground);
   background: var(--muted);
   border: 1px solid var(--border);
@@ -475,7 +562,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   background: transparent;
   color: var(--muted-foreground);
   font-family: inherit;
-  font-size: 0.75rem;
+  font-size: var(--t-data);
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
@@ -493,8 +580,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   border-radius: 999px;
   background: var(--muted);
   color: var(--muted-foreground);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.65rem;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--t-data);
   font-weight: 400;
   font-variant-numeric: tabular-nums;
 }
@@ -520,7 +607,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   border-radius: 8px;
   background: var(--muted);
   color: var(--muted-foreground);
-  font-size: 0.75rem;
+  font-size: var(--t-data);
   line-height: 1.45;
 }
 
@@ -559,7 +646,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   flex-direction: column;
 }
 
-.chat-options { color: var(--muted-foreground); font-size: 0.7rem; }
+.chat-options { color: var(--muted-foreground); font-size: var(--t-data); }
 .chat-options > summary {
   cursor: pointer;
   padding: 4px 7px;
@@ -589,7 +676,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .chat-options-body p { margin: 0; line-height: 1.45; }
 .chat-target-label {
   color: var(--foreground);
-  font-size: 0.7rem;
+  font-size: var(--t-label);
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -598,10 +685,10 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   min-width: 0;
   background: var(--background);
   color: var(--foreground);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-state);
   border-radius: 8px;
   font-family: inherit;
-  font-size: 0.75rem;
+  font-size: var(--t-data);
   min-height: 30px;
   padding: 4px 8px;
 }
@@ -611,26 +698,30 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .chat-presets {
   display: grid;
   gap: 2px;
-  padding: var(--s-3) 10px var(--s-2);
+  padding: var(--s-1) 10px var(--s-1);
 }
-.chat-presets-lead {
-  margin: 0 0 6px 7px;
+/* Set apart from the presets by a rule and a margin rather than by a warning colour: it is
+   a standing condition of the tool, not an alert about anything the operator just did. */
+.chat-presets-note {
+  margin: var(--s-1) 7px 0;
+  padding-top: var(--s-1);
+  border-top: 1px solid var(--border);
   color: var(--muted-foreground);
-  font-size: 0.75rem;
+  font-size: var(--t-data);
   line-height: 1.45;
-  max-width: 34ch;
+  max-width: 38ch;
 }
 .chat-preset {
   display: flex;
   align-items: center;
   gap: 7px;
   width: 100%;
-  font-size: 0.75rem;
+  font-size: var(--t-data);
   color: var(--muted-foreground);
   background: transparent;
   border: 0;
   border-radius: 8px;
-  padding: 5px 7px;
+  padding: 4px 7px;
   cursor: pointer;
   font-family: inherit;
   text-align: left;
@@ -656,7 +747,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   border-radius: 8px;
   padding: 7px 9px;
   background: var(--background);
-  font-size: 0.75rem;
+  font-size: var(--t-data);
 }
 .chat-msg-err {
   border-color: color-mix(in oklab, var(--destructive) 40%, var(--border));
@@ -675,7 +766,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .chat-msg-profile {
   color: var(--primary);
   font-weight: 600;
-  font-size: 0.7rem;
+  font-size: var(--t-data);
   letter-spacing: 0.04em;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -683,7 +774,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 }
 .chat-msg-status {
   color: var(--muted-foreground);
-  font-size: 0.7rem;
+  font-size: var(--t-label);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   white-space: nowrap;
@@ -703,7 +794,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--foreground);
-  font-size: 0.7rem;
+  font-size: var(--t-data);
   line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-word;
@@ -722,7 +813,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--foreground);
-  font-size: 0.74rem;
+  font-size: var(--t-body);
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
@@ -732,7 +823,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .chat-msg-steps { margin-top: 6px; }
 .chat-msg-steps > summary {
   cursor: pointer;
-  font-size: 0.68rem;
+  font-size: var(--t-data);
   color: var(--muted-foreground);
   padding: 2px 0;
 }
@@ -744,7 +835,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .chat-msg-log { margin-top: 6px; }
 .chat-msg-log > summary {
   cursor: pointer;
-  font-size: 0.68rem;
+  font-size: var(--t-data);
   color: var(--muted-foreground);
   padding: 2px 0;
 }
@@ -764,8 +855,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .chat-msg-log-text {
   margin: 0;
   padding: 6px 8px 8px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.66rem;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--t-data);
   line-height: 1.45;
   color: var(--foreground);
   white-space: pre;
@@ -787,13 +878,19 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   overflow-y: auto;
   background: var(--background);
   color: var(--foreground);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-state);
   border-radius: 8px;
   font-family: inherit;
-  font-size: 0.75rem;
+  font-size: var(--t-data);
   line-height: 1.4;
   padding: 7px 10px;
   max-height: 120px;
+}
+/* Stated explicitly because the UA default is the text colour at half alpha, which put the
+   only instruction on this panel at 3:1. `opacity: 1` is the Firefox half of that default. */
+.chat-textarea::placeholder {
+  color: var(--muted-foreground);
+  opacity: 1;
 }
 .chat-textarea:focus { outline: none; border-color: var(--ring); }
 .chat-textarea:disabled { opacity: 0.5; }
@@ -813,7 +910,6 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .chat-preset.is-corpus {
   color: var(--primary);
   font-weight: 600;
-  margin-bottom: 2px;
 }
 .chat-preset.is-corpus:hover { background: color-mix(in oklab, var(--primary) 9%, transparent); }
 
@@ -828,7 +924,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   background: var(--card);
   color: var(--muted-foreground);
   font-family: inherit;
-  font-size: 0.7rem;
+  font-size: var(--t-data);
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
@@ -846,7 +942,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   padding: 5px 9px;
   border-radius: 8px;
   background: color-mix(in oklab, var(--primary) 8%, transparent);
-  font-size: 0.7rem;
+  font-size: var(--t-data);
   min-width: 0;
 }
 .chat-loaded svg { width: 12px; height: 12px; flex: none; align-self: center; color: var(--primary); }
@@ -856,8 +952,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   flex: 1 1 auto;
   min-width: 0;
   color: var(--foreground);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-weight: 650;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -866,7 +962,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   flex: 0 1 auto;
   min-width: 0;
   color: var(--muted-foreground);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -905,7 +1001,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   background: transparent;
   color: var(--foreground);
   font-family: inherit;
-  font-size: 0.78rem;
+  font-size: var(--t-body);
   padding: 5px 2px;
 }
 .corpus-search::placeholder { color: var(--muted-foreground); }
@@ -918,7 +1014,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   display: inline-flex;
   padding: 4px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 8px;
   background: transparent;
   color: var(--muted-foreground);
   cursor: pointer;
@@ -936,7 +1032,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   border-radius: 8px;
   background: var(--muted);
   color: var(--muted-foreground);
-  font-size: 0.75rem;
+  font-size: var(--t-data);
   line-height: 1.45;
 }
 .corpus-status svg { width: 13px; height: 13px; flex: none; }
@@ -947,7 +1043,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   border-bottom: 1px solid color-mix(in oklab, var(--destructive) 35%, var(--border));
   background: color-mix(in oklab, var(--destructive) 6%, var(--card));
   color: var(--destructive);
-  font-size: 0.72rem;
+  font-size: var(--t-data);
   line-height: 1.45;
 }
 
@@ -980,7 +1076,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .corpus-group-name {
   min-width: 0;
   color: var(--foreground);
-  font-size: 0.78rem;
+  font-size: var(--t-body);
   font-weight: 700;
   letter-spacing: -0.01em;
   overflow: hidden;
@@ -993,8 +1089,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   border-radius: 999px;
   background: var(--secondary);
   color: var(--secondary-foreground);
-  font-size: 0.64rem;
-  font-weight: 650;
+  font-size: var(--t-label);
+  font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -1002,8 +1098,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   flex: none;
   margin-left: auto;
   color: var(--muted-foreground);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.7rem;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--t-data);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1015,20 +1111,20 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 }
 .corpus-case-name {
   color: var(--foreground);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.72rem;
-  font-weight: 650;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--t-data);
+  font-weight: 600;
   overflow-wrap: anywhere;
 }
 .corpus-case-meta {
   color: var(--muted-foreground);
-  font-size: 0.66rem;
+  font-size: var(--t-data);
   font-variant-numeric: tabular-nums;
 }
 .corpus-case-count { color: var(--primary); font-weight: 600; }
 .corpus-case-note {
   color: var(--muted-foreground);
-  font-size: 0.7rem;
+  font-size: var(--t-data);
   line-height: 1.4;
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -1065,9 +1161,9 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .corpus-row-name {
   min-width: 0;
   color: var(--foreground);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.74rem;
-  font-weight: 650;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--t-data);
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1076,12 +1172,12 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .corpus-row.is-at-cursor .corpus-row-glyph { color: var(--primary); }
 .corpus-row-meta {
   color: var(--muted-foreground);
-  font-size: 0.68rem;
+  font-size: var(--t-data);
   font-variant-numeric: tabular-nums;
 }
 .corpus-row-note {
   color: var(--muted-foreground);
-  font-size: 0.72rem;
+  font-size: var(--t-data);
   line-height: 1.4;
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -1096,7 +1192,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   padding: 7px 12px;
   border-top: 1px solid var(--border);
   color: var(--muted-foreground);
-  font-size: 0.68rem;
+  font-size: var(--t-data);
   line-height: 1.45;
 }
 
@@ -1156,7 +1252,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   padding: 2px 0;
 }
 .stagebar-runs::-webkit-scrollbar { display: none; }
-.stagebar-waiting { color: var(--muted-foreground); font-size: 0.75rem; white-space: nowrap; }
+.stagebar-waiting { color: var(--muted-foreground); font-size: var(--t-data); white-space: nowrap; }
 
 .run-chip {
   display: inline-flex;
@@ -1164,12 +1260,12 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   gap: 6px;
   flex: none;
   padding: 3px 9px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-state);
   border-radius: 999px;
   background: var(--card);
   color: var(--foreground);
   font-family: inherit;
-  font-size: 0.72rem;
+  font-size: var(--t-data);
   cursor: pointer;
   white-space: nowrap;
   transition: border-color 140ms ease, background-color 140ms ease;
@@ -1190,19 +1286,19 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   padding: 3px 11px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  font-size: 0.72rem;
+  font-size: var(--t-data);
   white-space: nowrap;
 }
 .stagebar-position svg { width: 13px; height: 13px; flex: none; }
 .stagebar-position-name {
-  font-weight: 650;
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 24ch;
 }
 .stagebar-position-time {
   color: var(--muted-foreground);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-variant-numeric: tabular-nums;
 }
 .stagebar-position.is-live {
@@ -1221,14 +1317,23 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .stagebar-tools [data-slot="button"] { height: 28px; }
 .stagebar-scope {
   color: var(--muted-foreground);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.72rem;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--t-data);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 30ch;
 }
 .stagebar-icon { padding-inline: 7px; }
+/* Expand/collapse, resident rather than under View: it reads as the quiet instruction it is
+   until the pointer is on it, and it names the direction the canvas is about to move. */
+.stagebar-disclose {
+  gap: 5px;
+  padding-inline: 9px;
+  font-size: var(--t-data);
+  color: var(--muted-foreground);
+}
+.stagebar-disclose:hover { color: var(--primary); }
 
 .graph-canvas {
   flex: 1;
@@ -1275,8 +1380,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   align-items: center;
   gap: 4px;
 }
-.graph-loading-title { color: var(--foreground); font-weight: 700; font-size: 0.85rem; }
-.graph-loading-note { color: var(--muted-foreground); font-size: 0.7rem; }
+.graph-loading-title { color: var(--foreground); font-weight: 700; font-size: var(--t-body); }
+.graph-loading-note { color: var(--muted-foreground); font-size: var(--t-data); }
 
 /* --- compact legend; kept outside the canvas so it never obscures the graph */
 /* The legend is reference, so it floats in the canvas corner rather than taking a band
@@ -1296,12 +1401,12 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   background: color-mix(in oklab, var(--card) 94%, transparent);
   backdrop-filter: blur(3px);
   color: var(--muted-foreground);
-  font-size: 0.7rem;
+  font-size: var(--t-data);
 }
 .graph-legend-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .graph-legend-heading {
   color: var(--foreground);
-  font-size: 0.7rem;
+  font-size: var(--t-label);
   font-weight: 700;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -1311,7 +1416,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   padding: 2px;
   margin: -2px -3px -2px 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: 8px;
   background: transparent;
   color: var(--muted-foreground);
   cursor: pointer;
@@ -1324,7 +1429,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 }
 .graph-legend-title {
   margin-bottom: 2px;
-  font-size: 0.68rem;
+  font-size: var(--t-data);
   letter-spacing: 0.02em;
   color: var(--secondary-foreground);
   font-weight: 700;
@@ -1371,19 +1476,19 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   gap: 8px;
   margin: 20px 0 8px;
   color: var(--foreground);
-  font-size: 0.75rem;
-  font-weight: 750;
+  font-size: var(--t-data);
+  font-weight: 700;
   letter-spacing: 0.01em;
 }
 .drawer-section-title:first-of-type { margin-top: 0; }
-.drawer-section-title span { color: var(--muted-foreground); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 400; }
-.drawer-empty { padding: 7px 9px; border-radius: 8px; background: var(--muted); color: var(--muted-foreground); font-size: 0.75rem; }
+.drawer-section-title span { color: var(--muted-foreground); font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 400; }
+.drawer-empty { padding: 7px 9px; border-radius: 8px; background: var(--muted); color: var(--muted-foreground); font-size: var(--t-data); }
 .drawer-item { padding: 7px 0; border-bottom: 1px solid color-mix(in oklab, var(--border) 65%, transparent); }
 .drawer-item-row { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .drawer-item-row [data-slot="badge"] { width: 20px; height: 20px; padding: 0; border-radius: 8px; }
 .drawer-item-row [data-slot="badge"] svg { width: 11px; height: 11px; }
-.drawer-item-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--foreground); font-size: 0.75rem; font-weight: 600; }
-.drawer-item-id, .drawer-item-meta, .drawer-item-detail, .drawer-data-row { color: var(--muted-foreground); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.7rem; }
+.drawer-item-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--foreground); font-size: var(--t-data); font-weight: 600; }
+.drawer-item-id, .drawer-item-meta, .drawer-item-detail, .drawer-data-row { color: var(--muted-foreground); font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: var(--t-data); }
 .drawer-item-id, .drawer-item-meta { margin-left: auto; white-space: nowrap; }
 .drawer-item-detail { margin: 3px 0 0 27px; overflow-wrap: anywhere; }
 .drawer-badges { display: flex; flex-wrap: wrap; gap: 5px; }
@@ -1391,7 +1496,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .drawer-data-row > span:nth-child(2) { color: var(--foreground); }
 .stage-tree-item { margin: 3px 0; }
 .stage-tree-children { margin: 4px 0 0 10px; padding-left: 12px; border-left: 1px solid var(--border); }
-.activity-summary { display: flex; align-items: center; gap: 8px; padding: 10px; border-radius: 8px; background: var(--muted); font-size: 0.75rem; }
+.activity-summary { display: flex; align-items: center; gap: 8px; padding: 10px; border-radius: 8px; background: var(--muted); font-size: var(--t-data); }
 .status-spin { animation: status-spin 1.4s linear infinite; }
 @keyframes status-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
@@ -1427,19 +1532,21 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   background: color-mix(in oklab, var(--primary) 6%, transparent);
 }
 .inspected-kind {
-  font-size: 0.7rem;
+  font-size: var(--t-label);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--muted-foreground);
 }
-.inspected-label { color: var(--foreground); font-weight: 600; margin: 2px 0; }
-.inspected-meta { color: var(--muted-foreground); font-size: 0.75rem; }
+/* The inspector answers one question — what is this node — so the node's name is the
+   title of the panel, not another line of metadata the same size as its own timings. */
+.inspected-label { color: var(--foreground); font-weight: 600; font-size: var(--t-title); letter-spacing: -0.015em; line-height: 1.25; margin: 2px 0 4px; }
+.inspected-meta { color: var(--muted-foreground); font-size: var(--t-data); }
 .inspected-json {
   margin: 6px 0 0;
   padding: 6px 8px;
   background: var(--background);
   border-radius: 8px;
-  font-size: 0.75rem;
+  font-size: var(--t-data);
   overflow: auto;
   color: var(--muted-foreground);
   max-height: 180px;
@@ -1465,8 +1572,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .eventlog-volume {
   min-width: 0;
   color: var(--muted-foreground);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.68rem;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--t-data);
   font-variant-numeric: tabular-nums;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1480,7 +1587,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   border-radius: 8px;
   background: var(--muted);
   color: var(--muted-foreground);
-  font-size: 0.75rem;
+  font-size: var(--t-data);
   line-height: 1.45;
 }
 .ev-row {
@@ -1502,11 +1609,11 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .ev-time, .ev-id {
   flex: none;
   color: var(--muted-foreground);
-  font-size: 0.68rem;
+  font-size: var(--t-data);
   font-variant-numeric: tabular-nums;
 }
 /* The kind is what you scan the log for, so it carries the event's own hue. */
-.ev-kind { flex: none; font-size: 0.7rem; font-weight: 650; }
+.ev-kind { flex: none; font-size: var(--t-data); font-weight: 600; }
 .ev-detail { flex: none; max-height: 180px; overflow: auto; border-top: 1px solid var(--border); background: var(--background); }
 .ev-detail-head {
   position: sticky;
@@ -1518,21 +1625,21 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   padding: 5px 8px 5px 10px;
   background: var(--background);
   color: var(--primary);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.7rem;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--t-data);
 }
 .ev-detail-close {
   display: inline-flex;
   padding: 2px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 8px;
   background: transparent;
   color: var(--muted-foreground);
   cursor: pointer;
 }
 .ev-detail-close:hover { color: var(--foreground); background: var(--muted); }
 .ev-detail-close svg { width: 13px; height: 13px; }
-.ev-detail pre { margin: 0; padding: 2px 10px 8px; font-size: 0.7rem; color: var(--muted-foreground); }
+.ev-detail pre { margin: 0; padding: 2px 10px 8px; font-size: var(--t-data); color: var(--muted-foreground); }
 
 /* --- narrow viewports ------------------------------------------------------ */
 @media (max-width: 899px) {
@@ -1541,11 +1648,13 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
     gap: 6px 10px;
     padding: 7px 10px;
   }
-  .topbar-state { grid-column: 1; justify-content: flex-start; gap: 7px; }
-  .health-state { font-size: 0.65rem; }
+  /* The rack drops under the identity and wraps rather than squeezing its cells. */
+  .topbar-rack { grid-column: 1; grid-row: 2; justify-self: start; flex-wrap: wrap; }
+  .topbar .topbar-rack > * + * { margin-left: 10px; padding-left: 10px; }
+  .topbar-state { justify-content: flex-start; gap: 7px; }
+  .health-state { font-size: var(--t-data); }
   .topbar-model { max-width: min(160px, 34vw); }
   .topbar-error { max-width: min(160px, 34vw); }
-  .counters { grid-column: 1; }
   .counter:first-child { padding-left: 0; }
   .topbar-actions { grid-column: 2; grid-row: 2; padding-left: 0; border-left: 0; }
   .topbar [data-slot="button"] { min-height: 38px; }
@@ -1567,10 +1676,10 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   flex-direction: column;
   gap: 4px;
   background: var(--card);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-state);
   border-radius: 12px;
   padding: 9px 11px;
-  font-size: 0.75rem;
+  font-size: var(--t-data);
   color: var(--foreground);
   box-shadow: 0 7px 16px -17px oklch(30% 0.04 210 / 0.55);
   position: relative;
@@ -1616,12 +1725,12 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   padding: 5px 10px;
   border-radius: 999px;
   border-left-width: 1px;
-  font-size: 0.75rem;
+  font-size: var(--t-data);
 }
 .g-chip-copy { display: flex; flex-direction: column; min-width: 0; }
 .g-chip-meta {
   color: var(--muted-foreground);
-  font-size: 0.7rem;
+  font-size: var(--t-data);
   line-height: 1.25;
 }
 .g-chip-dot {
@@ -1657,7 +1766,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 }
 .g-profile-route {
   color: var(--success);
-  font-size: 0.7rem;
+  font-size: var(--t-data);
   font-weight: 700;
 }
 .g-now {
@@ -1668,8 +1777,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   border-radius: 0 8px 0 8px;
   background: var(--primary);
   color: var(--primary-foreground);
-  font-size: 0.7rem;
-  font-weight: 800;
+  font-size: var(--t-data);
+  font-weight: 700;
   letter-spacing: 0.08em;
   line-height: 1;
 }
@@ -1707,7 +1816,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   border-radius: 8px;
   background: var(--muted);
   color: var(--muted-foreground);
-  font-size: 0.7rem;
+  font-size: var(--t-data);
   font-weight: 700;
   line-height: 1.35;
 }
@@ -1732,13 +1841,13 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   border-radius: 8px;
   background: var(--secondary);
   color: var(--primary);
-  font-size: 0.7rem;
-  font-weight: 800;
+  font-size: var(--t-data);
+  font-weight: 700;
   letter-spacing: 0.06em;
   line-height: 1.2;
 }
 .g-meta {
-  font-size: 0.7rem;
+  font-size: var(--t-data);
   color: var(--muted-foreground);
   white-space: nowrap;
   overflow: hidden;
@@ -1746,14 +1855,14 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 }
 .g-prof { color: var(--secondary-foreground); }
 .g-time { color: var(--muted-foreground); opacity: 0.8; margin-left: 6px; }
-.g-refs { color: var(--primary); font-weight: 500; }
+.g-refs { color: var(--primary); font-weight: 600; }
 .g-transfer {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: baseline;
   gap: 6px;
   color: var(--muted-foreground);
-  font-size: 0.7rem;
+  font-size: var(--t-data);
 }
 .g-transfer > span { font-weight: 700; }
 .g-transfer code {
@@ -1763,7 +1872,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   white-space: nowrap;
 }
 .g-detail {
-  font-size: 0.7rem;
+  font-size: var(--t-data);
   color: var(--muted-foreground);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1776,14 +1885,14 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 0 6px;
-  font-size: 0.7rem;
+  font-size: var(--t-data);
 }
 .g-conf { color: var(--ev-workflow); font-weight: 700; }
 .g-decide {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 0.75rem;
+  font-size: var(--t-data);
   color: var(--muted-foreground);
 }
 .g-route-line { color: var(--success); font-weight: 700; }
@@ -1793,12 +1902,12 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   gap: 5px;
   min-width: 0;
   color: var(--secondary-foreground);
-  font-size: 0.7rem;
+  font-size: var(--t-data);
 }
 .g-route-plan > span:first-child { color: var(--muted-foreground); font-weight: 700; }
 .g-route-plan b { margin-right: 5px; color: var(--primary); }
 .g-rule-vs {
-  font-size: 0.7rem;
+  font-size: var(--t-data);
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 0 5px;
@@ -1810,7 +1919,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   align-items: center;
   gap: 3px;
   font-family: inherit;
-  font-size: 0.7rem;
+  font-size: var(--t-data);
   color: var(--muted-foreground);
   background: transparent;
   border: 1px solid var(--border);
@@ -1869,7 +1978,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   display: block;
   max-width: calc(50% - 14px);
   color: var(--muted-foreground);
-  font-size: 0.7rem;
+  font-size: var(--t-label);
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -1916,7 +2025,10 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
-  background: color-mix(in oklab, var(--card) 94%, var(--secondary));
+  /* The minimap sits on top of the board it describes, so it reads through rather than
+     occluding: at 94% opaque it buried whichever stage the layout happened to put here. */
+  background: color-mix(in oklab, var(--card) 78%, transparent);
+  backdrop-filter: blur(3px);
   box-shadow: 0 9px 24px -20px oklch(30% 0.04 210 / 0.55);
   cursor: crosshair;
 }
@@ -1924,9 +2036,14 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   outline: 2px solid var(--ring);
   outline-offset: 3px;
 }
+/* non-scaling-stroke is required, not optional: the viewBox is in world units (~4000
+   wide into 200px), so a plain stroke-width would scale to roughly a twentieth of a pixel
+   and vanish. It does mean these widths are literal screen pixels — which is why 6 and 8
+   turned every thumbnail rect into a blob of ink and made the viewport frame the
+   highest-contrast object in the application. Screen pixels, so read them as such. */
 .graph-minimap-node {
   stroke: var(--foreground);
-  stroke-width: 6px;
+  stroke-width: 1px;
   vector-effect: non-scaling-stroke;
   opacity: 0.58;
 }
@@ -1935,7 +2052,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .graph-minimap-viewport {
   fill: var(--minimap-viewport);
   stroke: var(--primary);
-  stroke-width: 8px;
+  stroke-width: 1.5px;
   vector-effect: non-scaling-stroke;
   pointer-events: none;
 }
@@ -1972,7 +2089,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 0;
-  font-size: 0.75rem;
+  font-size: var(--t-data);
   color: var(--foreground);
   box-shadow: 0 8px 18px -16px oklch(30% 0.04 210 / 0.5);
   overflow: hidden;
@@ -2002,13 +2119,13 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   background: transparent;
   border-bottom-color: color-mix(in oklab, var(--border) 70%, transparent);
 }
-.g-compact.is-route .c-header-label { font-size: 0.76rem; font-weight: 650; }
+.g-compact.is-route .c-header-label { font-size: var(--t-data); font-weight: 600; }
 
 .c-route-note {
   box-sizing: border-box;
   min-height: 22px;
   padding: 4px 12px;
-  font-size: 0.66rem;
+  font-size: var(--t-data);
   letter-spacing: 0.01em;
   color: color-mix(in oklab, var(--muted-foreground) 88%, transparent);
 }
@@ -2036,7 +2153,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   flex: 1 1 auto;
   min-width: 0;
   font-weight: 700;
-  font-size: 0.83rem;
+  font-size: var(--t-body);
   letter-spacing: -0.012em;
   color: var(--foreground);
   white-space: nowrap;
@@ -2057,7 +2174,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   height: 20px;
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: 8px;
   background: transparent;
   color: var(--muted-foreground);
   cursor: pointer;
@@ -2072,7 +2189,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   padding: 0 6px;
   border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
   border-radius: 999px;
-  font-size: 0.62rem;
+  font-size: var(--t-label);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -2083,7 +2200,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 /* What the card holds, where a repeated "Queued" chip would have gone. */
 .c-header-summary {
   flex: none;
-  font-size: 0.68rem;
+  font-size: var(--t-data);
   color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -2092,7 +2209,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   flex: none;
   padding: 1px 7px;
   border-radius: 999px;
-  font-size: 0.68rem;
+  font-size: var(--t-data);
   font-weight: 700;
   white-space: nowrap;
   background: color-mix(in oklab, var(--primary) 14%, var(--card));
@@ -2102,8 +2219,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .c-header-time {
   flex: none;
   color: var(--muted-foreground);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.7rem;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--t-data);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -2115,7 +2232,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   height: 22px;
   margin-right: -3px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 8px;
   background: transparent;
   color: color-mix(in oklab, var(--muted-foreground) 80%, transparent);
   cursor: pointer;
@@ -2160,7 +2277,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   gap: 7px;
   min-height: 28px;
   padding: 5px 12px;
-  font-size: 0.66rem;
+  font-size: var(--t-label);
   color: var(--muted-foreground);
   background: color-mix(in oklab, var(--muted) 26%, transparent);
   border-bottom: 1px solid color-mix(in oklab, var(--border) 55%, transparent);
@@ -2174,8 +2291,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 }
 .c-terminal-meta {
   margin-left: auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.7rem;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--t-data);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
   text-transform: none;
@@ -2188,7 +2305,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .c-empty {
   padding: 10px 12px;
   color: var(--muted-foreground);
-  font-size: 0.7rem;
+  font-size: var(--t-data);
   font-style: italic;
 }
 .c-empty-reason {
@@ -2221,8 +2338,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   flex: none;
   text-align: right;
   color: var(--muted-foreground);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.68rem;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--t-data);
   font-variant-numeric: tabular-nums;
 }
 .c-step-status { display: inline-flex; align-items: center; justify-content: center; width: 12px; color: var(--muted-foreground); flex: none; }
@@ -2235,7 +2352,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   min-width: 5ch;
   color: var(--foreground);
   font-weight: 600;
-  font-size: 0.76rem;
+  font-size: var(--t-data);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2245,16 +2362,16 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 /* Only ever painted when the step hands off to another profile — the card names its own. */
 .c-step-profile {
   color: var(--muted-foreground);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.68rem;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--t-data);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .c-step-time {
   color: var(--muted-foreground);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.7rem;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--t-data);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   flex: none;
@@ -2267,7 +2384,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   height: 22px;
   margin-right: -5px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 8px;
   background: transparent;
   color: color-mix(in oklab, var(--muted-foreground) 80%, transparent);
   cursor: pointer;
@@ -2290,14 +2407,14 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   min-height: 27px;
   padding: 0 0 6px 33px;
   color: var(--muted-foreground);
-  font-size: 0.7rem;
+  font-size: var(--t-data);
 }
 .c-step-router-info svg { width: 10px; height: 10px; flex: none; opacity: 0.7; }
 .c-step-route-label { font-weight: 600; }
 .c-step-chosen { color: color-mix(in oklab, var(--success) 52%, var(--foreground)); font-weight: 700; }
 .c-step-conf { color: var(--ev-workflow); font-weight: 700; font-variant-numeric: tabular-nums; }
 .c-step-rule {
-  font-size: 0.7rem;
+  font-size: var(--t-data);
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 0 5px;
@@ -2318,7 +2435,12 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   align-items: center;
   gap: 7px;
   padding: 2px 0;
-  font-size: 0.71rem;
+  font-size: var(--t-data);
+  /* Pinned, not inherited: COMPACT_STAGE_H in lib/graph/core.ts is 2px padding plus a
+     16px line, and that module lays the board out without ever measuring the DOM. Left
+     to the inherited 1.45 ratio this row would grow with the type scale and silently
+     desync every card height from the constant that claims to describe it. */
+  line-height: 16px;
   color: color-mix(in oklab, var(--foreground) 74%, transparent);
 }
 .c-stage-glyph {
@@ -2336,8 +2458,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .c-stage svg { width: 11px; height: 11px; flex: none; }
 .c-stage-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .c-stage-meta { display: inline-flex; align-items: baseline; gap: 8px; margin-left: auto; white-space: nowrap; flex: none; color: var(--muted-foreground); }
-.c-stage-time { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.69rem; font-variant-numeric: tabular-nums; }
-.c-stage-llm { font-size: 0.69rem; }
+.c-stage-time { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: var(--t-data); font-variant-numeric: tabular-nums; }
+.c-stage-llm { font-size: var(--t-data); }
 
 /* --- motion: a run in flight --------------------------------------------------
 
@@ -2363,7 +2485,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   position: absolute;
   inset: 0;
   border: 1px solid var(--primary);
-  border-radius: 11px;
+  border-radius: 12px;
   opacity: 0.3;
   pointer-events: none;
   animation: c-breathe 3.2s ease-in-out infinite;
@@ -2453,7 +2575,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 
 .react-flow__edge { cursor: default; }
 .react-flow__edge-path { stroke-linecap: round; }
-.react-flow__edge-text { fill: var(--muted-foreground); font-size: 0.7rem; }
+.react-flow__edge-text { fill: var(--muted-foreground); font-size: var(--t-data); }
 
 /* --- gateway node (product pipeline front door) -------------------------------
    The front door is where the board starts reading, so it takes the compact card's
@@ -2468,7 +2590,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   box-shadow: 0 8px 18px -16px oklch(30% 0.04 210 / 0.5);
 }
 .g-gateway .g-label {
-  font-size: 0.83rem;
+  font-size: var(--t-body);
   font-weight: 700;
   letter-spacing: -0.012em;
 }
@@ -2482,16 +2604,16 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   border: 0;
   background: transparent;
   color: var(--muted-foreground);
-  font-size: 0.62rem;
+  font-size: var(--t-data);
   font-weight: 700;
   letter-spacing: 0.09em;
 }
 .g-gateway .g-work-badge {
   background: color-mix(in oklab, var(--caution) 20%, var(--card));
   color: var(--ev-workflow);
-  font-size: 0.66rem;
+  font-size: var(--t-data);
 }
-.g-gateway .g-meta { font-size: 0.68rem; }
-.g-gateway .g-decide { gap: 6px; font-size: 0.7rem; }
+.g-gateway .g-meta { font-size: var(--t-data); }
+.g-gateway .g-decide { gap: 6px; font-size: var(--t-data); }
 .g-gateway .g-decide svg { width: 10px; height: 10px; flex: none; opacity: 0.7; }
 .g-route-label { font-weight: 600; }

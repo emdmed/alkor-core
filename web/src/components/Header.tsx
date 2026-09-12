@@ -10,8 +10,9 @@
 import { memo, useEffect, useId, useRef, useState } from 'react'
 import type { ProjectState } from '../../../src/tui/state.ts'
 import { cacheHitRatio, failureRate, inFlightCount } from '../../../src/tui/state.ts'
-import type { ModelHealth } from '../hooks/useMedextract.ts'
+import type { ModelHealth } from '../hooks/useAlkor.ts'
 import { connMeta, modelName } from '../lib/format.ts'
+import { Logotype } from './Logotype'
 import { Badge } from './ui/badge'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
@@ -37,7 +38,7 @@ export const Header = memo(({ state, serverUrl, onServerUrlChange, onConnect, pa
   const meta = connMeta(state.connection)
   const model = modelName(state.models)
   const refusedReason = state.connection.kind === 'refused' ? state.connection.reason : ''
-  // Every configured backend is dark: the connection badge is about the medextract server,
+  // Every configured backend is dark: the connection badge is about the alkor server,
   // and this one is about whether it can reach a model at all.
   const allBackendsDown = models.length > 0 && models.every((m) => !m.reachable)
   // A backend the server can spawn on demand is DORMANT, not broken — the first run needs
@@ -47,9 +48,14 @@ export const Header = memo(({ state, serverUrl, onServerUrlChange, onConnect, pa
   const anyDormant = models.some((m) => !m.reachable && m.managed)
 
   return (
+
     <header className="topbar">
       <div className="topbar-identity">
-        <span className="brand-name">medextract</span>
+        <Logotype className="brand-mark" />
+        {/* The mark is a word nobody can read the product out of, so the descriptor rides
+            beside it for the reader arriving cold. It is the first thing cut when the bar
+            runs out of room — by then the operator knows what this is. */}
+        <span className="brand-descriptor">structured extraction from clinical notes</span>
         <ConnectionMenu
           serverUrl={serverUrl}
           onServerUrlChange={onServerUrlChange}
@@ -57,45 +63,99 @@ export const Header = memo(({ state, serverUrl, onServerUrlChange, onConnect, pa
         />
       </div>
 
-      <div className="topbar-state" role="status" aria-label="Service status">
-        <span className={`health-state ${toneCls(meta.tone)}`} title={meta.label}>
-          <span className="health-dot" aria-hidden="true" />
-          {meta.label}
-        </span>
-        {model && <span className="topbar-model" title={model}>{model}</span>}
-        {allBackendsDown && unmanagedDown.length > 0 && (
-          <Badge
-            variant="destructive"
-            className="health-chip"
-            title={`no model backend reachable (${models.map((m) => m.baseUrl).join(', ')})`}
-          >
-            MODEL OFFLINE
-          </Badge>
-        )}
-        {allBackendsDown && anyDormant && unmanagedDown.length === 0 && (
-          <Badge
-            variant="secondary"
-            className="health-chip"
-            title="managed backends are dormant — they spawn on the next run that needs one"
-          >
-            MODELS DORMANT
-          </Badge>
-        )}
-        {refusedReason && <span className="topbar-error" title={refusedReason}>{refusedReason}</span>}
+      {/* Session truth and the work counted so far read as one right-hand instrument rather
+          than as two loose groups: hairlines divide the cells, the identity keeps the left. */}
+      <div className="topbar-rack">
+        <div className="topbar-state" role="status" aria-label="Service status">
+          <span className={`health-state ${toneCls(meta.tone)}`} title={meta.label}>
+            <span className="health-dot" aria-hidden="true" />
+            {meta.label}
+          </span>
+          {model && <span className="topbar-model" title={model}>{model}</span>}
+          {allBackendsDown && unmanagedDown.length > 0 && (
+            <Badge
+              variant="destructive"
+              className="health-chip"
+              title={`no model backend reachable (${models.map((m) => m.baseUrl).join(', ')})`}
+            >
+              MODEL OFFLINE
+            </Badge>
+          )}
+          {allBackendsDown && anyDormant && unmanagedDown.length === 0 && (
+            <Badge
+              variant="secondary"
+              className="health-chip"
+              title="managed backends are dormant — they spawn on the next run that needs one"
+            >
+              MODELS DORMANT
+            </Badge>
+          )}
+          {refusedReason && <span className="topbar-error" title={refusedReason}>{refusedReason}</span>}
+        </div>
+        <Counters state={state} />
       </div>
-
-      <Counters state={state} />
 
       <div className="topbar-actions">
         <Button variant="ghost" size="sm" type="button" onClick={onTogglePause}>
           {paused ? <CirclePlay aria-hidden="true" /> : <CirclePause aria-hidden="true" />}
           {paused ? 'Resume' : 'Pause'}
         </Button>
-        <Button variant="ghost" size="sm" type="button" onClick={onClear} title="Discard the runs and events collected so far">
-          <Eraser aria-hidden="true" />Clear
-        </Button>
+        <ClearButton onClear={onClear} count={state.runs.size + state.eventLog.length} />
       </div>
     </header>
+
+  )
+})
+
+/**
+ * Clear, with the one guard it was missing.
+ *
+ * Discarding the feed is not undoable and there is nowhere to recover it from, so it asks
+ * once — in place, on the button itself, rather than behind a dialog. A modal would take
+ * the screen away from a run that may still be landing, and this decision needs neither
+ * interruption nor protected focus. The ask lapses on its own after a few seconds, because
+ * a button left reading "Confirm" is a trap for the next person who reaches for it.
+ *
+ * At zero it is disabled: an always-live control that does nothing still reads as one that
+ * might, and this one sits a thumb's width from Pause.
+ */
+const ClearButton = memo(({ onClear, count }: { onClear: () => void; count: number }) => {
+  const [asking, setAsking] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
+  useEffect(() => () => clearTimeout(timer.current), [])
+  // Nothing left to discard means nothing left to confirm.
+  useEffect(() => { if (count === 0) setAsking(false) }, [count])
+
+  const arm = () => {
+    setAsking(true)
+    clearTimeout(timer.current)
+    timer.current = setTimeout(() => setAsking(false), 4000)
+  }
+
+  const fire = () => {
+    clearTimeout(timer.current)
+    setAsking(false)
+    onClear()
+  }
+
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      type="button"
+      disabled={count === 0}
+      className={asking ? 'is-confirming' : undefined}
+      onClick={asking ? fire : arm}
+      onBlur={() => setAsking(false)}
+      title={
+        count === 0
+          ? 'Nothing collected yet'
+          : `Discard ${count} collected run${count === 1 ? '' : 's'} and events — this cannot be undone`
+      }
+    >
+      <Eraser aria-hidden="true" />{asking ? 'Discard them?' : 'Clear'}
+    </Button>
   )
 })
 
@@ -190,14 +250,14 @@ const ConnectionMenu = ({ serverUrl, onServerUrlChange, onConnect }: {
         <form
           className="conn-pop"
           role="dialog"
-          aria-label="medextract server"
+          aria-label="alkor server"
           onSubmit={(e) => {
             e.preventDefault()
             onConnect()
             setOpen(false)
           }}
         >
-          <label className="conn-pop-label" htmlFor={fieldId}>medextract server</label>
+          <label className="conn-pop-label" htmlFor={fieldId}>alkor server</label>
           <div className="conn-pop-row">
             <Input
               id={fieldId}

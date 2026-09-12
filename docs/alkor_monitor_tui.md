@@ -22,7 +22,7 @@ is *deliberately absent* from the public contract — so the TUI is a consumer, 
 ## 1. Architecture
 
 ```
-medextract-server (unchanged)                TUI process (new)
+alkor-server (unchanged)                TUI process (new)
   GET /health ────────────────────────────►  poll once at startup (profile list, counts)
   GET /events (SSE: replay + live,          ─► src/tui/sse.ts   → frames → ActivityEvent
                Last-Event-ID, heartbeat)         │
@@ -81,7 +81,7 @@ All of it is just correlation over the existing catalogue — no new event kinds
 ### UI sketch (`@opentui/core`, imperative — no React/Solid, matching the repo's minimal-dep ethos)
 
 ```
-┌ medextract 127.0.0.1:3000 ● live ─ Qwen3-4B-Q4_K_M ctx 32768 slots 1 ──────┐
+┌ alkor 127.0.0.1:3000 ● live ─ Qwen3-4B-Q4_K_M ctx 32768 slots 1 ──────┐
 │ Profiles        │ Runs (recent)         │ LLM requests                      │
 │  clinical extr  │  #41 clinical ✓ 1.2s  │  vital-signs     ✓ 812ms 412→96t  │
 │  router    rout │  #42 clinical ✗ 0.4s  │  shock-classif   … 3.1s in flight │
@@ -98,7 +98,7 @@ for the log, keypress handling for filter/scroll/quit.
 1. **Deps & wiring** — add `@opentui/core` to `optionalDependencies` (install
    tolerated-but-not-required, so `npm ci` on Node 24 never hard-fails; the entry guard
    explains what's missing); add `"tui": "node --experimental-ffi src/tui.ts"` script
-   and `"medextract-tui": "./src/tui.ts"` bin, mirroring `medextract-server`. Note:
+   and `"alkor-tui": "./src/tui.ts"` bin, mirroring `alkor-server`. Note:
    install pulls the platform native package (`@opentui/core-linux-x64` here) as an
    optional dep.
 2. **`src/tui/state.ts` + `test/tui-state.test.ts`** — reducer first. Tests synthesize

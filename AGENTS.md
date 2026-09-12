@@ -2,7 +2,7 @@
 
 ## Project overview
 
-`medextract` is a local-LLM extraction harness for clinical text. The codebase is TypeScript
+`alkor` is a local-LLM extraction harness for clinical text. The codebase is TypeScript
 on Node ≥ 24, run natively — no bundler, no build step, no transpilation. `npm test` runs
 unit tests directly against `.ts` files; `npm run typecheck` runs `tsc --noEmit`.
 
@@ -45,7 +45,7 @@ error. Always run `npm run check` (test + typecheck) before committing.
 - `web/` — the browser dashboard (React + Vite). It is a separate app with its own
   `package.json`; it imports the shared reducer/SSE core from the repo root by relative
   path and talks to the server over the same `GET /events` + `/health` endpoints. The
-  server answers CORS for loopback origins only by default (`MEDEXTRACT_CORS` widens it).
+  server answers CORS for loopback origins only by default (`ALKOR_CORS` widens it).
 
 ## How to add things
 
@@ -144,7 +144,7 @@ These are taken from `CONTRIBUTING.md` and are enforced by design, not by policy
    and `module` entries point to out-of-tree code and data.
 - `spec/pack.md` documents the pack format, including the three constrained-decoding
   constraints a schema must respect.
-- Traces go to `${XDG_STATE_HOME:-~/.local/state}/medextract/traces/<profile>/`, outside
+- Traces go to `${XDG_STATE_HOME:-~/.local/state}/alkor/traces/<profile>/`, outside
   any repository, deliberately. A trace contains raw prompts and completions; a profile
   that handles patient data must supply a `redact` hook before tracing anything real.
 - Activity events go to the in-process bus and, via `GET /events`, over SSE. They are

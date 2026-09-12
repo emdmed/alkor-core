@@ -53,15 +53,15 @@ the transport differs (browser `fetch` + `ReadableStream` instead of `undici`).
 
 The dashboard is cross-origin by definition, so the server answers CORS for **loopback
 `Origin`s when an `Origin` header is present**; nothing else is granted by default. Set
-`MEDEXTRACT_CORS` to a comma-separated allowlist to open it to specific other origins,
+`ALKOR_CORS` to a comma-separated allowlist to open it to specific other origins,
 or `*` for an explicit blanket:
 
 ```bash
-PORT=3000 MEDEXTRACT_CORS="http://192.168.1.20:5173" node src/server.ts
+PORT=3000 ALKOR_CORS="http://192.168.1.20:5173" node src/server.ts
 ```
 
 Point the dashboard at a different server with the URL field, or set
-`VITE_MEDEXTRACT_URL` at build time. The wire carries only metadata-flowing event fields,
+`VITE_ALKOR_URL` at build time. The wire carries only metadata-flowing event fields,
 under the same banned-key guarantee the terminal TUI relies on.
 
 ### Extracting from one note

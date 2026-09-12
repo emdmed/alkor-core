@@ -1,4 +1,4 @@
-# medextract
+# alkor
 
 Pull structured medical data out of clinical notes with a small local model — and know
 what it is worth before you ship it.
@@ -142,7 +142,7 @@ quantisation.
 
 The harness never starts servers for evals — server flags are part of a measurement. The
 interactive server (`src/server.ts`) is the exception: `LlamaManager` spawns a backend on
-first request, polls `/health` until ready, and sweeps it after `MEDEXTRACT_IDLE_MS`
+first request, polls `/health` until ready, and sweeps it after `ALKOR_IDLE_MS`
 (default 120s) of idle time. Pinned profiles (the router) are never swept. In-flight
 request counting prevents killing a backend mid-generation.
 
@@ -158,7 +158,7 @@ retried — at temperature 0 the same request produces the same output, and meas
 | `extract` — one note in, JSON out, provenance checked | done, tested |
 | pack format (`spec = 3`) | done — with a changelog the loader quotes when a pack is older |
 | out-of-tree profiles and packs | done |
-| public API (`medextract` entry point) | done |
+| public API (`alkor` entry point) | done |
 | reference clinical pack + corpus | done — 62 notes, 20 transcripts, 34 exam payloads; vital signs 30 notes / 155 slots, rated 1-5 |
 | multi-task packs (`--task`, per-task floors, sub-gates) | done, tested |
 | provenance: quote verification + deletion-only derivation | done, tested |

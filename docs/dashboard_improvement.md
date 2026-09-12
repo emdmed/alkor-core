@@ -77,7 +77,7 @@ Target shell dimensions:
 Files: `web/src/components/Header.tsx`, `web/src/styles.css`
 
 - Treat brand, endpoint identity, server health, and model availability as one connection cluster.
-- Keep `medextract` visually dominant; render host/model as compact machine metadata rather than separate islands.
+- Keep `alkor` visually dominant; render host/model as compact machine metadata rather than separate islands.
 - Preserve the editable URL and Connect action, but reduce their desktop footprint and visual weight when connected.
 - Keep Pause and Clear as a distinct utility group on the right.
 - Reduce the desktop header to 44–48px without reducing keyboard focus visibility or usable hit targets.

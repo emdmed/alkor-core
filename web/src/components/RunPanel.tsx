@@ -1,5 +1,5 @@
 /**
- * RunPanel — send a prompt into the medextract pipeline and watch the
+ * RunPanel — send a prompt into the alkor pipeline and watch the
  * response stream back in, the same way the terminal CLI or the TUI does.
  *
  * It is the rail's first tab, not a surface of its own: the rail owns the title,
@@ -7,7 +7,7 @@
  * surface that feeds work into it.
  */
 import { memo, useEffect, useRef, useState } from 'react'
-import { FolderOpen, Send, Sparkles } from 'lucide-react'
+import { FolderOpen, Send } from 'lucide-react'
 import {
   type WorkflowDefinition,
   type ProjectState,
@@ -16,7 +16,7 @@ import { Button } from './ui/button'
 import { CopyButton } from './CopyButton'
 import { CorpusPicker } from './CorpusPicker'
 import { formatRunLog } from '../lib/runlog.ts'
-import { RunFailure } from '../hooks/useMedextract.ts'
+import { RunFailure } from '../hooks/useAlkor.ts'
 import { cn } from '../lib/utils'
 import type { CorpusDocument } from '../lib/corpus.ts'
 
@@ -44,12 +44,6 @@ interface RunPanelProps {
   /** Where the run was sent — recorded in the log so a pasted one names its server. */
   serverUrl: string
 }
-
-const PRESETS = [
-  'Vital signs, medication list, and assessment',
-  'What changed since admission?',
-  'Extract allergies and prior surgeries',
-]
 
 export const RunPanel = memo(({ state, run, serverUrl }: RunPanelProps) => {
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -156,12 +150,6 @@ export const RunPanel = memo(({ state, run, serverUrl }: RunPanelProps) => {
     }
   }
 
-  const pickPreset = (text: string) => {
-    setInput(text)
-    textareaRef.current?.focus()
-    requestAnimationFrame(fitTextarea)
-  }
-
   const clearMessages = () => {
     setMessages([])
     setOpenLogs(new Set())
@@ -177,20 +165,22 @@ export const RunPanel = memo(({ state, run, serverUrl }: RunPanelProps) => {
 
   return (
     <div className="runpanel">
-      {/* Presets carry the empty state on their own: things worth asking beat a sentence
-          explaining that you may ask something. The corpus sits first because a real note
-          from the pack is the better test, and typing one out is the worse one. */}
+      {/* The empty state is one action and one condition. A real note from the pack is the
+          better first test, so browsing the corpus is the only thing standing here; the
+          composer beside it is where anything typed goes. */}
       {messages.length === 0 && (
         <div className="chat-presets">
-          <p className="chat-presets-lead">Paste a clinical note, load one the evals grade against, or ask for an extraction.</p>
           <button className="chat-preset is-corpus" onClick={() => setPickerOpen(true)} type="button">
             <FolderOpen size={12} aria-hidden="true" />Browse the pack corpus
           </button>
-          {PRESETS.map((p) => (
-            <button key={p} className="chat-preset" onClick={() => pickPreset(p)} type="button">
-              <Sparkles size={12} aria-hidden="true" />{p}
-            </button>
-          ))}
+          {/* Read once, by the person who needs it: someone meeting this screen cold, with
+              sepsis and shock lanes on the canvas, has no other way to learn that none of
+              this is clinical evidence. PRODUCT.md requires the caveat to travel with the
+              output, and the empty state is the one place it costs the operator nothing. */}
+          <p className="chat-presets-note">
+            Not a medical device, and not clinical decision support. The pack corpus contains
+            no patients — every case in it is synthetic.
+          </p>
         </div>
       )}
 

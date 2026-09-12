@@ -5,7 +5,7 @@ import { InspectorPanel } from './components/InspectorPanel.tsx'
 import { EventLog } from './components/EventLog.tsx'
 import { RunPanel } from './components/RunPanel.tsx'
 import { SideRail, readRailWidth, type RailTab } from './components/SideRail.tsx'
-import { useMedextract } from './hooks/useMedextract.ts'
+import { useAlkor } from './hooks/useAlkor.ts'
 import type { GraphNodeData } from './lib/graph/index.ts'
 
 // The ReactFlow graph is the heavy part of the shell. Lazy-load it into its own chunk
@@ -15,7 +15,7 @@ const PipelineGraph = lazy(async () => {
   return { default: mod.PipelineGraph }
 })
 
-const DEFAULT_URL = (import.meta.env.VITE_MEDEXTRACT_URL as string | undefined) ?? 'http://127.0.0.1:3000'
+const DEFAULT_URL = (import.meta.env.VITE_ALKOR_URL as string | undefined) ?? 'http://127.0.0.1:3000'
 
 const NARROW = '(max-width: 899px)'
 
@@ -42,7 +42,7 @@ const useMedia = (query: string) => {
  * the canvas can have the whole window without any of it becoming unreachable.
  */
 export const App = () => {
-  const { state, serverUrl, activeUrl, setServerUrl, connect, paused, setPaused, clear, run, models } = useMedextract(DEFAULT_URL)
+  const { state, serverUrl, activeUrl, setServerUrl, connect, paused, setPaused, clear, run, models } = useAlkor(DEFAULT_URL)
   const isNarrow = useMedia(NARROW)
 
   const [railOpen, setRailOpen] = useState(() => typeof window === 'undefined' || !window.matchMedia(NARROW).matches)

@@ -124,7 +124,7 @@ model — which is how the gemma re-scoring above was done, with no model runnin
 re-scoring is a verb rather than a script somebody wrote twice:
 
 ```bash
-node src/cli.ts eval --profile clinical --from-trace ~/.local/state/medextract/traces/clinical/…jsonl
+node src/cli.ts eval --profile clinical --from-trace ~/.local/state/alkor/traces/clinical/…jsonl
 node src/cli.ts eval --profile clinical --from-trace …jsonl --strip-fences   # the same bytes, unwrapped
 ```
 

@@ -17,7 +17,7 @@ Assumption: “20/20” refers to the focused web graph audit across accessibili
 
 Primary files:
 
-- `web/src/hooks/useMedextract.ts`
+- `web/src/hooks/useAlkor.ts`
 - `web/src/App.tsx`
 - `web/src/components/Header.tsx`
 

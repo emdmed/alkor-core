@@ -33,11 +33,11 @@ runtime with no domain in it.
 Such a profile imports the package rather than relative paths:
 
 ```ts
-import { extract, openTrace, type ProfileModule } from 'medextract'
+import { extract, openTrace, type ProfileModule } from 'alkor'
 ```
 
 That bare specifier resolves by **installing this repository from a path** — `npm install
-file:../medextract`, or `npm link` — which symlinks it. There is no registry package and
+file:../alkor`, or `npm link` — which symlinks it. There is no registry package and
 there will not be one: Node runs this repository by stripping types, and it refuses to
 strip types for files under `node_modules`, so a copy placed there cannot be loaded at all.
 A symlink is read through to its real path and loads normally, which is why the path form

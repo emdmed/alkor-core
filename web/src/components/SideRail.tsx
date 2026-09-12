@@ -31,7 +31,7 @@ const TABS: TabSpec[] = [
 
 const MIN_WIDTH = 280
 const MAX_WIDTH = 720
-const STORAGE_KEY = 'medextract.rail.width'
+const STORAGE_KEY = 'alkor.rail.width'
 
 export const readRailWidth = (): number => {
   if (typeof window === 'undefined') return 340

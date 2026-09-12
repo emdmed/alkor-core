@@ -1,5 +1,5 @@
 ---
-name: medextract
+name: alkor
 description: A calm clinical workspace for observing local extraction runs.
 colors:
   clinical-sky: "oklch(54% 0.105 205)"
@@ -14,12 +14,21 @@ colors:
   error: "oklch(55% 0.15 25)"
 typography:
   body:
-    fontFamily: '"Adwaita Sans", "Noto Sans", ui-sans-serif, system-ui, sans-serif'
+    fontFamily: '"Inter Variable", "Adwaita Sans", "Noto Sans", ui-sans-serif, system-ui, sans-serif'
     fontSize: "14px"
     fontWeight: 400
     lineHeight: 1.45
   data:
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+    fontFamily: '"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
+    fontSize: "12px"
+    fontWeight: 400
+  label:
+    fontFamily: '"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
+    fontSize: "10px"
+    fontWeight: 600
+  display:
+    fontFamily: "InterDisplay SemiBold, cv05 + cv11, shipped as outlines"
+    fontWeight: 600
 rounded:
   control: "8px"
   surface: "14px"
@@ -40,13 +49,13 @@ components:
     rounded: "{rounded.surface}"
 ---
 
-# Design System: medextract
+# Design System: alkor
 
 ## Overview
 
 **Creative North Star: "The Care Workspace"**
 
-medextract is a working surface for clinical extraction, not a dark terminal. It uses a warm, near-white paper base and quiet healthcare hues so long-running workflow state can be read without visual fatigue. The graph remains the primary object; chat, activity, and log panels are supporting workspaces.
+alkor is a working surface for clinical extraction, not a dark terminal. It uses a warm, near-white paper base and quiet healthcare hues so long-running workflow state can be read without visual fatigue. The graph remains the primary object; chat, activity, and log panels are supporting workspaces.
 
 **Key Characteristics:**
 
@@ -62,16 +71,32 @@ Clinical Sky is the singular action and navigation color; Mint Wash is the quiet
 
 ## Typography
 
-**Body Font:** Adwaita Sans with Noto Sans and system sans fallbacks.
-**Label/Mono Font:** the platform monospace stack.
+**Body Font:** Inter Variable, delivered by the application, with Adwaita Sans and the system sans as fallbacks.
+**Label/Data Font:** IBM Plex Mono, delivered, over the platform monospace stack.
+**Display:** the wordmark only, and it is not a font — see below.
 
-**Character:** Humanist sans keeps labels and explanations calm; monospace is reserved for inputs, IDs, timings, and the execution graph.
+**Character:** One sans keeps labels and explanations calm; monospace is reserved for inputs, IDs, timings, and the execution graph. Nothing else is added: the three roles are two files.
+
+**Why Inter, and why it is not a default.** This world always committed to Adwaita Sans, and Adwaita Sans *is* Inter — the binary reports `InterVariable-Regular;featfreeze:cv05` under the Inter Project Authors' OFL notice. The mistake was never the choice, it was delivery: no `@font-face` shipped, so the committed face resolved on GNOME desktops and nowhere else. The variable build is one 48 kB latin file carrying the whole 100–900 axis, which is what lets this system ask for 650 and 750 and actually get them.
+
+**Why Plex Mono over Iosevka.** Adwaita's own pairing for Inter is Iosevka, and it is narrower — genuinely better for a column of sha256 digests. Its smallest web build is 366 kB, and `report.html` must embed every face it uses because it makes no network requests. Plex Mono is 14.7 kB and reads as an instrument rather than an IDE, which this world requires.
 
 ### Hierarchy
 
 - **Title** (700, 0.8–0.85rem): compact panel and graph headings.
 - **Body** (400, 14px, 1.45): workspace controls and explanatory copy.
-- **Data** (400, 0.7–0.8rem): graph metadata, event log entries, and connection details.
+- **Data** (400, **12px floor**): graph metadata, event log entries, connection details, and every axis label on every chart. The floor is load-bearing rather than tidy: this surface's whole purpose is measured values, and a measurement nobody can read is not a measurement. It retires the old 0.7rem step.
+- **Label** (600–700, 10px floor, uppercase, tracked 0.06–0.15em): eyebrows and column headings. These may go below the data floor because they are read once as orientation and never compared — the floor governs *values*, not the words naming them.
+
+**Known violation.** `report.html` renders chart axis ticks at 9px (`.axis-row .tick`), which is a measured value under the floor. It is recorded here rather than silently fixed: raising it risks colliding tick labels, and that cannot be judged without rendering the document in a browser.
+
+### The wordmark
+
+`alkor` is set in InterDisplay SemiBold with `cv05` (lowercase l with a tail) and `cv11` (single-story a) — the only two alternates this family offers for the letters *a l k o r*, and `cv05` is the one Adwaita Sans freezes, so the mark carries the glyph the project's own desktop font already chose. Tracking is −0.03em.
+
+**It ships as outlines, never as live text** (`web/src/components/Logotype.tsx`, ~1.5 kB). The reason is mechanical: the web-delivered Inter carries no `cv` features at all, so `font-feature-settings: "cv05" 1` against it silently does nothing, and the only build that would reproduce the mark as text is 352 kB. Paths render identically everywhere and cannot flash unstyled. Size the mark by height and let the viewBox hold the 2.894 aspect; 11px of glyph height is the optical match for 14px text.
+
+Beside it sits the **star pair**: two dots, one full-strength and one at 38% opacity. They are Mizar and Alcor, and resolving the faint one was a test of eyesight for centuries — which is what a corpus of discriminating cases is for. Use it as an accompaniment to the mark, never as a bullet or a section ornament.
 
 ## Layout
 
