@@ -19,6 +19,11 @@
  */
 import { createServer as httpCreateServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http'
 import { corsAllowedOrigin, corsHeaders, json, replyFor, sseWrite, type Reply, type SseWriteVerdict } from './server/reply.ts'
+import type { RouteContext, ServerDeps } from './server/deps.ts'
+import { health } from './server/routes/health.ts'
+import { corpusList, corpusDocument } from './server/routes/corpus.ts'
+import { events } from './server/routes/events.ts'
+import { createSseHub } from './server/sse.ts'
 import { randomUUID, createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { statSync } from 'node:fs'
@@ -449,11 +454,10 @@ export const createServer = async (configPath?: string, options: ServerOptions =
     output: output ?? null,
   })
 
-  // SSE helpers. A client that stops reading costs this server a bounded amount of memory
+  // SSE fan-out. A client that stops reading costs this server a bounded amount of memory
   // and nothing else; 1 MiB is thousands of events of slack before the connection is cut.
   const sseBufferBytes = options.sseBufferBytes ?? 1 << 20
-  const sseClients = new Set<ServerResponse>()
-  let heartbeatTimer: ReturnType<typeof setInterval> | null = null
+  const sse = createSseHub(sseBufferBytes)
 
   // Idle sweep for managed llama-server backends. Runs on an unref'd timer so it never
   // keeps the process alive on its own; every backend is stopped hard on close. The 15s
@@ -466,38 +470,40 @@ export const createServer = async (configPath?: string, options: ServerOptions =
     if (typeof sweepTimer.unref === 'function') sweepTimer.unref()
   }
 
-  const dropClient = (res: ServerResponse) => {
-    sseClients.delete(res)
-    if (!res.writableEnded) res.end()
-  }
-
-  /** One write to one SSE client, acting on the verdict from `sseWrite`. */
-  const writeToClient = (res: ServerResponse, payload: string) => {
-    const verdict = sseWrite(res, payload, sseBufferBytes)
-    if (verdict === 'gone') sseClients.delete(res)
-    else if (verdict === 'overflow') dropClient(res)
-  }
-
-  const startHeartbeat = () => {
-    if (heartbeatTimer) return
-    heartbeatTimer = setInterval(() => {
-      for (const res of sseClients) {
-        writeToClient(res, ': ping\n\n')
-      }
-    }, 15_000)
-    // Unref'd like the idle sweep: a heartbeat must never be the reason the process lives.
-    if (typeof heartbeatTimer.unref === 'function') heartbeatTimer.unref()
-  }
-
-  const sendEvent = (res: ServerResponse, event: ActivityEvent) => {
-    writeToClient(res, `id: ${event.seq}\nevent: ${event.kind}\ndata: ${JSON.stringify(event)}\n\n`)
-  }
-
   const activityUnsub = activity.subscribe((event) => {
-    for (const res of sseClients) {
-      sendEvent(res, event)
-    }
+    for (const res of sse.clients) sse.send(res, event)
   })
+
+  /**
+   * The shared state every route handler reads, gathered once.
+   *
+   * Handing over the live objects — the same manager, the same caches, the same activity bus
+   * — rather than copies: a handler with its own reachability map would answer from a second
+   * opinion about which backends are up.
+   */
+  const deps: ServerDeps = {
+    cfg,
+    activity,
+    manager,
+    provider: wrappedProvider,
+    loadProfile,
+    loadPackForProfile,
+    declaredPacks,
+    topologyForProfile,
+    backendFor,
+    backendUrls,
+    backendReachability,
+    refreshReachability,
+    emitModelIdentified,
+    modelIdentityCache,
+    pinnedRouters,
+    manageModels,
+    sessions,
+    sse,
+    readBody,
+    runResult,
+    inputDigest,
+  }
 
   const server = httpCreateServer(async (req, res) => {
     const startedAt = performance.now()
@@ -509,7 +515,16 @@ export const createServer = async (configPath?: string, options: ServerOptions =
     // `extra` exists for one fact: the run id. An error that omits it tells a dashboard
     // that something failed but not WHICH run failed, so the feed cannot be searched for
     // what led up to it. Every refusal raised after a run id is minted carries it.
-    const { ok, bad, notFound, serverError, serviceUnavailable } = replyFor(res, cors)
+    const reply = replyFor(res, cors)
+    const { ok, bad, notFound, serverError, serviceUnavailable } = reply
+    /**
+     * This request, packaged for a handler that lives outside this closure.
+     *
+     * Built lazily per matched route rather than once per request: `done` is defined below,
+     * after the activity span opens, and a context minted before that would carry a `done`
+     * that closes nothing.
+     */
+    const routeCtx = (): RouteContext => ({ req, res, url, method, reply, done, deps })
 
     // Preflight for cross-origin PUT-ish requests (the dashboard's POSTs to /run, /session).
     // Resolved before the activity emit so the feed does not log browser noise.
@@ -526,173 +541,11 @@ export const createServer = async (configPath?: string, options: ServerOptions =
     }
 
     try {
-      // --- Health --------------------------------------------------------------
-      if (method === 'GET' && url.pathname === '/health') {
-        await refreshReachability()
-        const topologyProfiles = await Promise.all(
-          Object.values(cfg.profiles).map(async ({ name, mode, url, pack, pinned }) => ({
-            name,
-            mode,
-            url,
-            pack,
-            pinned: Boolean(pinned),
-            topology: await topologyForProfile(name, mode),
-          })),
-        )
-        ok({
-          profiles: Object.keys(cfg.profiles),
-          topology: {
-            pipeline: cfg.pipeline,
-            profiles: topologyProfiles,
-            workflows: Object.values(cfg.profiles)
-              .filter((profile) => profile.mode === 'workflow')
-              .map((profile) => ({
-                name: profile.name,
-                steps: Array.isArray(profile.steps)
-                  ? profile.steps.map((raw) => {
-                    const step = raw as Record<string, unknown>
-                    return {
-                      name: String(step.name ?? 'unnamed'),
-                      profile: String(step.profile ?? ''),
-                      input: typeof step.input === 'string'
-                        ? step.input
-                        : step.input && typeof step.input === 'object' && !Array.isArray(step.input)
-                          ? Object.entries(step.input as Record<string, unknown>)
-                              .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
-                              .map(([name, ref]) => ({ name, ref }))
-                          : undefined,
-                      field: typeof step.field === 'string' ? step.field : undefined,
-                      // The terminal step, so a view can draw the ending as the ending rather
-                      // than as one more link in the chain. It is reached from every step
-                      // above it, not only from the one before.
-                      final: step.final === true ? true : undefined,
-                    }
-                  })
-                  : [],
-              })),
-          },
-          // One entry per llama-server endpoint this server would talk to, so the dashboard
-          // can say "MODEL OFFLINE" rather than claiming LIVE over a dark model port.
-          // `managed`/`state` report the on-demand lifecycle: a managed backend that is
-          // down is DORMANT, not broken — it spawns at the next run that needs it.
-          models: backendUrls.map((baseUrl) => {
-            const id = modelIdentityCache.get(baseUrl)
-            const status = manager.status(baseUrl)
-            return {
-              baseUrl,
-              reachable: backendReachability.get(baseUrl) ?? false,
-              model: id?.model,
-              identified: Boolean(id?.identified),
-              managed: status.managed,
-              // The front-door flag: a pinned backend is resident once brought up, never
-              // idle-stopped, so a consumer can render it distinctly from a dormant one.
-              pinned: status.pinned,
-              state: status.state,
-              // What holding this model costs, which is what decides whether it can be up
-              // at the same time as the next one. Absent when the model file is not there
-              // to measure — unknown, which the budget treats as free rather than guessing.
-              footprintBytes: status.footprintBytes,
-            }
-          }),
-          // The resident-model budget: how much this host will hold at once, and how much
-          // of it is spoken for. A dashboard showing a model starting and another stopping
-          // in the same second can say WHY from these two numbers.
-          resources: manager.resources(),
-          sessions: sessions.size,
-          activity: {
-            buffered: activity.recent().length,
-            subscribers: sseClients.size,
-            // The stream identity stamped on every event: a poller that sees it change knows
-            // the seq space restarted, without waiting for an event to prove it.
-            instance: activity.instanceId,
-          },
-        })
-        done(200)
-        return
-      }
+      if (method === 'GET' && url.pathname === '/health') return void (await health(routeCtx()))
+      if (method === 'GET' && url.pathname === '/corpus') return void (await corpusList(routeCtx()))
+      if (method === 'GET' && url.pathname.startsWith('/corpus/')) return void (await corpusDocument(routeCtx()))
 
-      // --- Corpus --------------------------------------------------------------
-      // The notes and transcripts the packs grade against, offered as input rather than as
-      // measurement. The dashboard loads one into its run box so an operator drives the
-      // harness with the same bytes the eval reads. Reads here never touch a pack's
-      // opened-file set, so browsing cannot write itself into a later run's digest.
-      if (method === 'GET' && url.pathname === '/corpus') {
-        const documents = listCorpus(declaredPacks())
-        ok({
-          documents,
-          // Stated rather than counted by the client: a reader deciding whether to paste
-          // one of these into a clinical tool should be told what they are, next to them.
-          synthetic: true,
-          note: 'Synthetic source documents from the contract packs. No patient data.',
-        })
-        done(200)
-        return
-      }
-
-      if (method === 'GET' && url.pathname.startsWith('/corpus/')) {
-        const id = decodeURIComponent(url.pathname.slice('/corpus/'.length))
-        try {
-          const { document, text } = readCorpusDocument(declaredPacks(), id)
-          ok({ ...document, text })
-          done(200)
-        } catch (e) {
-          if (!(e instanceof CorpusError)) throw e
-          notFound((e as Error).message)
-          done(404)
-        }
-        return
-      }
-
-      // --- Events (SSE) --------------------------------------------------------
-      if (method === 'GET' && url.pathname === '/events') {
-        res.writeHead(200, {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          Connection: 'keep-alive',
-          ...cors,
-        })
-        // A write to a vanished client surfaces as an async 'error' on the response; with
-        // no listener that is an uncaught exception taking the server down mid-fan-out.
-        res.on('error', () => dropClient(res))
-        res.write(':ok\n\n')
-
-        // Replay: resume from Last-Event-ID only when the seq it names was issued by THIS
-        // process. A restarted server counts from 1 again, so a stale watermark would skip
-        // the whole buffer — including the profile and model facts a dashboard renders from.
-        const header = (name: string): string | undefined => {
-          const raw = req.headers[name]
-          return Array.isArray(raw) ? raw[0] : raw
-        }
-        const lastId = Number.parseInt(header('last-event-id') ?? '', 10)
-        const claimed = header(ACTIVITY_INSTANCE_HEADER)
-        // A seq from a DIFFERENT process says nothing about what this one has sent, so it is
-        // discarded. A client that names no instance (a bare EventSource, which cannot set
-        // headers) is taken at its word — it has no way to tell us any better.
-        const resumable = claimed === undefined || claimed === activity.instanceId
-        // An unparseable header means "I don't know where I was", i.e. send everything —
-        // not the NaN comparison that silently suppressed every replayed event.
-        const startSeq = resumable && Number.isFinite(lastId) ? lastId : 0
-        for (const event of activity.recent()) {
-          if (event.seq > startSeq) sendEvent(res, event)
-        }
-
-        sseClients.add(res)
-        startHeartbeat()
-
-        req.on('close', () => {
-          sseClients.delete(res)
-          if (sseClients.size === 0 && heartbeatTimer) {
-            clearInterval(heartbeatTimer)
-            heartbeatTimer = null
-          }
-          // The envelope closes when the STREAM does. Reporting it at open told the feed a
-          // connection held for hours had completed in two milliseconds.
-          done(200)
-        })
-
-        // Keep the response open.
-        return
-      }
+      if (method === 'GET' && url.pathname === '/events') return void (await events(routeCtx()))
 
       // --- Route ---------------------------------------------------------------
       if (method === 'POST' && url.pathname === '/route') {
@@ -1300,16 +1153,13 @@ export const createServer = async (configPath?: string, options: ServerOptions =
   // feeds is part of closing: each client reconnects if the server comes back.
   const nativeClose = server.close.bind(server)
   server.close = ((cb?: (err?: Error) => void) => {
-    for (const res of [...sseClients]) dropClient(res)
+    for (const res of [...sse.clients]) sse.drop(res)
     return nativeClose(cb)
   }) as typeof server.close
 
   server.on('close', () => {
     activityUnsub()
-    if (heartbeatTimer) {
-      clearInterval(heartbeatTimer)
-      heartbeatTimer = null
-    }
+    sse.shutdown()
     if (sweepTimer) {
       clearInterval(sweepTimer)
       sweepTimer = null
