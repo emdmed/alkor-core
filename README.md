@@ -902,7 +902,11 @@ scripts/      model-manager.ts   start/stop/status llama-server per profile
               llama-server.sh    start one server with the flags that are easy to get wrong
 src/index.ts  the public API — what a profile is written against
 src/server.ts the interactive HTTP server: POST /pipeline, GET /events (SSE),
+              GET /corpus (the packs' source documents, for driving a run by hand),
               on-demand model lifecycle via LlamaManager
+src/core/corpus.ts
+              the pack corpus enumerated for a reader, not for a run — reads here
+              stay out of the pack's digest so browsing cannot enter a run's record
 src/tui/      state.ts     pure reducer over the activity event stream (tested, Node 24)
               sse.ts       SSE client (undici): replay, resume, reconnect, refusal (tested, Node 24)
               sse-core.ts  transport-agnostic SSE core — frames, dedup, refusal; shared with the web dashboard

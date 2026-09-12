@@ -25,6 +25,7 @@ import { homedir, totalmem } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import { loadConfig, requireProfile, ConfigError, callsModel } from './core/config.ts'
 import { loadPack, resolvePackRoot, PackError } from './core/pack.ts'
+import { listCorpus, readCorpusDocument, CorpusError } from './core/corpus.ts'
 import { loadProfileModule, resolveProfileModule, ProfileError } from './core/profile.ts'
 import { nullTrace } from './core/trace.ts'
 import { route, type RouteResult, type RouteRule, type RouterOptions } from './modes/router.ts'
@@ -426,6 +427,34 @@ export const createServer = async (configPath?: string, options: ServerOptions =
     return topology
   }
 
+  /**
+   * Every pack this config declares, loaded once and shared with the run path's cache.
+   *
+   * Keyed by pack ROOT rather than by profile: two profiles in one deployment routinely
+   * name the same pack directory, and listing its corpus twice would offer the operator
+   * the same note under two ids. A pack that fails to load is left out — the corpus list
+   * is a browsing aid, and a config with one broken pack should still offer the others.
+   */
+  const declaredPacks = (): Pack[] => {
+    const byRoot = new Map<string, Pack>()
+    for (const profileConfig of Object.values(cfg.profiles)) {
+      if (!profileConfig.pack) continue
+      try {
+        const root = resolvePackRoot(profileConfig.name, {
+          explicit: undefined,
+          configured: profileConfig.pack,
+          base: cfg.base,
+        })
+        if (byRoot.has(root)) continue
+        const cached = packCache.get(profileConfig.name)
+        byRoot.set(root, cached ?? loadPack(root))
+      } catch {
+        continue
+      }
+    }
+    return [...byRoot.values()]
+  }
+
   const loadPackForProfile = async (
     profileName: string,
     profile: ProfileModule,
@@ -642,6 +671,38 @@ export const createServer = async (configPath?: string, options: ServerOptions =
           },
         })
         done(200)
+        return
+      }
+
+      // --- Corpus --------------------------------------------------------------
+      // The notes and transcripts the packs grade against, offered as input rather than as
+      // measurement. The dashboard loads one into its run box so an operator drives the
+      // harness with the same bytes the eval reads. Reads here never touch a pack's
+      // opened-file set, so browsing cannot write itself into a later run's digest.
+      if (method === 'GET' && url.pathname === '/corpus') {
+        const documents = listCorpus(declaredPacks())
+        ok(res, {
+          documents,
+          // Stated rather than counted by the client: a reader deciding whether to paste
+          // one of these into a clinical tool should be told what they are, next to them.
+          synthetic: true,
+          note: 'Synthetic source documents from the contract packs. No patient data.',
+        })
+        done(200)
+        return
+      }
+
+      if (method === 'GET' && url.pathname.startsWith('/corpus/')) {
+        const id = decodeURIComponent(url.pathname.slice('/corpus/'.length))
+        try {
+          const { document, text } = readCorpusDocument(declaredPacks(), id)
+          ok(res, { ...document, text })
+          done(200)
+        } catch (e) {
+          if (!(e instanceof CorpusError)) throw e
+          notFound(res, (e as Error).message)
+          done(404)
+        }
         return
       }
 
