@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://medextract.dev/packs/clinical/sepsis.schema.json",
+  "$id": "https://alkor.dev/packs/clinical/sepsis.schema.json",
   "title": "SepsisScreen",
   "description": "Shape contract for the sepsis-suspicion reasoning pass. Three echoed inputs, then the qSOFA screen result, then the justification for it. The input is a closed set of three numerics rather than a document, so unlike every other contract in this pack nothing here is copied out of prose.",
   "x-notes": {

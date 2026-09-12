@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * medextract server: HTTP entry point for the harness.
+ * alkor server: HTTP entry point for the harness.
  *
  * Receives prompts and routes them internally using the same modes the CLI uses.
  * Profiles, packs, and config are read from profiles.toml exactly as the CLI does.
@@ -71,14 +71,14 @@ export interface ServerOptions {
   llamaManager?: Pick<LlamaManagerOptions, 'binary' | 'pollMs' | 'probe' | 'spawn' | 'startTimeoutMs'>
   /** Per-SSE-client queue cap; a test shrinks it to reach the overflow path deliberately. */
   sseBufferBytes?: number
-  /** Resident-model budget in bytes; overrides MEDEXTRACT_MODEL_BUDGET. 0 is unbounded. */
+  /** Resident-model budget in bytes; overrides ALKOR_MODEL_BUDGET. 0 is unbounded. */
   budgetBytes?: number
 }
 
 /**
  * How many bytes of model this host will hold resident at once.
  *
- * `MEDEXTRACT_MODEL_BUDGET` takes `6GiB`, `600MB`, a percentage of total RAM (`50%`), a
+ * `ALKOR_MODEL_BUDGET` takes `6GiB`, `600MB`, a percentage of total RAM (`50%`), a
  * plain byte count, or `0` for the old unbounded behaviour. The default is 60% of total
  * RAM: the rest of the machine — the browser the dashboard is open in, the editor, the OS
  * — is not free, and a budget that assumed it was would be a budget that swaps.
@@ -145,15 +145,15 @@ export const createServer = async (configPath?: string, options: ServerOptions =
   // --- Managed llama-server lifecycle --------------------------------------------------
   // On-demand spawn + idle-stop, so an interactive host keeps in RAM only the models it is
   // actually using. This is server-only by construction: the CLI never imports this file.
-  // MEDEXTRACT_MANAGE_MODELS=0 restores "start them yourself"; MEDEXTRACT_LLAMA_ARGS and
-  // MEDEXTRACT_IDLE_MS tune the spawn flags and the idle window.
-  const manageModels = (process.env.MEDEXTRACT_MANAGE_MODELS ?? '1') !== '0'
-  const idleMs = Number(process.env.MEDEXTRACT_IDLE_MS ?? 120_000) || 120_000
-  const spawnArgs = (process.env.MEDEXTRACT_LLAMA_ARGS ?? '--no-webui --parallel 1')
+  // ALKOR_MANAGE_MODELS=0 restores "start them yourself"; ALKOR_LLAMA_ARGS and
+  // ALKOR_IDLE_MS tune the spawn flags and the idle window.
+  const manageModels = (process.env.ALKOR_MANAGE_MODELS ?? '1') !== '0'
+  const idleMs = Number(process.env.ALKOR_IDLE_MS ?? 120_000) || 120_000
+  const spawnArgs = (process.env.ALKOR_LLAMA_ARGS ?? '--no-webui --parallel 1')
     .trim()
     .split(/\s+/)
     .filter(Boolean)
-  const budgetBytes = options.budgetBytes ?? modelBudgetBytes(process.env.MEDEXTRACT_MODEL_BUDGET)
+  const budgetBytes = options.budgetBytes ?? modelBudgetBytes(process.env.ALKOR_MODEL_BUDGET)
   const manager = new LlamaManager({
     idleMs,
     spawnArgs,
@@ -611,8 +611,8 @@ export const createServer = async (configPath?: string, options: ServerOptions =
   if (manageModels) {
     console.log(
       budgetBytes > 0
-        ? `model budget: ${fmtBytes(budgetBytes)} resident at once — a model that does not fit evicts the least recently used one (MEDEXTRACT_MODEL_BUDGET)`
-        : 'model budget: unbounded — every backend a run needs is started and kept (MEDEXTRACT_MODEL_BUDGET=0)',
+        ? `model budget: ${fmtBytes(budgetBytes)} resident at once — a model that does not fit evicts the least recently used one (ALKOR_MODEL_BUDGET)`
+        : 'model budget: unbounded — every backend a run needs is started and kept (ALKOR_MODEL_BUDGET=0)',
     )
   }
   await Promise.allSettled([...backendUrls.map((url) => emitModelIdentified(url)), refreshReachability()])
@@ -649,6 +649,6 @@ if (isMain) {
   const port = Number(process.env.PORT || 3000)
   const server = await createServer()
   server.listen(port, '127.0.0.1', () => {
-    console.log(`medextract server listening on http://127.0.0.1:${port}`)
+    console.log(`alkor server listening on http://127.0.0.1:${port}`)
   })
 }

@@ -119,7 +119,7 @@ export const formatRunLog = (req: RunLogRequest, events: readonly ActivityEvent[
   const durationMs = req.endedAt ? Date.parse(req.endedAt) - Date.parse(req.startedAt) : undefined
 
   const head = [
-    `medextract run log`,
+    `alkor run log`,
     `server    ${req.serverUrl}`,
     `started   ${req.startedAt}`,
     `status    ${req.status}`,

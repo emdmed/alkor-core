@@ -11,7 +11,7 @@ import { once } from 'node:events'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createServer as createMedextractServer, sseWrite } from '../src/server.ts'
+import { createServer as createAlkorServer, sseWrite } from '../src/server.ts'
 
 process.env.MEDPROTOCOL_BIN = join(import.meta.dirname, 'fixtures', 'medprotocol.js')
 
@@ -19,7 +19,7 @@ process.env.MEDPROTOCOL_BIN = join(import.meta.dirname, 'fixtures', 'medprotocol
 const AGENT_PROFILE = join(import.meta.dirname, 'fixtures', 'agent-profile.mjs')
 
 const startServer = async (configPath?: string): Promise<{ server: Server; url: string; close: () => Promise<void> }> => {
-  const server = await createMedextractServer(configPath)
+  const server = await createAlkorServer(configPath)
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
   const { port } = server.address() as { port: number }
@@ -345,7 +345,7 @@ test('SSE http.completed is emitted when the stream closes, not when it opens', 
  * — and the cleanup that stops managed backends never runs.
  */
 test('closing the server ends attached SSE streams instead of hanging', async () => {
-  const server = await createMedextractServer()
+  const server = await createAlkorServer()
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
   const { port } = server.address() as { port: number }
@@ -364,7 +364,7 @@ test('closing the server ends attached SSE streams instead of hanging', async ()
 // --- Pipeline handoff edge ------------------------------------------------------------------
 
 test('workflow run emits step.started with handoff edge', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-activity-test-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-activity-test-'))
   const tomlPath = join(dir, 'profiles.toml')
   const profilePath = join(dir, 'profile.ts')
   writeFileSync(
@@ -470,7 +470,7 @@ test('clinical shock run emits stage tree', async () => {
   await once(stub, 'listening')
   const { port: stubPort } = stub.address() as { port: number }
 
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-activity-test-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-activity-test-'))
   const tomlPath = join(dir, 'profiles.toml')
   const packPath = join(import.meta.dirname, '..', 'packs', 'clinical').replace(/\\/g, '/')
   writeFileSync(
@@ -528,7 +528,7 @@ test('session send emits turn.started and turn.completed', async () => {
   await once(stub, 'listening')
   const { port: stubPort } = stub.address() as { port: number }
 
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-activity-test-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-activity-test-'))
   const tomlPath = join(dir, 'profiles.toml')
   writeFileSync(
     tomlPath,
@@ -571,7 +571,7 @@ test('session delete emits session.destroyed', async () => {
   await once(stub, 'listening')
   const { port: stubPort } = stub.address() as { port: number }
 
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-destroy-test-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-destroy-test-'))
   const tomlPath = join(dir, 'profiles.toml')
   writeFileSync(
     tomlPath,

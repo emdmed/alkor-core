@@ -18,7 +18,7 @@
  * same file, and `--jinja` enabled (required for tool-calling profiles). Extra flags
  * (e.g. `-ngl 99`) are passed through after the command name.
  *
- * PID files are written to `${XDG_RUNTIME_DIR:-/tmp}/medextract-servers/`. This
+ * PID files are written to `${XDG_RUNTIME_DIR:-/tmp}/alkor-servers/`. This
  * directory is outside the repository so a `git clean` does not kill running servers.
  */
 
@@ -27,7 +27,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, readdir
 import { join, resolve } from 'node:path'
 import { parse as parseToml } from 'smol-toml'
 
-const PID_DIR = join(process.env.XDG_RUNTIME_DIR ?? '/tmp', 'medextract-servers')
+const PID_DIR = join(process.env.XDG_RUNTIME_DIR ?? '/tmp', 'alkor-servers')
 
 interface ServerConfig {
   name: string

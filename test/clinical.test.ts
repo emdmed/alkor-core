@@ -79,7 +79,7 @@ test('a pack older than the harness is refused by version, not only by key', () 
   const stale = {
     name: 'stale',
     spec: 1,
-    root: mkdtempSync(join(tmpdir(), 'medextract-stale-')),
+    root: mkdtempSync(join(tmpdir(), 'alkor-stale-')),
   }
   writeFileSync(
     join(stale.root, 'pack.toml'),
@@ -354,7 +354,7 @@ test('the schema label the request carries is declared, not invented', () => {
  * pack that produced it, and nothing in its trace would say so.
  */
 test('a required schema label is refused at load, not sent as undefined', () => {
-  const root = mkdtempSync(join(tmpdir(), 'medextract-label-'))
+  const root = mkdtempSync(join(tmpdir(), 'alkor-label-'))
   const manifest = (names: string) =>
     `spec = 2\nname = "n"\n[clinical]\ndefaultTask = "vital-signs"\n${names}` +
     '[clinical.quoteVerification]\ncollapseWhitespace = true\ncaseSensitive = true\naccentSensitive = true\n' +
@@ -577,7 +577,7 @@ test('every task the registry calls reviewable has a reviewer wired', async () =
     identify: () => Promise.resolve({ model: 'stub', identified: true, props: {} }),
   } as unknown as Provider
 
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-wiring-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-wiring-'))
   const before = process.env.TRACE_DIR
   process.env.TRACE_DIR = dir
   const trace = openTrace('wiring-test', clinicalRedactor(true))

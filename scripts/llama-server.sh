@@ -4,7 +4,7 @@
 # The eval path never starts a server: a server's flags are part of a measurement and
 # outlive many runs, and results must reproduce on a machine with nothing but the model
 # file. (The interactive server DOES spawn the profiles' servers on demand and stops them
-# when idle — MEDEXTRACT_MANAGE_MODELS=0 turns that off and restores this manual flow.)
+# when idle — ALKOR_MANAGE_MODELS=0 turns that off and restores this manual flow.)
 # This script removes the flags that are easy to get wrong and expensive to notice.
 #
 #   LLAMA_PORT=8081 LLAMA_MODEL=~/models/gemma-3-4b-it-Q4_K_M.gguf scripts/llama-server.sh -ngl 99

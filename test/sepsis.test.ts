@@ -391,7 +391,7 @@ const quiet = <T,>(fn: () => Promise<T>): Promise<T> => {
 }
 
 const tracing = () => {
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-sepsis-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-sepsis-'))
   const before = process.env.TRACE_DIR
   process.env.TRACE_DIR = dir
   const trace = openTrace('sepsis-test', clinicalRedactor(true))

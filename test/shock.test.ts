@@ -593,7 +593,7 @@ const quiet = <T,>(fn: () => Promise<T>): Promise<T> => {
 }
 
 const tracing = () => {
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-shock-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-shock-'))
   const before = process.env.TRACE_DIR
   process.env.TRACE_DIR = dir
   const trace = openTrace('shock-test', clinicalRedactor(true))

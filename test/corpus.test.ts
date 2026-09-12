@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadPack } from '../src/core/pack.ts'
 import { listCorpus, readCorpusDocument, CorpusError } from '../src/core/corpus.ts'
-import { createServer as createMedextractServer } from '../src/server.ts'
+import { createServer as createAlkorServer } from '../src/server.ts'
 
 /** A pack with two document kinds, one answer key, and a stray file in a corpus directory. */
 const makePack = (): { root: string; cleanup: () => void } => {
@@ -217,7 +217,7 @@ test('a pack with no documents template contributes nothing', () => {
 /* ----------------------------------------------------------------- endpoints */
 
 const startServer = async (): Promise<{ server: Server; url: string; close: () => Promise<void> }> => {
-  const server = await createMedextractServer()
+  const server = await createAlkorServer()
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
   const { port } = server.address() as { port: number }

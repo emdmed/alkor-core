@@ -110,7 +110,7 @@ const quiet = <T,>(fn: () => Promise<T>): Promise<T> => {
 
 /** A trace in a temp directory, and the lines it ends up holding. */
 const tracing = (redact = clinicalRedactor(true)): { trace: Trace; dir: string; lines: () => string[] } => {
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-trace-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-trace-'))
   const before = process.env.TRACE_DIR
   process.env.TRACE_DIR = dir
   const trace = openTrace('clinical-test', redact)

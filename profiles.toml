@@ -18,15 +18,15 @@
 # Profiles generally need DIFFERENT models, so each names its own server. Eval never
 # spawns one — a server's flags are part of a measurement and outlive many runs. The
 # interactive server (npm run server) DOES manage them on demand: it spawns a profile's
-# llama-server at the first run that needs it and stops it after MEDEXTRACT_IDLE_MS of
+# llama-server at the first run that needs it and stops it after ALKOR_IDLE_MS of
 # idle, so a host keeps in RAM only the models it is actually using. Mark the front-door
 # profile `pinned = true` and its model stays resident once brought up — `/route` without
 # explicit rules routes through it, so one classifier catches every initial prompt and the
-# specialists it names start and stop around it. MEDEXTRACT_MANAGE_MODELS=0 restores the
+# specialists it names start and stop around it. ALKOR_MANAGE_MODELS=0 restores the
 # manual flow.
 #
 # THE MACHINE IS THE CONSTRAINT. This product is meant to run on a laptop, so the server
-# holds a budget — MEDEXTRACT_MODEL_BUDGET, default 60% of RAM, `0` for unbounded — on how
+# holds a budget — ALKOR_MODEL_BUDGET, default 60% of RAM, `0` for unbounded — on how
 # much model may be resident at once. Each backend is accounted at its weights plus the KV
 # cache its `ctx` implies (set `footprint = "6GiB"` on a profile to state the real figure
 # instead), one model loads at a time, and a model that does not fit evicts the least

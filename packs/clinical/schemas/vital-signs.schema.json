@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://medextract.dev/packs/clinical/vital-signs.schema.json",
+  "$id": "https://alkor.dev/packs/clinical/vital-signs.schema.json",
   "title": "VitalSigns",
   "description": "Shape contract for the vital-signs extraction pass. The nine gradeable slots come first, in the order a clinician records them, followed by two metadata fields that are never graded.",
   "x-notes": {

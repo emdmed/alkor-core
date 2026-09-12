@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://medextract.dev/packs/clinical/transcript-repair.schema.json",
+  "$id": "https://alkor.dev/packs/clinical/transcript-repair.schema.json",
   "title": "QuoteRepair",
   "description": "Shape contract for the repair pass: the items of a dictated reading whose provenance FAILED, handed back to the model with the transcript, for one attempt at citing them properly. Not a second extraction — the reading is fixed, the sections are fixed, and the only thing in question is which span of the transcript each surviving item comes from and whether its text is a deletion of that span.",
   "x-notes": {

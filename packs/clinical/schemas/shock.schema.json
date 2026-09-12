@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://medextract.dev/packs/clinical/shock.schema.json",
+  "$id": "https://alkor.dev/packs/clinical/shock.schema.json",
   "title": "ShockAssessment",
   "description": "Shape contract for the shock-category reasoning pass. Two echoed findings, then the category they imply, then the justification for it. The input is a closed physical-examination payload rather than a document, so unlike every other contract in this pack nothing here is copied out of prose.",
   "x-notes": {

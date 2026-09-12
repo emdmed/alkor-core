@@ -45,7 +45,7 @@ export const routeRequest = async ({ req, reply, done, deps }: RouteContext): Pr
           deps.backendReachability.set(routerUrl, false)
           reply.serviceUnavailable(
             `no model backend is reachable at ${routerUrl} — ${deps.manager.describe(routerUrl)}. ` +
-              'Start llama-server on it first (scripts/llama-server.sh), or check MEDEXTRACT_MANAGE_MODELS.',
+              'Start llama-server on it first (scripts/llama-server.sh), or check ALKOR_MANAGE_MODELS.',
           )
           done(503)
           return

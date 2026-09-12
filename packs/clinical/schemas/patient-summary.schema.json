@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://medextract.dev/packs/clinical/patient-summary.schema.json",
+  "$id": "https://alkor.dev/packs/clinical/patient-summary.schema.json",
   "title": "PatientSummary",
   "description": "Shape contract for the patient-summary pass: three sets extracted from a patient's whole record, not from one note. Unlike the vital-signs pass — which transcribes numbers out of a single document — this reads many notes assembled into one message under the rule in [clinical.summaryAssembly], and what it returns is prose a clinician would recognise rather than figures a scorer can compare exactly.",
   "x-notes": {

@@ -2,7 +2,7 @@
  * Derived calculations from extracted vital signs.
  *
  * Modelled after the medprotocol-core calculation utilities, but adapted for the
- * medextract data shapes: a `VitalSigns` record with optional `Reading` values,
+ * alkor data shapes: a `VitalSigns` record with optional `Reading` values,
  * where a `Reading` is either a `Measurement` (value + unit) or `BloodPressure`.
  *
  * Every calculator here is defensive: a missing field, a missing value, or an

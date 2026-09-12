@@ -1,5 +1,5 @@
 /**
- * medextract — the public surface.
+ * alkor — the public surface.
  *
  * A profile may live outside this repository (`module` in profiles.toml), which is what
  * lets a project keep its prompts, schemas AND the code that scores them private while

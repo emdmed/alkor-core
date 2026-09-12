@@ -82,7 +82,7 @@ export const sessionAction = async (
     if (!ready) {
       reply.serviceUnavailable(
         `no model backend is reachable at ${entry.baseUrl} — ${manager.describe(entry.baseUrl)}. ` +
-          'Start llama-server on it first (scripts/llama-server.sh), or check MEDEXTRACT_MANAGE_MODELS.',
+          'Start llama-server on it first (scripts/llama-server.sh), or check ALKOR_MANAGE_MODELS.',
       )
       done(503)
       return

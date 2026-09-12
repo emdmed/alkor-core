@@ -104,7 +104,7 @@ spelling exists downstream:
 
 - `mode = "pipeline"` in `profiles.toml` → `mode = "workflow"`, resolved in `loadConfig`, so
   out-of-tree profile definitions keep loading.
-- `medextract pipeline` on the CLI → the `workflow` command, resolved in `src/cli.ts`, so
+- `alkor pipeline` on the CLI → the `workflow` command, resolved in `src/cli.ts`, so
   existing scripts keep running. `npm run workflow` is the current spelling.
 
 Nothing in this repository writes either.

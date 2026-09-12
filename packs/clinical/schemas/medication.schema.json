@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://medextract.dev/packs/clinical/medication.schema.json",
+  "$id": "https://alkor.dev/packs/clinical/medication.schema.json",
   "title": "CurrentMedication",
   "description": "Shape contract for the medication pass: ONE transcript in, the patient's current medication out, and nothing else. The same item definition as the note-format contract, deliberately — this pass replaces that contract's `current_medication` section, so an item it produces must be indistinguishable from one the four-section reading produces, or the two halves of a shipped note would answer to different rules.",
   "x-notes": {

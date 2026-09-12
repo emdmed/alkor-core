@@ -74,7 +74,7 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
             if (!ready) {
               reply.serviceUnavailable(
                 `no model backend is reachable at ${routerUrl} — ${deps.manager.describe(routerUrl)}. ` +
-                  'Start llama-server on it first (scripts/llama-server.sh), or check MEDEXTRACT_MANAGE_MODELS.',
+                  'Start llama-server on it first (scripts/llama-server.sh), or check ALKOR_MANAGE_MODELS.',
                 { runId },
               )
               done(503)
@@ -173,7 +173,7 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
         return ready
           ? null
           : `no model backend is reachable at ${needed} — ${deps.manager.describe(needed)}. ` +
-            'Start llama-server on it first (scripts/llama-server.sh), or check MEDEXTRACT_MANAGE_MODELS.'
+            'Start llama-server on it first (scripts/llama-server.sh), or check ALKOR_MANAGE_MODELS.'
       }
       if (needsModel) {
         const isWorkflow = profile.mode === 'workflow' && hasSteps
@@ -192,7 +192,7 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
           if (!reachable) {
             unusable.push(
               `no model backend is reachable at ${needed} — ${deps.manager.describe(needed)}. ` +
-                'Start llama-server on it first (scripts/llama-server.sh), or check MEDEXTRACT_MANAGE_MODELS.',
+                'Start llama-server on it first (scripts/llama-server.sh), or check ALKOR_MANAGE_MODELS.',
             )
           }
         }

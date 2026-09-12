@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://medextract.dev/packs/clinical/literature.schema.json",
+  "$id": "https://alkor.dev/packs/clinical/literature.schema.json",
   "title": "LiteratureSearch",
   "description": "Shape contract for the literature pass: a written note in, and the handful of concepts worth looking up in PubMed out. Not an answer to a clinical question and not a summary — a list of search topics, each tied to the line of the note it came from.",
   "x-notes": {

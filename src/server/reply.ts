@@ -12,12 +12,12 @@ import { ACTIVITY_INSTANCE_HEADER } from '../core/activity.ts'
 /**
  * CORS is loopback-only by default. A browser dashboard is cross-origin by definition
  * (`localhost:5173` vs `127.0.0.1:3000`), but opening the feed to every website would let
- * any page you visit read it. Only loopback origins are accepted unless MEDEXTRACT_CORS
+ * any page you visit read it. Only loopback origins are accepted unless ALKOR_CORS
  * names others, or is `*` for an explicit blanket.
  */
 export const corsAllowedOrigin = (rawOrigin: string | undefined): string | undefined => {
   if (!rawOrigin) return undefined
-  const configured = (process.env.MEDEXTRACT_CORS ?? '')
+  const configured = (process.env.ALKOR_CORS ?? '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)

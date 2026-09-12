@@ -339,7 +339,7 @@ test('workflow graph keeps every workflow as a detailed left-to-right lane', () 
   assert.equal(new Set(inputs.map((node) => node.position.y)).size, 2, 'pipeline lanes occupy separate rows')
 })
 
-test('dashboard graph keeps every workflow and opens nested route paths by default', () => {
+test('dashboard graph keeps every workflow and leaves nested route paths closed at rest', () => {
   const state = emptyState()
   state.topology = {
     profiles: [
@@ -365,10 +365,14 @@ test('dashboard graph keeps every workflow and opens nested route paths by defau
   const beta = graph.nodes.find((node) => node.data.label === 'beta')!
 
   assert.equal(laneGroups.length, 2, 'selection never filters configured pipelines')
-  assert.ok(graph.nodes.some((node) => node.data.label === 'alpha-work'))
-  assert.ok(graph.nodes.some((node) => node.data.label === 'beta-work'))
-  assert.equal(graph.expanded.has(alpha.data.expandKey ?? alpha.id), true)
-  assert.equal(graph.expanded.has(beta.data.expandKey ?? beta.id), true)
+  // Nothing has run, so nothing is open — the same contract the compact board keeps. Both
+  // routes are on the board as named options; what is inside them is closed until a run
+  // goes through, so the catalogue reads as a list of names rather than a wall of stages.
+  assert.ok(alpha && beta, 'a closed route is still a visible choice')
+  assert.equal(graph.nodes.some((node) => node.data.label === 'alpha-work'), false)
+  assert.equal(graph.nodes.some((node) => node.data.label === 'beta-work'), false)
+  assert.equal(graph.expanded.has(alpha.data.expandKey ?? alpha.id), false)
+  assert.equal(graph.expanded.has(beta.data.expandKey ?? beta.id), false)
   const firstLaneBottom = laneGroups[0]!.position.y + Number(laneGroups[0]!.style?.height)
   assert.ok(laneGroups[1]!.position.y - firstLaneBottom >= 32, 'pipeline groups keep a clear section gutter')
   for (const lane of laneGroups) {
@@ -382,14 +386,16 @@ test('dashboard graph keeps every workflow and opens nested route paths by defau
     assert.ok(nested.every((node) => node.position.y + Number(node.style?.height) <= laneBottom - 20))
   }
 
-  const collapsed = buildExpandedWorkflowsGraph(
+  // Closed is never hidden: asking for one route opens that route and leaves its sibling
+  // alone, so the operator can read one path without paying for the whole catalogue.
+  const opened = buildExpandedWorkflowsGraph(
     state,
     undefined,
-    new Set(),
     new Set([alpha.data.expandKey ?? alpha.id]),
+    new Set(),
   )
-  assert.equal(collapsed.nodes.some((node) => node.data.label === 'alpha-work'), false, 'an explicit close overrides the default')
-  assert.ok(collapsed.nodes.some((node) => node.data.label === 'beta-work'))
+  assert.ok(opened.nodes.some((node) => node.data.label === 'alpha-work'), 'an explicit request opens a closed route')
+  assert.equal(opened.nodes.some((node) => node.data.label === 'beta-work'), false, 'and opens only that one')
 })
 
 test('selecting a run paints its lane without hiding other workflows or routes', () => {

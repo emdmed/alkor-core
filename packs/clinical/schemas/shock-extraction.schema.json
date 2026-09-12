@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://medextract.dev/packs/clinical/shock-extraction.schema.json",
+  "$id": "https://alkor.dev/packs/clinical/shock-extraction.schema.json",
   "title": "ShockExamExtraction",
   "description": "Extract the five physical-examination findings a bedside shock-category rule needs, from a free-text clinical note. The output is the exact payload the shock-reasoning contract consumes.",
   "x-notes": {

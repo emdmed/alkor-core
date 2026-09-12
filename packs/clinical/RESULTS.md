@@ -214,7 +214,7 @@ sampling and the pack — plus a closing `record` with a sha256 per contract fil
     gemma     constrained  2026-08-21T13-56-36-687Z.jsonl
     gemma     free         2026-08-21T14-08-51-627Z.jsonl
 
-under `$XDG_STATE_HOME/medextract/traces/clinical/`, which is outside this repository on
+under `$XDG_STATE_HOME/alkor/traces/clinical/`, which is outside this repository on
 purpose. They hold completions verbatim because `pack.toml` declares `corpusSynthetic = true`;
 a pack that does not say gets its trace content elided to a digest.
 
@@ -397,7 +397,7 @@ first case pays prefill (102 s cold in run 4).
     run 3  prompt v2               2026-09-07T08-25-07-510Z.jsonl
     run 4  medprotocol v0.7.10     2026-09-07T08-46-11-886Z.jsonl
 
-under `$XDG_STATE_HOME/medextract/traces/clinical/`, outside this repository as every other
+under `$XDG_STATE_HOME/alkor/traces/clinical/`, outside this repository as every other
 trace here is. Runs 2-4 each hold the model's reply, the rule's answer and the concordance the
 rule would have cited, per case. Run 4's `run` and `record` events additionally name the
 medprotocol version and command — a result reproduced against a different build of that CLI is
@@ -1359,5 +1359,5 @@ runs; the prompt is unchanged and the cold-cache first case (56.4 s) is proporti
 
 ### Trace
 
-`2026-09-08T06-54-25-331Z.jsonl` under `$XDG_STATE_HOME/medextract/traces/clinical/`.
+`2026-09-08T06-54-25-331Z.jsonl` under `$XDG_STATE_HOME/alkor/traces/clinical/`.
 Raw eval output saved at `eval/clinical-vital-signs-2026-09-08-Qwen3-4B-Q4_K_M-official-cpu-constrained.log`.

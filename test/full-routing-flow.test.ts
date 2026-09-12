@@ -381,7 +381,7 @@ notes/patient-c.note.txt`
 // ---------------------------------------------------------------------------
 
 test('full flow: workflow context is written after each step and resumes correctly', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-full-flow-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-full-flow-'))
   try {
     const input = 'Patient BP 120/80, HR 72, T 36.5°C.'
 

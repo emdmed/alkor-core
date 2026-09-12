@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://medextract.dev/packs/clinical/note-format.schema.json",
+  "$id": "https://alkor.dev/packs/clinical/note-format.schema.json",
   "title": "NoteFormat",
   "description": "Shape contract for the note-formatting pass: ONE clinical note restructured into the four sections a clinician reads — why the patient is here, what they carry, what was decided, and what they take. Its input is the same single note the vital-signs pass sees; that pass pulls numbers out, this one reorganises the prose. Every item carries the span of the note it came from, so the rewriting can be checked rather than trusted.",
   "x-notes": {

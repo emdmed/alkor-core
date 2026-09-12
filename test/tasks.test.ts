@@ -676,7 +676,7 @@ test('a pack states which language it negates in', () => {
 
 test('a pack that declares the matching table must fill it', () => {
   const stub = (setMatching: unknown) => {
-    const root = mkdtempSync(join(tmpdir(), 'medextract-match-'))
+    const root = mkdtempSync(join(tmpdir(), 'alkor-match-'))
     writeFileSync(
       join(root, 'pack.toml'),
       `spec = 2\nname = "m"\n[clinical]\ndefaultTask = "vital-signs"\n` +

@@ -1,7 +1,7 @@
 # Contract pack format — spec 3
 
 A **contract pack** is a directory belonging to your project that holds the prompts,
-schemas, vocabularies and eval cases a model is measured against. `medextract` reads it; so,
+schemas, vocabularies and eval cases a model is measured against. `alkor` reads it; so,
 normally, does your own application. That is the entire point of the format: the artifact
 under measurement and the artifact in production are the same bytes.
 
@@ -12,7 +12,7 @@ implementations this repository cannot see.
 
 ```
 your-project/contracts/
-  pack.toml            the manifest — the only file medextract knows by name
+  pack.toml            the manifest — the only file alkor knows by name
   prompts/…            whatever your contracts happen to be
   schemas/…
   evals/…

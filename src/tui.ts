@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * medextract TUI entry point.
+ * alkor TUI entry point.
  *
  * Runtime guard first: needs Node ≥ 26.4 with --experimental-ffi, or Bun ≥ 1.3.
  * Everything except the thin view layer is plain TypeScript that runs on Node 24.

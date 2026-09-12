@@ -702,7 +702,16 @@ export const buildWorkflowsGraph = (
   return { nodes, edges, title: `1 pipeline · ${count} workflow${count === 1 ? '' : 's'} · full process detail` }
 }
 
-/** Resolve default-open graph disclosure to a fixed point while respecting closes. */
+/**
+ * Resolve graph disclosure to a fixed point while respecting closes.
+ *
+ * Disclosure follows the run, not the catalogue. A node opens itself only when the run
+ * went through it, so a board where nothing has run yet stays a readable row of collapsed
+ * lanes and the first thing to open is the path a note actually took. Opening everything
+ * by default inverted this: every "show stages" control was only ever a collapse control,
+ * and the operator paid fifteen clicks to get back to a board they could read. Anyone who
+ * does want the whole catalogue asks for it once, through View → expand.
+ */
 export const buildExpandedWorkflowsGraph = (
   state: ProjectState,
   runId: string | undefined,
@@ -716,6 +725,7 @@ export const buildExpandedWorkflowsGraph = (
     let changed = false
     for (const candidate of graph.nodes) {
       if (candidate.data.kind === 'group' || (candidate.data.childCount ?? 0) === 0) continue
+      if (!candidate.data.traversed && !candidate.data.current) continue
       const key = candidate.data.expandKey ?? candidate.id
       if (collapsed.has(key) || expanded.has(key)) continue
       expanded.add(key)

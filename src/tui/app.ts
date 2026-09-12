@@ -13,7 +13,7 @@ import {
 import { createSseClient } from './sse.ts'
 import { writeFileSync, appendFileSync } from 'node:fs'
 
-const DBG = '/tmp/medextract-tui-dbg.log'
+const DBG = '/tmp/alkor-tui-dbg.log'
 const log = (msg: string) => appendFileSync(DBG, `${new Date().toISOString()} ${msg}\n`)
 
 /** Start the TUI connected to `url` (e.g. `http://127.0.0.1:3000`). */
@@ -189,7 +189,7 @@ const formatHeader = (state: ProjectState, url: string, opentui: any): any => {
   }
   const detail = state.connection.kind === 'refused' ? ` — ${state.connection.reason}` : ''
   const chunks = [
-    opentui.fg('#f0f6fc')(' medextract'),
+    opentui.fg('#f0f6fc')(' alkor'),
     opentui.fg('#484f58')('  /  '),
     opentui.fg('#8b949e')(host),
     opentui.fg(conn === 'live' ? '#3fb950' : conn === 'refused' ? '#f85149' : '#d29922')(`   ${connDot} `),

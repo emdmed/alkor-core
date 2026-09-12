@@ -12,7 +12,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import * as medextract from 'medextract'
+import * as alkor from 'alkor'
 
 /** What a profile is written against. Removing any of these breaks an out-of-tree profile. */
 const CONTRACT = [
@@ -82,7 +82,7 @@ const CONTRACT = [
 
 test('the package exports everything a profile is written against', () => {
   for (const name of CONTRACT) {
-    assert.ok(name in medextract, `'${name}' is missing from the package entry point`)
+    assert.ok(name in alkor, `'${name}' is missing from the package entry point`)
   }
 })
 
@@ -95,7 +95,7 @@ test('no profile is reachable through the package', () => {
   // Every profile module exports its implementation as `PROFILE`, so that one name is the
   // whole check — a list of known profile names would only catch the profiles that exist
   // today, which is precisely the coupling this test is here to prevent.
-  assert.ok(!('PROFILE' in medextract), 'a profile leaked into the API')
+  assert.ok(!('PROFILE' in alkor), 'a profile leaked into the API')
 })
 
 /**
@@ -109,7 +109,7 @@ test('deep imports are refused', async () => {
     // suppression is load-bearing in both directions: if `exports` ever starts resolving
     // this path, tsc reports the unused suppression and the boundary's erosion fails the
     // typecheck as well as the test.
-    () => import('medextract/src/core/pack.ts'),
+    () => import('alkor/src/core/pack.ts'),
     (e: Error & { code?: string }) => {
       assert.equal(e.code, 'ERR_PACKAGE_PATH_NOT_EXPORTED')
       return true
@@ -123,12 +123,12 @@ test('deep imports are refused', async () => {
  * than a library.
  */
 test('importing the package costs nothing', () => {
-  assert.equal(medextract.SPEC_VERSION, 3)
+  assert.equal(alkor.SPEC_VERSION, 3)
   // The changelog travels with the version. A consumer that refuses a pack older than the
   // harness needs to be able to say what changed, and re-deriving that from release notes is
   // how two runtimes come to disagree about one format.
-  assert.ok(medextract.specGap(1).length > 0)
-  assert.equal(typeof medextract.DEFAULT_URL, 'string')
-  assert.equal(typeof medextract.LLAMA_DEFAULT_URL, 'string')
-  assert.equal(medextract.envSuffix('note-format'), 'NOTE_FORMAT')
+  assert.ok(alkor.specGap(1).length > 0)
+  assert.equal(typeof alkor.DEFAULT_URL, 'string')
+  assert.equal(typeof alkor.LLAMA_DEFAULT_URL, 'string')
+  assert.equal(alkor.envSuffix('note-format'), 'NOTE_FORMAT')
 })

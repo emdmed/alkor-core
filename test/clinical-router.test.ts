@@ -408,7 +408,7 @@ test('note shape requires at least one clinical term', () => {
 const pack = loadPack(join(import.meta.dirname, '..', 'packs', 'clinical'))
 
 test('clinical profile checkpoints route to contextDir and resumes', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-clinical-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-clinical-'))
   try {
     const { PROFILE } = await import('../src/profiles/clinical/profile.ts')
     const trace = { write: () => {}, close: () => {} } as any
@@ -731,7 +731,7 @@ test('an ungraded task is excluded from --task all and refused when named', asyn
 })
 
 test('clinical profile caches completed result and returns it on resume', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-clinical-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-clinical-'))
   try {
     const clinicalDir = join(dir, 'clinical')
     mkdirSync(clinicalDir, { recursive: true })
@@ -766,7 +766,7 @@ test('clinical profile caches completed result and returns it on resume', async 
 })
 
 test('clinical profile explicit --task bypasses router in checkpoint mode', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-clinical-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-clinical-'))
   try {
     const { PROFILE } = await import('../src/profiles/clinical/profile.ts')
     const trace = { write: () => {}, close: () => {} } as any

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://medextract.dev/packs/clinical/sepsis-extraction.schema.json",
+  "$id": "https://alkor.dev/packs/clinical/sepsis-extraction.schema.json",
   "title": "SepsisExamExtraction",
   "description": "Extract the three Quick SOFA inputs a bedside sepsis screen needs, from a free-text clinical note. The output is the exact payload the sepsis-screening contract consumes.",
   "x-notes": {

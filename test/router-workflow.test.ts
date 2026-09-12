@@ -733,7 +733,7 @@ test('verifier profile eval detects missing quote', async () => {
 // ---------------------------------------------------------------------------
 
 test('workflow writes checkpoint to context directory after each step', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-pipeline-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-pipeline-'))
   try {
     const profiles = new Map<string, ProfileModule>([
       ['step1', mockExtractProfile('step1', { data: 'step1-data' })],
@@ -770,7 +770,7 @@ test('workflow writes checkpoint to context directory after each step', async ()
 })
 
 test('workflow resumes from checkpoint and skips completed steps', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-pipeline-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-pipeline-'))
   try {
     let step2Called = false
     const step2Profile: ProfileModule = {
@@ -832,7 +832,7 @@ test('workflow resumes from checkpoint and skips completed steps', async () => {
 })
 
 test('workflow runStep 0 overwrites existing checkpoint', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-pipeline-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-pipeline-'))
   try {
     const profiles = new Map<string, ProfileModule>([
       ['step1', mockExtractProfile('step1', { data: 'first' })],
@@ -875,7 +875,7 @@ test('workflow runStep 0 overwrites existing checkpoint', async () => {
 })
 
 test('workflow runStep > 0 throws when no checkpoint exists', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-pipeline-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-pipeline-'))
   try {
     const profiles = new Map<string, ProfileModule>([['step2', mockExtractProfile('step2', { data: 'x' })]])
     const packs = new Map<string, undefined>([['step2', undefined]])
@@ -899,7 +899,7 @@ test('workflow runStep > 0 throws when no checkpoint exists', async () => {
 })
 
 test('workflow re-running a step replaces the old result in the checkpoint', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-pipeline-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-pipeline-'))
   try {
     let callCount = 0
     const step2Profile: ProfileModule = {
@@ -966,7 +966,7 @@ test('workflow re-running a step replaces the old result in the checkpoint', asy
 })
 
 test('workflow failure still writes checkpoint so resume can continue after a fix', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-pipeline-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-pipeline-'))
   try {
     let secondAttempt = false
     const flakyProfile: ProfileModule = {
@@ -1036,7 +1036,7 @@ test('workflow failure still writes checkpoint so resume can continue after a fi
 })
 
 test('workflow re-run truncates stale downstream results and state', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-pipeline-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-pipeline-'))
   try {
     const profiles = new Map<string, ProfileModule>([
       ['step1', mockExtractProfile('step1', { data: 'step1-v1' })],
@@ -1279,7 +1279,7 @@ test('--step N runs one chain step and appends no ending', async () => {
 })
 
 test('--step N naming the terminal step recomposes the ending from a checkpoint', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-ending-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-ending-'))
   try {
     const seen: { run?: any } = {}
     const profiles = new Map<string, ProfileModule>([
@@ -1306,7 +1306,7 @@ test('--step N naming the terminal step recomposes the ending from a checkpoint'
 })
 
 test('a resume after a refusal restarts at the step that refused, not after the ending', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-ending-resume-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-ending-resume-'))
   try {
     let attempts = 0
     // Refuses once, then succeeds — so a resume that restarted in the wrong place would

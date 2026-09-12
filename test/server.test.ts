@@ -12,14 +12,14 @@ import { once } from 'node:events'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createServer as createMedextractServer } from '../src/server.ts'
+import { createServer as createAlkorServer } from '../src/server.ts'
 import type { SpawnFn } from '../src/core/llama-manager.ts'
 
 /** A profile in agentic mode for the session tests; this project ships no built-in one. */
 const AGENT_PROFILE = join(import.meta.dirname, 'fixtures', 'agent-profile.mjs')
 
 const startServer = async (configPath?: string): Promise<{ server: Server; url: string; close: () => Promise<void> }> => {
-  const server = await createMedextractServer(configPath)
+  const server = await createAlkorServer(configPath)
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
   const { port } = server.address() as { port: number }
@@ -103,7 +103,7 @@ test('health endpoint returns profiles and session count', async () => {
 })
 
 test('health reports each configured model backend and its reachability', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-health-test-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-health-test-'))
 
   // A loopback port that is guaranteed to refuse: bind an ephemeral listener, then let it
   // go. Nothing else can take the port before the probe (loopback, immediate).
@@ -142,7 +142,7 @@ test('health reports each configured model backend and its reachability', async 
 })
 
 test('run with every backend down refuses with 503, not a silent failure', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-503-test-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-503-test-'))
 
   const dead = createServer(() => {})
   dead.listen(0, '127.0.0.1')
@@ -173,7 +173,7 @@ test('run with every backend down refuses with 503, not a silent failure', async
 })
 
 test('a session keeps its prompt in memory while its llama-server starts on demand', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-session-start-test-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-session-start-test-'))
 
   // Reserve and release a port so the first readiness probe sees a genuinely dark backend.
   const reservation = createServer(() => {})
@@ -253,12 +253,12 @@ test('a session keeps its prompt in memory while its llama-server starts on dema
     }
   }
 
-  const medextract = await createMedextractServer(tomlPath, {
+  const alkor = await createAlkorServer(tomlPath, {
     llamaManager: { spawn, pollMs: 5, startTimeoutMs: 2000 },
   })
-  medextract.listen(0, '127.0.0.1')
-  await once(medextract, 'listening')
-  const url = `http://127.0.0.1:${(medextract.address() as { port: number }).port}`
+  alkor.listen(0, '127.0.0.1')
+  await once(alkor, 'listening')
+  const url = `http://127.0.0.1:${(alkor.address() as { port: number }).port}`
 
   try {
     const created = await request(`${url}/session`, 'POST', { profile: 'assistant', stream: false })
@@ -277,9 +277,9 @@ test('a session keeps its prompt in memory while its llama-server starts on dema
     assert.deepEqual(prompts, ['held until ready'])
     assert.equal(starts, 1)
   } finally {
-    medextract.closeAllConnections()
-    medextract.close()
-    await once(medextract, 'close')
+    alkor.closeAllConnections()
+    alkor.close()
+    await once(alkor, 'close')
     rmSync(dir, { recursive: true, force: true })
   }
 })
@@ -348,7 +348,7 @@ test('route endpoint falls back to default', async () => {
 })
 
 test('route without explicit rules or a model 503s when the pinned gateway is unreachable', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-gateway-test-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-gateway-test-'))
 
   const dead = createServer(() => {})
   dead.listen(0, '127.0.0.1')
@@ -403,7 +403,7 @@ test('route without explicit rules routes through the pinned gateway model', asy
   await once(stub, 'listening')
   const { port: stubPort } = stub.address() as { port: number }
 
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-gateway-test-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-gateway-test-'))
   const tomlPath = join(dir, 'profiles.toml')
   writeFileSync(
     tomlPath,
@@ -477,7 +477,7 @@ test('run endpoint requires input', async () => {
 })
 
 test('workflow endpoint routes to a workflow and supports an explicit diagnostic override', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-pipeline-front-door-test-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-pipeline-front-door-test-'))
   const tomlPath = join(dir, 'profiles.toml')
   const routerPath = join(dir, 'workflow-router.mjs')
   const workflowPath = join(dir, 'workflow.mjs')
@@ -560,7 +560,7 @@ module = "worker.mjs"
 test('session create, reset, load, and delete', async () => {
   // Its own config, because the session lifecycle is what is under test and this project
   // configures no agentic profile — a medical deployment has no reason to.
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-session-test-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-session-test-'))
   const tomlPath = join(dir, 'profiles.toml')
   writeFileSync(tomlPath, `[assistant]\nmode = "agentic"\nmodule = "${AGENT_PROFILE}"\n`)
   const { url, close } = await startServer(tomlPath)
@@ -640,7 +640,7 @@ test('session send with stub llama-server', async () => {
   const { port: stubPort } = stub.address() as { port: number }
 
   // Create a temp profiles.toml that points the fixture agent profile at the stub.
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-server-test-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-server-test-'))
   const tomlPath = join(dir, 'profiles.toml')
   writeFileSync(
     tomlPath,
@@ -696,7 +696,7 @@ test('session send with streaming stub returns answer, not aborted', async () =>
   await once(stub, 'listening')
   const { port: stubPort } = stub.address() as { port: number }
 
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-server-test-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-server-test-'))
   const tomlPath = join(dir, 'profiles.toml')
   writeFileSync(
     tomlPath,
@@ -762,7 +762,7 @@ test('session send with tool-calling stub returns tool result, not aborted', asy
   await once(stub, 'listening')
   const { port: stubPort } = stub.address() as { port: number }
 
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-server-test-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-server-test-'))
   const tomlPath = join(dir, 'profiles.toml')
   writeFileSync(
     tomlPath,
@@ -804,7 +804,7 @@ url = "http://127.0.0.1:${stubPort}"
  * an id there is no way to say which events those were.
  */
 test('a run names its run id on success and on failure', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-runid-test-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-runid-test-'))
   const okModule = join(dir, 'code-ok.mjs')
   const boomModule = join(dir, 'code-boom.mjs')
   const tomlPath = join(dir, 'profiles.toml')
@@ -841,7 +841,7 @@ test('a run names its run id on success and on failure', async () => {
 
 /** A refusal raised before the run starts still names the run, for the same reason. */
 test('an unreachable backend refuses with the run id attached', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-runid-down-test-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-runid-down-test-'))
 
   const dead = createServer(() => {})
   dead.listen(0, '127.0.0.1')

@@ -214,7 +214,7 @@ test('the budget reads sizes, percentages, and the unbounded escape hatch', () =
 })
 
 test('a footprint counts the weights and the context window it will serve', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'medextract-footprint-'))
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-footprint-'))
   try {
     const model = join(dir, 'tiny.gguf')
     writeFileSync(model, Buffer.alloc(1024))

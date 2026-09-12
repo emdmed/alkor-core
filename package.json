@@ -1,5 +1,5 @@
 {
-  "name": "medextract",
+  "name": "alkor",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "description": "Extract structured medical data from clinical notes with a small local model, against contract packs you own — with the gate that says whether it is good enough attached.",
@@ -8,9 +8,9 @@
     ".": "./src/index.ts"
   },
   "bin": {
-    "medextract": "./src/cli.ts",
-    "medextract-server": "./src/server.ts",
-    "medextract-tui": "./src/tui.ts"
+    "alkor": "./src/cli.ts",
+    "alkor-server": "./src/server.ts",
+    "alkor-tui": "./src/tui.ts"
   },
   "private": true,
   "engines": {
