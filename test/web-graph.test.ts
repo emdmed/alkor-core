@@ -23,7 +23,7 @@ import {
   COMPACT_W,
   CHIP_W,
 } from '../web/src/lib/graph/index.ts'
-import { emptyState } from '../src/tui/state.ts'
+import { emptyState, type ProjectState } from '../src/tui/state.ts'
 
 test('an active nested stage marks its step lineage and renders inline', () => {
   const state = emptyState()
@@ -1960,7 +1960,7 @@ const twoWorkflowRun = () => {
   const state = emptyState()
   state.topology = compactGateway()
   state.runs.set('run-1', { runId: 'run-1', profile: 'clinical-verified', status: 'completed', wallMs: 900 })
-  state.routes.push({ runId: 'run-1', profile: 'clinical-verified', confidence: 1, ruleVsModel: 'rule' })
+  state.routes.push({ runId: 'run-1', profile: 'clinical-verified', confidence: 1, reason: 'default workflow', ruleVsModel: 'rule' })
   state.workflows.set('run-1', {
     runId: 'run-1',
     steps: [{ step: 0, name: 'extract', profile: 'clinical', status: 'completed', ok: true }],
