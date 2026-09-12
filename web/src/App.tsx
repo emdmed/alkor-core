@@ -63,6 +63,10 @@ export const App = () => {
     if (isNarrow) setRailOpen(false)
   }, [isNarrow])
 
+  // Declared here rather than inline at the call site: the log tab renders conditionally,
+  // and a hook inside that branch would be a hook called conditionally.
+  const clearInspected = useCallback(() => setInspected(null), [])
+
   // Clicking a node is a question about that node: answer it in the inspector, and
   // remember where the click came from so Escape can hand focus back.
   const openInspector = useCallback((data: GraphNodeData) => {
@@ -134,7 +138,11 @@ export const App = () => {
               <InspectorPanel state={state} />
             </div>
           )}
-          {railTab === 'log' && <EventLog state={state} />}
+          {/* One selection, three surfaces: the canvas highlights the node, the inspector
+              describes it, and the feed narrows to what it produced. */}
+          {railTab === 'log' && (
+            <EventLog state={state} selected={inspected} onClearSelection={clearInspected} />
+          )}
         </SideRail>
       </main>
     </div>

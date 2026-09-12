@@ -135,6 +135,10 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
   const { fitView, getNodes, getViewport, setViewport } = useReactFlow()
   const canvasWidth = useStore((store) => store.width)
   const graphShellRef = useRef<HTMLDivElement>(null)
+  // The run strip scrolls once the bar is full, and the chip most worth seeing is the one
+  // the canvas is currently drawing. Without this it is the chip that ends up under the
+  // fade at 1440.
+  const selectedChipRef = useRef<HTMLButtonElement>(null)
   const runs = useMemo(() => [...state.runs.values()], [state.runs])
   const [selectedId, setSelectedId] = useState<string>()
   const [userExpanded, setUserExpanded] = useState<Set<string>>(new Set())
@@ -148,6 +152,35 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
   // material, and a card parked on top of the board costs more than it explains. It is one
   // click away under View, and the nodes it describes are labelled in plain words anyway.
   const [showLegend, setShowLegend] = useState(false)
+
+  // Keep the selected run reachable in the strip. `nearest` makes this a no-op when the
+  // chip is already on screen, so it never fights a horizontal scroll the operator is
+  // doing by hand.
+  useEffect(() => {
+    selectedChipRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [selectedId, runs.length])
+
+  // Mark which end of the run strip is actually cut, so the edge fade is painted only
+  // where there is more to see. Doing this in CSS alone is not possible: a mask cannot ask
+  // whether its element overflows, and an unconditional fade washes out the first chip on
+  // every board that fits.
+  const runStripRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = runStripRef.current
+    if (!el) return
+    const sync = () => {
+      el.classList.toggle('is-overflow-start', el.scrollLeft > 1)
+      el.classList.toggle('is-overflow-end', el.scrollLeft + el.clientWidth < el.scrollWidth - 1)
+    }
+    sync()
+    el.addEventListener('scroll', sync, { passive: true })
+    const ro = new ResizeObserver(sync)
+    ro.observe(el)
+    return () => {
+      el.removeEventListener('scroll', sync)
+      ro.disconnect()
+    }
+  }, [runs.length])
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [fullscreenFallback, setFullscreenFallback] = useState(false)
   // Compact is the board at rest. Full detail cannot be both complete and legible on a
@@ -406,12 +439,12 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
       {/* One bar, and it answers one question: which run am I looking at, and where has it
           got to. Everything that changes how the canvas is *drawn* folds into View. */}
       <div className="stagebar">
-        <div className="stagebar-runs" aria-label="Recent runs">
+        <div className="stagebar-runs" ref={runStripRef} aria-label="Recent runs">
           {runs.length === 0 && <span className="stagebar-waiting">No runs yet — send one from the Run panel.</span>}
           {runs.slice(-8).map((run) => {
             const on = run.runId === selected?.runId
             return (
-              <button key={run.runId} className={`run-chip${on ? ' run-chip-on' : ''}`} onClick={() => {
+              <button key={run.runId} ref={on ? selectedChipRef : undefined} className={`run-chip${on ? ' run-chip-on' : ''}`} onClick={() => {
                 setSelectedId(run.runId)
                 onSelectedWorkflowChange(run.profile)
                 setViewportPinned(false)
@@ -539,9 +572,24 @@ const RunPosition = ({
   run,
   nodes,
 }: {
-  run: { status: 'started' | 'completed' | 'failed'; wallMs?: number } | undefined
+  run: { runId: string; status: 'started' | 'completed' | 'failed'; wallMs?: number } | undefined
   nodes: GraphNode[]
 }) => {
+  // FIRST VIEWPORT names three things for this bar: the run selector, stage progress, and
+  // elapsed. Progress is read off the workflow card that owns the whole run rather than
+  // off whichever segment happens to be drawn, so a branch does not restart the count.
+  const progress = useMemo(() => {
+    const owning = nodes
+      .map((n) => (n.data.allSteps ?? n.data.steps) as CompactStepData[] | undefined)
+      .filter((steps): steps is CompactStepData[] => Array.isArray(steps) && steps.length > 0)
+      .sort((a, b) => b.length - a.length)[0]
+    if (!owning) return undefined
+    const active = owning.findIndex((s) => s.status === 'active')
+    if (active >= 0) return `step ${active + 1} of ${owning.length}`
+    const done = owning.filter((s) => s.status === 'done').length
+    return done > 0 ? `${done} of ${owning.length} steps` : undefined
+  }, [nodes])
+  const runId = run?.runId ?? ''
   if (!run) return null
   // Prefer the live leaf for the summary while every enclosing node remains
   // visibly current on the canvas.
@@ -553,14 +601,21 @@ const RunPosition = ({
   // is. The old pill said "NOW RUNNING", then the step, then "active step" — three ways of
   // saying the same thing, stacked.
   //
-  // A finished run can leave its last node flagged `current`, which used to leave a
-  // spinner turning under a run that had already landed. The run's own status is the
-  // authority on whether anything is still working.
-  if (current && run.status === 'started') {
+  // The run's own status is the ONLY authority on whether anything is still working, and
+  // it is tested before anything else. This used to read `current && status === 'started'`,
+  // which meant a run with no node currently flagged — the gap between two stages, which on
+  // a 19.5s-per-case pipeline is a gap you can watch — fell through to the branch below and
+  // rendered a green "run complete" over a run that was still going. A dashboard whose one
+  // job is to say where the work has got to may not say it finished when it has not.
+  if (run.status === 'started') {
     return (
       <div className="stagebar-position is-live" role="status" aria-live="polite">
         <LoaderCircle className="status-spin" aria-hidden="true" />
-        <span className="stagebar-position-name">{current.kind === 'input' ? 'preparing input' : current.label}</span>
+        <span className="stagebar-position-name">
+          {current == null ? 'working' : current.kind === 'input' ? 'preparing input' : current.label}
+        </span>
+        {progress && <span className="stagebar-position-step">{progress}</span>}
+        <RunClock runId={runId} />
       </div>
     )
   }
@@ -572,6 +627,36 @@ const RunPosition = ({
       {run.wallMs != null && <span className="stagebar-position-time">{fmtSec(run.wallMs)}</span>}
     </div>
   )
+}
+
+/**
+ * Elapsed time for a run that is still going.
+ *
+ * The server reports `wallMs` only once a run lands, so while one is in flight there is no
+ * authoritative elapsed figure to show. This counts from the moment this dashboard first
+ * saw the run instead, which is honest about what it is: an observer's clock, not the
+ * harness's measurement. The moment the run completes, the component is replaced by the
+ * branch above and the server's own `wallMs` takes over — so the approximate number is
+ * never the one that gets read, quoted, or compared.
+ *
+ * Runs take minutes on this hardware, so a one-second tick is the right resolution and a
+ * cheap one.
+ */
+const RunClock = ({ runId }: { runId: string }) => {
+  const startedAt = useRef<Map<string, number>>(new Map())
+  if (!startedAt.current.has(runId)) startedAt.current.set(runId, Date.now())
+  const from = startedAt.current.get(runId) ?? Date.now()
+
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [runId])
+
+  const secs = Math.max(0, Math.floor((now - from) / 1000))
+  const mm = String(Math.floor(secs / 60)).padStart(2, '0')
+  const ss = String(secs % 60).padStart(2, '0')
+  return <span className="stagebar-position-time" aria-label={`elapsed ${secs} seconds`}>{mm}:{ss}</span>
 }
 
 const Legend = ({ onDismiss }: { onDismiss: () => void }) => (

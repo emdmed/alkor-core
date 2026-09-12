@@ -12,11 +12,12 @@ import type { ProjectState } from '../../../src/tui/state.ts'
 import { cacheHitRatio, failureRate, inFlightCount } from '../../../src/tui/state.ts'
 import type { ModelHealth } from '../hooks/useAlkor.ts'
 import { connMeta, modelName } from '../lib/format.ts'
-import { Logotype } from './Logotype'
+import { Logotype, StarPair } from './Logotype'
 import { Badge } from './ui/badge'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
-import { ChevronDown, CirclePause, CirclePlay, Eraser, PlugZap } from 'lucide-react'
+import { ChevronDown, CirclePause, CirclePlay, Eraser, Moon, PlugZap, Sun } from 'lucide-react'
+import { useTheme } from '../hooks/useTheme.ts'
 
 export interface HeaderProps {
   state: ProjectState
@@ -51,7 +52,10 @@ export const Header = memo(({ state, serverUrl, onServerUrlChange, onConnect, pa
 
     <header className="topbar">
       <div className="topbar-identity">
-        <Logotype className="brand-mark" />
+        <span className="brand-lockup">
+          <Logotype className="brand-mark" />
+          <StarPair className="brand-stars" />
+        </span>
         {/* The mark is a word nobody can read the product out of, so the descriptor rides
             beside it for the reader arriving cold. It is the first thing cut when the bar
             runs out of room — by then the operator knows what this is. */}
@@ -101,11 +105,37 @@ export const Header = memo(({ state, serverUrl, onServerUrlChange, onConnect, pa
           {paused ? 'Resume' : 'Pause'}
         </Button>
         <ClearButton onClear={onClear} count={state.runs.size + state.eventLog.length} />
+        <ThemeToggle />
       </div>
     </header>
 
   )
 })
+
+/**
+ * Light or dark, as one icon control.
+ *
+ * The glyph shows what the click will DO rather than what is currently true — a moon on
+ * the light theme — because a control that only reports state gives the reader nothing to
+ * act on. The accessible name says the same thing in words.
+ */
+const ThemeToggle = () => {
+  const { theme, toggle } = useTheme()
+  const next = theme === 'dark' ? 'light' : 'dark'
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      type="button"
+      className="theme-toggle"
+      onClick={toggle}
+      aria-label={`Switch to ${next} theme`}
+      title={`Switch to ${next} theme`}
+    >
+      {theme === 'dark' ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+    </Button>
+  )
+}
 
 /**
  * Clear, with the one guard it was missing.

@@ -3,9 +3,26 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="light" />
+    <meta name="color-scheme" content="light dark" />
     <!-- The name does not describe the product, so it never travels alone (PRODUCT.md). -->
     <title>alkor — structured extraction from clinical notes</title>
+    <!--
+      Resolve the theme before first paint. Without this the document renders light, then
+      the React effect stamps data-theme and a dark-theme user watches the whole dashboard
+      flash white. It is inline and synchronous for exactly that reason.
+
+      Light is the default here rather than the system preference: the surface is operated
+      at a desk in daylight for an hour at a stretch, and the choice, once made, is the
+      user's and persists.
+    -->
+    <script>
+      try {
+        var t = localStorage.getItem('alkor.theme')
+        document.documentElement.dataset.theme = t === 'dark' ? 'dark' : 'light'
+      } catch (_) {
+        document.documentElement.dataset.theme = 'light'
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

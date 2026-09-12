@@ -1,16 +1,24 @@
 /*
- * Dashboard styling, rebuilt on Tailwind v4 + shadcn/ui.
+ * alkor dashboard — visual system.
  *
- * The world is DESIGN.md's Care Workspace: a warm near-white paper base, clinical sky as
- * the single action colour, mint as the quiet supporting state. It is deliberately not the
- * terminal TUI's palette — `src/tui/app.ts` keeps its own dark control room, and the two
- * do not cross. Long-running workflow state has to stay readable for an hour, which is
- * what the low-glare base buys.
+ * The world here is the category standard, and that is a decision rather than a default.
+ * Asked on 2026-09-12 to choose between four derived visual directions and the
+ * conventional modern dashboard, the user chose convention in plain words and named
+ * Linear, Vercel and Stripe as the craft bar. So: neutral surfaces, one accent, borders
+ * carrying structure, shadows reserved for things that genuinely float, restrained
+ * motion. The job is to execute that at a high level of finish, not to smuggle a
+ * metaphor back in.
  *
  * Two contracts in here are floors rather than preferences, and both have bitten before:
- * the type scale below (a measured value never renders under 12px) and contrast (body and
- * placeholder text at 4.5:1, state-bearing borders at 3:1). The pale register makes both
- * easy to lose by accident.
+ *   - a measured value never renders below 12px, because a measurement nobody can read
+ *     is not a measurement;
+ *   - body and placeholder text hold 4.5:1 and state-bearing borders 3:1, in BOTH themes.
+ *
+ * A third is newer and just as load-bearing: the compact card's box model is duplicated
+ * as numeric constants in `lib/graph/core.ts` (COMPACT_HEADER_H and friends), because the
+ * graph layout is computed rather than measured. Changing a height in the compact-node
+ * section below without changing its constant there silently mislays every edge on the
+ * canvas. Each such rule is marked `LAYOUT CONTRACT`.
  */
 
 @import "tailwindcss";
@@ -35,138 +43,210 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  /* Tailwind's four radius rungs land on the three this system commits to, so a shadcn
-     primitive written against `rounded-md` comes out the same shape as a control the
-     stylesheet draws by hand. Both small rungs resolve to the control radius on purpose:
-     the system has one answer for "this is a control", not two. */
-  --radius-sm: var(--r-control);
-  --radius-md: var(--r-control);
-  --radius-lg: var(--r-node);
-  --radius-xl: var(--r-surface);
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
+  --radius-xl: var(--r-xl);
 }
 
-/* Calm clinical workspace: a warm-white base with legible, low-saturation state colour. */
-:root {
-  /* Shell rhythm. 8px is the unit and the fractions are named from it, so a value's name
-     says where it sits on the scale rather than what it measures. Six rungs, and nothing
-     between them: the spread of 3, 5, 7, 9 and 11px this replaced was not density, it was
-     fifty separate decisions nobody made twice the same way. */
-  --s-quarter: 2px;
-  --s-half: 4px;
-  --s-3q: 6px;
-  --s-1: 8px;
-  --s-2: 12px;
-  --s-3: 16px;
-  --s-4: 20px;
+/* ==========================================================================
+   1. Tokens
+   ========================================================================== */
 
-  /* Corner radius. DESIGN.md commits to exactly three, and they are told apart by what the
-     shape IS, not by how big it is: a control, an execution node, a workspace surface. The
-     pill is the fourth and it is only ever for small selectable chips. */
-  --r-control: 8px;
-  --r-node: 12px;
-  --r-surface: 14px;
+:root {
+  /* Spacing. One 4px unit, six rungs, nothing between them. */
+  --s-1: 4px;
+  --s-2: 6px;
+  --s-3: 8px;
+  --s-4: 12px;
+  --s-5: 16px;
+  --s-6: 24px;
+
+  /* Radius. Three, told apart by what the shape is: control, surface, overlay. */
+  --r-sm: 5px;
+  --r-md: 6px;
+  --r-lg: 8px;
+  --r-xl: 10px;
   --r-pill: 999px;
 
-  /* Control heights. One default, one dense variant for the two instrument bars, and the
-     coarse-pointer minimum. Icon buttons are square and share one size. */
-  --h-control: 32px;
-  --h-control-sm: 28px;
-  --h-touch: 38px;
-  --sz-icon-btn: 22px;
-
-  /* Icon sizes in the shell chrome. Graph nodes keep their own smaller inline glyphs,
-     which are sized against a reserved card height rather than against this scale. */
+  /* Control heights. */
+  --h-control: 28px;
+  --h-control-lg: 32px;
+  --sz-icon-btn: 26px;
   --sz-icon-sm: 12px;
   --sz-icon: 14px;
-  --sz-icon-lg: 16px;
 
-  /* A compact step's number and its status glyph, and the indent everything hanging under
-     that step shares. Kept here because three rules depend on the same sum. */
-  --sz-step-num: 13px;
-  --sz-step-status: 12px;
-  --c-step-indent: calc(var(--sz-step-num) + var(--s-1) + var(--sz-step-status));
-
-  /* Shell regions. The workspace is two zones — a canvas and one rail — so these are the
-     only fixed dimensions in the shell; everything else takes what is left. */
-  --h-topbar: 46px;
-  --h-stagebar: 40px;
-  --w-rail-strip: 44px;
-
-  /* Below this the rail overlays the canvas instead of taking width from it. */
+  /* Shell regions. The only fixed dimensions; everything else takes what is left. */
+  --h-topbar: 48px;
+  --h-stagebar: 44px;
+  --w-rail-strip: 48px;
   --bp-narrow: 900px;
 
-  /* Type scale. Five steps, because a screen whose sizes all sit within two pixels of
-     each other cannot say which of them matters. Two of these are floors rather than
-     preferences (DESIGN.md): every measured value sits at --t-data or above, since a
-     measurement nobody can read is not a measurement, and --t-label is reserved for the
-     uppercase words that name a region — read once for orientation, never compared, which
-     is the only reason they may go below the value floor. --t-lead is the display step, spent
-     at most once per state, on the one thing the operator came to find out. No state spends it
-     today: the chat empty state used to, and it was costing more height than it returned. */
-  --t-label: 10px;
+  /* Type scale. Five steps. 12px is the floor for anything measured. */
+  --t-label: 11px;
   --t-data: 12px;
-  --t-body: 14px;
-  --t-title: 17px;
-  --t-lead: 22px;
+  --t-body: 13px;
+  --t-lead: 15px;
+  --t-title: 20px;
 
-  /* The palette is light; keep form controls, scrollbars, and the caret in that register. */
+  --font-ui: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* ---- Light theme ---- */
   color-scheme: light;
-  caret-color: var(--primary);
 
-  --radius: var(--r-surface);
-  --background: oklch(97.5% 0.012 180);
-  --foreground: oklch(28% 0.025 235);
-  --card: oklch(99% 0.007 180);
-  --card-foreground: oklch(28% 0.025 235);
-  --popover: oklch(100% 0.003 180);
-  --popover-foreground: oklch(28% 0.025 235);
-  --primary: oklch(54% 0.105 205);
-  --primary-foreground: oklch(99% 0.005 200);
-  --secondary: oklch(93.5% 0.026 175);
-  --secondary-foreground: oklch(33% 0.045 185);
-  --muted: oklch(95% 0.015 210);
-  --muted-foreground: oklch(48% 0.025 235);
-  --accent: oklch(92.5% 0.035 220);
-  --accent-foreground: oklch(29% 0.045 220);
-  --destructive: oklch(55% 0.15 25);
-  --destructive-foreground: oklch(98% 0 0);
-  /* Two border roles, because one token was doing two jobs at one strength. A divider
-     only separates and may stay faint; a border that is the sole thing telling a card,
-     chip or field apart from the paper is carrying state, and the surface brief puts a
-     3:1 floor under it. The pale register is a stated risk of this palette, not a licence
-     to fall below its own contract. */
-  --border: oklch(80% 0.02 210);
-  --border-state: oklch(68% 0.03 210);
-  --input: oklch(91% 0.018 205);
-  /* The focus ring is the one control a keyboard user cannot do without; at 66% it sat
-     near 2.9:1 on paper before the button layer halved its alpha. */
-  --ring: oklch(52% 0.12 205);
-  /* caution and success are read as 10-12px bold words ("LIVE", "route"), which is small
-     text under WCAG however emphatic it looks — so both clear 4.5:1 on paper, not 3:1. */
-  --caution: oklch(52% 0.10 80);
-  --success: oklch(46% 0.085 165);
+  /* Greys, warm-neutral, eight rungs. */
+  --g-0: #ffffff;
+  --g-25: #fcfcfd;
+  --g-50: #f8f9fa;
+  --g-100: #f1f3f5;
+  --g-150: #e9ecef;
+  --g-200: #dee2e6;
+  --g-300: #ced4da;
+  --g-500: #868e96;
+  --g-600: #6b7280;
+  --g-700: #495057;
+  --g-900: #16181c;
 
-  /* graph surface tokens (Phase 6: all graph colors flow through the token system) */
-  --graph-grid: oklch(90% 0.012 190);
-  --route-possible: oklch(86% 0.018 210);
-  --route-selected: var(--success);
-  --queued-surface: color-mix(in oklab, var(--muted) 32%, var(--card));
-  --failed-surface: color-mix(in oklab, var(--destructive) 3%, var(--card));
-  --minimap-viewport: color-mix(in oklab, var(--primary) 7%, transparent);
+  --background: var(--g-50);
+  --surface: var(--g-0);
+  --surface-2: var(--g-25);
+  --surface-sunken: var(--g-100);
+  --foreground: var(--g-900);
+  --card: var(--g-0);
+  --card-foreground: var(--g-900);
+  --popover: var(--g-0);
+  --popover-foreground: var(--g-900);
+  --muted: var(--g-100);
+  /* Measured against the DARKEST ground each one actually sits on, not against white:
+     muted text lands on the sunken panel and the canvas at #f1f3f5, where the obvious
+     #6b7280 reads 4.35 and misses the floor. */
+  --muted-foreground: #686f7c;
+  --faint-foreground: #70767d;
+  --secondary: var(--g-100);
+  --secondary-foreground: var(--g-700);
+  --accent: var(--g-100);
+  --accent-foreground: var(--g-900);
+  --border: var(--g-200);
+  --border-strong: var(--g-300);
+  --input: var(--g-200);
 
-  /* event kind colours — same hues as `eventColor` in the terminal renderer */
-  --ev-llm: #3b78a8;
-  --ev-run: #32856e;
-  --ev-http: #657985;
-  --ev-workflow: #8c6b24;
-  --ev-session: #b35f66;
-  --ev-stage: #327d8e;
-  --ev-route: #9a6a27;
-  --ev-tool: #7964a8;
-  --ev-model: #3b78a8;
-  --ev-profile: #456fa1;
-  --ev-server: #52636d;
+  /* One accent. Indigo, carrying action, focus and selection — and nothing else. */
+  --primary: #4f46e5;
+  --primary-hover: #4338ca;
+  --primary-foreground: #ffffff;
+  --primary-soft: #eef2ff;
+  --ring: #4f46e5;
+
+  /* Semantic state. Reserved for run state; never decorative. */
+  --ok: #0f7b4f;
+  --ok-soft: #e7f6ee;
+  --warn: #a35a00;
+  --warn-soft: #fdf3e3;
+  --danger: #c02626;
+  --danger-soft: #fdeced;
+
+  /*
+   * State-bearing borders, and the reason they are this saturated.
+   *
+   * The pastel tints these replaced (#c7d2fe and friends) measured 1.5:1 against the card
+   * they outline — which is to say the border of a running card was doing no work at all,
+   * and the 3:1 floor this surface inherits was missed in both themes. These are the
+   * lightest hue-preserving values that clear it. State is still never carried by colour
+   * alone: every one of them ships beside a glyph and a word.
+   */
+  --primary-border: #858cdf;   /* 3.08:1 on surface */
+  --ok-border: #5c9a76;        /* 3.31:1 */
+  --warn-border: #b5821f;      /* 3.40:1 */
+  --danger-border: #d96a74;    /* 3.35:1 */
+  --destructive: var(--danger);
+  --destructive-foreground: #ffffff;
+
+  /* Elevation. Only things that genuinely float. */
+  --shadow-sm: 0 1px 2px rgb(16 24 40 / 0.05);
+  --shadow-md: 0 4px 8px -2px rgb(16 24 40 / 0.08), 0 2px 4px -2px rgb(16 24 40 / 0.05);
+  --shadow-lg: 0 12px 20px -4px rgb(16 24 40 / 0.1), 0 4px 8px -4px rgb(16 24 40 / 0.05);
+
+  /* Canvas. */
+  --canvas: var(--g-100);
+  --canvas-dot: var(--g-300);
+  --edge: var(--g-300);
+  --edge-taken: var(--primary);
+  --edge-ghost: var(--g-300);
+
+  --radius: var(--r-lg);
 }
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --g-0: #16181d;
+  --g-25: #191c22;
+  --g-50: #101215;
+  --g-100: #1e2127;
+  --g-150: #262a32;
+  --g-200: #2e333c;
+  --g-300: #3a404a;
+  --g-500: #7c848f;
+  --g-600: #9aa2ad;
+  --g-700: #c3c9d1;
+  --g-900: #f0f2f5;
+
+  --background: var(--g-50);
+  --surface: var(--g-0);
+  --surface-2: var(--g-25);
+  --surface-sunken: #0c0e11;
+  --foreground: var(--g-900);
+  --card: var(--g-0);
+  --card-foreground: var(--g-900);
+  --popover: var(--g-100);
+  --popover-foreground: var(--g-900);
+  --muted: var(--g-100);
+  --muted-foreground: var(--g-600);
+  --faint-foreground: var(--g-500);
+  --secondary: var(--g-150);
+  --secondary-foreground: var(--g-700);
+  --accent: var(--g-150);
+  --accent-foreground: var(--g-900);
+  --border: var(--g-200);
+  --border-strong: var(--g-300);
+  --input: var(--g-300);
+
+  --primary: #7c7ff2;
+  --primary-hover: #9093f5;
+  --primary-foreground: #14141f;
+  --primary-soft: #21223a;
+  --ring: #7c7ff2;
+
+  --ok: #4ade80;
+  --ok-soft: #12261c;
+  --warn: #fbbf24;
+  --warn-soft: #2a2113;
+  --danger: #f87171;
+  --danger-soft: #2c1618;
+
+  /* Same 3:1 floor, measured against the dark card rather than the light one. */
+  --primary-border: #6266c4;   /* 3.57:1 on surface */
+  --ok-border: #448569;        /* 4.06:1 */
+  --warn-border: #9d7830;      /* 4.37:1 */
+  --danger-border: #ab5158;    /* 3.42:1 */
+  --destructive: var(--danger);
+  --destructive-foreground: #17090a;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-md: 0 4px 8px -2px rgb(0 0 0 / 0.4), 0 2px 4px -2px rgb(0 0 0 / 0.3);
+  --shadow-lg: 0 12px 20px -4px rgb(0 0 0 / 0.5), 0 4px 8px -4px rgb(0 0 0 / 0.35);
+
+  --canvas: #0c0e11;
+  --canvas-dot: #2b303a;
+  --edge: var(--g-300);
+  --edge-taken: var(--primary);
+  --edge-ghost: var(--g-200);
+}
+
+/* ==========================================================================
+   2. Base
+   ========================================================================== */
 
 * { box-sizing: border-box; }
 
@@ -174,360 +254,118 @@ html, body, #root { height: 100%; }
 
 body {
   margin: 0;
-  font-family: "Inter Variable", "Adwaita Sans", "Noto Sans", ui-sans-serif, system-ui, sans-serif;
-  background: var(--background);
+  font-family: var(--font-ui);
+  font-size: var(--t-body);
+  line-height: 1.5;
   color: var(--foreground);
-  font-size: 14px;
-  line-height: 1.45;
+  background: var(--background);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "cv05" 1, "ss01" 1;
 }
 
-/* Use the dynamic viewport so mobile browser chrome never folds the shell short. */
-@supports (height: 100dvh) {
-  .app { height: 100dvh; }
+/* The theme swap should read as one deliberate change, not a cascade of transitions. */
+:root.is-theme-switching * {
+  transition: none !important;
 }
 
-::selection { background: color-mix(in oklab, var(--primary) 25%, white); color: var(--foreground); }
-input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-json {
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+button, input, textarea, select { font: inherit; color: inherit; }
+
+:where(button, [role="tab"], [role="button"], a, input, textarea, select):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+  border-radius: var(--r-sm);
 }
-/* Inside a graph node, monospace marks machine output — identifiers, timings, token
-   counts — and never the node's own name or its explanatory line. */
-.g-meta, .g-time, .g-prof, .g-detail, .g-shape, .g-chip-meta, .g-transfer code {
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+/* The primary input on this surface is a textarea you paste a clinical note into, and the
+   log beside it is read by selecting and quoting lines out of it. Selection and the caret
+   are therefore working surfaces here, not decoration, and they ship themed rather than
+   as whatever the browser defaults to over a dark panel. */
+::selection {
+  background: color-mix(in oklab, var(--primary) 26%, transparent);
+  color: var(--foreground);
 }
+
+:root { caret-color: var(--primary); }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--g-300);
+  border-radius: var(--r-pill);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--g-500); background-clip: content-box; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+.status-spin { animation: spin 1s linear infinite; }
+
+@keyframes pulse-soft { 50% { opacity: 0.45; } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Shared text roles. */
+.muted, .text-muted-foreground { color: var(--muted-foreground); }
+.faint { color: var(--faint-foreground); }
+.text-foreground { color: var(--foreground); }
+.text-primary { color: var(--primary); }
+.ok { color: var(--ok); }
+.err { color: var(--danger); }
+.text-xs { font-size: var(--t-data); }
+.text-sm { font-size: var(--t-body); }
+.flex { display: flex; }
+.items-center { align-items: center; }
+.justify-center { justify-content: center; }
+.absolute { position: absolute; }
+.left-1\.5 { left: 6px; }
+.size-3\.5 { width: 14px; height: 14px; }
+.size-4 { width: 16px; height: 16px; }
+.w-52 { width: 208px; }
+.max-h-80 { max-height: 320px; }
+.overflow-y-auto { overflow-y: auto; }
+.my-3 { margin-block: var(--s-3); }
+
+/* An uppercase eyebrow. Read once for orientation, never compared — which is the only
+   reason it is allowed under the value floor. */
+.eyebrow,
+.drawer-section-title,
+.graph-legend-title,
+.chat-target-label,
+.conn-pop-label {
+  font-size: var(--t-label);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+/* ==========================================================================
+   3. Shell
+   ========================================================================== */
 
 .app {
   height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-/* --- the two button families --------------------------------------------------
-
-   Every control the workspace draws by hand is one of these two, and the rules below are
-   the whole definition: what follows later in the file says only where a given one sits,
-   never what it looks like. They were nine and four separate implementations, agreeing on
-   neither their resting colour nor what hover meant — three different hover treatments
-   across buttons a user reads as the same control.
-
-   Hover resolves to Clinical Sky in both families. DESIGN.md reserves that hue for
-   actions, and a button is the one thing on this surface that always is one. */
-
-/* Square, transparent, icon only: the rail strip and its collapse, every panel's close,
-   every node's disclosure and inspect. */
-.rail-collapse,
-.rail-strip-btn,
-.corpus-close,
-.graph-legend-close,
-.ev-detail-close,
-.c-header-toggle,
-.c-header-inspect,
-.c-step-toggle,
-.g-chip-toggle {
-  display: inline-grid;
-  place-items: center;
-  position: relative;
-  flex: none;
-  width: var(--sz-icon-btn);
-  height: var(--sz-icon-btn);
-  padding: 0;
-  border: 0;
-  border-radius: var(--r-control);
-  background: transparent;
-  color: var(--muted-foreground);
-  cursor: pointer;
-  transition: color 140ms ease, background-color 140ms ease;
-}
-.rail-collapse:hover,
-.rail-strip-btn:hover,
-.corpus-close:hover,
-.graph-legend-close:hover,
-.ev-detail-close:hover,
-.c-header-toggle:hover,
-.c-header-inspect:hover,
-.c-step-toggle:hover,
-.g-chip-toggle:hover {
-  color: var(--primary);
-  background: var(--muted);
-}
-/* 22px is the drawn size, not the reachable one. The pad is invisible and costs no layout,
-   which matters because several of these sit in rows whose height is a contract with
-   `lib/graph/core.ts`. */
-.rail-collapse::before,
-.corpus-close::before,
-.graph-legend-close::before,
-.ev-detail-close::before,
-.c-header-toggle::before,
-.c-header-inspect::before,
-.c-step-toggle::before,
-.g-chip-toggle::before {
-  content: '';
-  position: absolute;
-  inset: -8px;
-}
-/* The strip is a navigation target rather than an affordance tucked into a row: it takes
-   the full control height and the width of the strip, so it needs no invisible pad. */
-.rail-strip-btn { width: auto; height: var(--h-control); }
-
-/* Pill, bordered, a label and usually an icon: the server address, a run, the corpus. */
-.conn-chip,
-.run-chip,
-.chat-corpus-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--s-3q);
-  flex: none;
-  min-height: var(--h-control-sm);
-  padding: var(--s-quarter) var(--s-1);
-  border: 1px solid var(--border-state);
-  border-radius: var(--r-pill);
-  background: var(--card);
-  color: var(--foreground);
-  font-family: inherit;
-  font-size: var(--t-data);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: color 140ms ease, border-color 140ms ease, background-color 140ms ease;
-}
-.conn-chip:hover,
-.run-chip:hover,
-.chat-corpus-btn:hover {
-  color: var(--primary);
-  border-color: var(--ring);
-}
-
-/* ---------------------------------------------------------------------------- */
-/* Top bar — the workspace's one permanent band.                                  */
-
-.topbar {
-  min-height: var(--h-topbar);
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--s-2);
-  padding: var(--s-half) var(--s-2);
-  border-bottom: 1px solid var(--border);
-  background: var(--card);
-  color: var(--card-foreground);
-}
-/* The rack: connection state, the model, and the counters read as one right-hand instrument
-   rather than as separate groups drifting across the band. Hairlines divide its cells, so the
-   identity keeps the left edge and everything measured sits together under one reading. */
-.topbar-rack {
-  grid-column: 2;
-  justify-self: end;
-  display: flex;
-  align-items: center;
-  min-width: 0;
-}
-/* Qualified by .topbar on purpose: `.topbar-rack > * + *` scores (0,1,0) — the universal
-   selectors count for nothing — so `.counters { margin: 0; padding: 0}` further down the
-   file tied on specificity and won on order, leaving the divider with no space around it. */
-.topbar .topbar-rack > * + * {
-  margin-left: var(--s-2);
-  padding-left: var(--s-2);
-  border-left: 1px solid color-mix(in oklab, var(--border) 72%, transparent);
-}
-.topbar-rack .counter:first-child { padding-left: 0; }
-.topbar-rack .counter:last-child { padding-right: 0; }
-/* Actuators hold to 30px so the band stays at 46px with usable hit targets. */
-.topbar [data-slot="button"] { height: var(--h-control); }
-
-.topbar-identity { display: inline-flex; align-items: center; gap: var(--s-1); min-width: 0; }
-/* An armed Clear says so in the destructive hue. It is the only place in the workspace a
-   warning colour sits on a control rather than on state, and it lasts four seconds. */
-.topbar-actions .is-confirming {
-  color: var(--destructive);
-  background: color-mix(in oklab, var(--destructive) 8%, transparent);
-}
-/* Sits at the label step and drops out below the narrow breakpoint: the bar has to carry
-   session truth first, and a descriptor is for the first visit, not the hundredth. */
-.brand-descriptor {
-  color: var(--muted-foreground);
-  font-size: var(--t-data);
-  white-space: nowrap;
-  padding-left: var(--s-quarter);
-}
-@media (max-width: 1100px) { .brand-descriptor { display: none; } }
-/* The wordmark is outlines, not text -- see Logotype.tsx for why. Height rather than
-   font-size drives it, and the viewBox fixes the aspect at 2.894. 11px of glyph height is
-   the optical match for the 14px text it replaces (the bbox is 1514/2048 of the em). */
-.brand-mark {
-  color: var(--foreground);
-  height: 11px;
-  width: auto;
-  display: block;
-  flex: none;
+  grid-template-rows: var(--h-topbar) 1fr;
+  background: var(--background);
 }
 
-/* The server address: a chip that reads at a glance, a form only when you mean to move. */
-.conn { position: relative; min-width: 0; }
-.conn-chip {
-  /* A server address is a measured value, so it keeps the mono face and a width cap;
-     everything else about it is the chip. */
-  max-width: min(240px, 22vw);
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  line-height: 1.3;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.conn-chip svg { width: var(--sz-icon); height: var(--sz-icon); flex: none; opacity: 0.7; }
-.conn-chip[aria-expanded="true"] { color: var(--foreground); border-color: var(--ring); background: var(--secondary); }
-.conn-pop {
-  position: absolute;
-  z-index: 60;
-  top: calc(100% + 7px);
-  left: 0;
-  width: 372px;
-  max-width: calc(100vw - 24px);
-  display: grid;
-  gap: var(--s-3q);
-  padding: var(--s-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--popover);
-  box-shadow: 0 14px 34px -22px oklch(30% 0.04 210 / 0.7);
-}
-.conn-pop-label {
-  color: var(--foreground);
-  font-size: var(--t-label);
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-.conn-pop-row { display: flex; align-items: center; gap: var(--s-3q); }
-.conn-input {
-  min-width: 0;
-  height: var(--h-control);
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--t-body);
-}
-.conn-pop-note { margin: 0; color: var(--muted-foreground); font-size: var(--t-data); line-height: 1.45; }
-
-/* Connection state, the model that answered, and anything wrong with either. */
-.topbar-state {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: var(--s-1);
-  overflow: hidden;
-}
-.health-state {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--s-3q);
-  flex: none;
-  font-size: var(--t-label);
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  white-space: nowrap;
-}
-.health-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-.health-state.tone-ok { color: var(--success); }
-.health-state.tone-ok .health-dot { background: var(--success); }
-.health-state.tone-warn { color: var(--ev-workflow); }
-.health-state.tone-warn .health-dot { background: var(--caution); }
-.health-state.tone-err { color: var(--destructive); }
-.health-state.tone-err .health-dot { background: var(--destructive); }
-.topbar-state .health-chip { flex: none; font-size: var(--t-data); line-height: 1.2; }
-.topbar-model, .topbar-error { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.topbar-model {
-  color: var(--primary);
-  letter-spacing: -0.01em;
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--t-data);
-  max-width: 260px;
-}
-.topbar-error { color: var(--destructive); font-size: var(--t-data); max-width: min(320px, 30vw); }
-
-/* Counters: what is in flight, what has landed, and the ratios that stay quiet at zero. */
-.counters {
-  display: flex;
-  align-items: baseline;
-  gap: 0;
-  margin: 0;
-  padding: 0;
-  white-space: nowrap;
-}
-.counter {
-  display: inline-flex;
-  align-items: baseline;
-  gap: var(--s-half);
-  padding: 0 var(--s-2);
-  color: var(--muted-foreground);
-  font-size: var(--t-data);
-}
-.counter + .counter { border-left: 1px solid color-mix(in oklab, var(--border) 72%, transparent); }
-.counter dd {
-  margin: 0;
-  color: var(--foreground);
-  font-size: var(--t-data);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-.counter dt {
-  font-size: var(--t-label);
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-}
-/* The one display step this band spends, and it spends it conditionally: a run in flight is
-   the number that changes what the operator does next, so it takes --t-title while that is
-   true and returns to the data step when it is not. A permanent 17px zero would be decoration. */
-.counter.is-live dd {
-  color: var(--success);
-  font-size: var(--t-title);
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-.counter.is-danger dd { color: var(--destructive); }
-
-.topbar-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--s-quarter);
-  padding-left: var(--s-2);
-  border-left: 1px solid var(--border);
-}
-
-/* --- Semantic colour helpers (name says what it means, not what it is) */
-.ok { color: var(--primary); }
-.err { color: var(--destructive); }
-.warn { color: var(--caution); }
-.info { color: var(--primary); }
-.muted { color: var(--muted-foreground); }
-.faint { color: var(--muted-foreground); opacity: 0.6; }
-
-/* event kind colours, ported from the terminal renderer */
-.ev-llm { color: var(--ev-llm); }
-.ev-run { color: var(--ev-run); }
-.ev-http { color: var(--ev-http); }
-.ev-workflow { color: var(--ev-workflow); }
-.ev-session { color: var(--ev-session); }
-.ev-stage { color: var(--ev-stage); }
-.ev-route { color: var(--ev-route); }
-.ev-tool { color: var(--ev-tool); }
-.ev-model { color: var(--ev-model); }
-.ev-profile { color: var(--ev-profile); }
-.ev-server { color: var(--ev-server); }
-
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: color-mix(in oklab, var(--primary) 28%, var(--secondary)); border: 5px solid var(--background); border-radius: var(--r-pill); }
-::-webkit-scrollbar-track { background: var(--background); }
-
-/* ---------------------------------------------------------------------------- */
-/* Pipeline execution graph (the primary view).                                  */
-
-/* The workspace: a canvas, and one rail beside it. Nothing else is resident. */
 .workspace {
-  flex: 1;
-  min-height: 0;
-  min-width: 0;
-  position: relative;
   display: flex;
-  /* The collapsed rail's transition runs off the right edge; clip it so it never widens
-     the document or flashes a second scrollbar. */
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -538,784 +376,416 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
   flex-direction: column;
 }
 
-/* --- the rail: run, activity, inspector, log ------------------------------- */
-.rail {
-  flex: none;
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  border-left: 1px solid var(--border);
-  background: var(--card);
-}
-/* Narrow viewports cannot spare the width, so the rail floats over the canvas instead. */
-.workspace.is-rail-overlay .rail {
-  position: absolute;
-  inset: 0 0 0 auto;
-  z-index: 40;
-  max-width: 100%;
-  box-shadow: -18px 0 40px -34px oklch(30% 0.04 210 / 0.8);
-}
+/* ==========================================================================
+   4. Top bar
+   ========================================================================== */
 
-.rail-grip {
-  position: absolute;
-  z-index: 2;
-  top: 0;
-  bottom: 0;
-  left: -3px;
-  width: 7px;
-  cursor: col-resize;
-  background: transparent;
-  touch-action: none;
-}
-.rail-grip:hover, .rail-grip:focus-visible {
-  outline: none;
-  background: color-mix(in oklab, var(--ring) 55%, transparent);
-}
-body.is-rail-resizing { cursor: col-resize; user-select: none; }
-
-.rail-tabs {
-  flex: none;
+.topbar {
   display: flex;
-  align-items: stretch;
-  gap: 0;
-  padding: var(--s-half) var(--s-half) 0;
+  align-items: center;
+  gap: var(--s-5);
+  padding-inline: var(--s-5);
+  background: var(--surface);
   border-bottom: 1px solid var(--border);
-}
-/* Only the open tab spells its name. Four labels never fit a rail narrow enough to be
-   worth having, and a truncated label ("Inspe…") is worse than the icon alone. */
-.rail-tab {
-  flex: none;
   min-width: 0;
+}
+
+.topbar-identity {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  min-width: 0;
+}
+
+/* Mark and star pair are one lockup. The stars sit on the baseline beside the word, not
+   above or inside it — they accompany the mark, they are not part of the lettering. */
+.brand-lockup {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: var(--s-2);
+  flex: none;
+}
+
+.brand-mark {
+  height: 13px;
+  width: auto;
+  color: var(--foreground);
+  flex: none;
+}
+
+.brand-stars {
+  height: 5px;
+  width: auto;
+  color: var(--foreground);
+  flex: none;
+  margin-bottom: 2px;
+}
+
+/* The mark is a word nobody can read the product out of, so the descriptor rides beside
+   it. It is the first thing to go when the bar runs out of room. */
+.brand-descriptor {
+  font-size: var(--t-data);
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  padding-left: var(--s-4);
+  border-left: 1px solid var(--border);
+}
+
+@media (max-width: 1180px) { .brand-descriptor { display: none; } }
+
+.topbar-rack {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  margin-left: auto;
+  min-width: 0;
+}
+
+.topbar-state {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+.health-state {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: var(--s-3q);
-  min-height: var(--h-control);
-  padding: var(--s-3q) var(--s-1);
-  margin-bottom: -1px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: var(--muted-foreground);
-  font-family: inherit;
+  gap: var(--s-2);
   font-size: var(--t-data);
-  font-weight: 600;
-  cursor: pointer;
+  font-weight: 500;
+  color: var(--muted-foreground);
   white-space: nowrap;
-  transition: color 140ms ease, border-color 140ms ease;
 }
-.rail-tab svg { width: var(--sz-icon); height: var(--sz-icon); flex: none; }
-.rail-tab > span:not(.rail-tab-count) { display: none; }
-.rail-tab.is-on > span:not(.rail-tab-count) { display: inline; white-space: nowrap; }
-.rail-tab:hover { color: var(--foreground); background: color-mix(in oklab, var(--muted) 60%, transparent); }
-.rail-tab.is-on { flex: 1; color: var(--primary); border-bottom-color: var(--primary); }
-.rail-tab.is-on:hover { background: transparent; }
-.rail-tab-count {
-  flex: none;
-  padding: 0 var(--s-half);
+
+.health-dot {
+  width: 6px; height: 6px;
   border-radius: var(--r-pill);
-  background: var(--muted);
-  color: var(--muted-foreground);
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--t-data);
-  font-weight: 400;
-  font-variant-numeric: tabular-nums;
-}
-.rail-collapse {
-  margin-bottom: 1px;
-}
-.rail-collapse svg { width: var(--sz-icon); height: var(--sz-icon); }
-
-.rail-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.rail-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-2) var(--s-3) var(--s-3); }
-.rail-hint {
-  margin: 0 0 var(--s-2);
-  padding: var(--s-1);
-  border-radius: var(--r-control);
-  background: var(--muted);
-  color: var(--muted-foreground);
-  font-size: var(--t-data);
-  line-height: 1.45;
-}
-
-/* Collapsed: the same four destinations, as a strip the canvas can ignore. */
-.rail-strip {
+  background: var(--g-500);
   flex: none;
-  width: var(--w-rail-strip);
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-quarter);
-  padding: var(--s-3q) var(--s-half);
+}
+.health-state.tone-ok .health-dot { background: var(--ok); }
+.health-state.tone-warn .health-dot { background: var(--warn); animation: pulse-soft 1.6s ease-in-out infinite; }
+.health-state.tone-err .health-dot { background: var(--danger); }
+.health-state.tone-err { color: var(--danger); }
+
+.topbar-model {
+  font-family: var(--font-mono);
+  font-size: var(--t-data);
+  color: var(--muted-foreground);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-left: var(--s-3);
   border-left: 1px solid var(--border);
-  background: var(--card);
-}
-.rail-strip-btn {
-  width: auto;
-}
-.rail-strip-btn svg { width: var(--sz-icon-lg); height: var(--sz-icon-lg); }
-
-/* --- run panel (the rail's first tab) -------------------------------------- */
-.runpanel {
-  flex: 1;
-  min-height: 0;
-  position: relative;
-  display: flex;
-  flex-direction: column;
 }
 
-.chat-options { color: var(--muted-foreground); font-size: var(--t-data); }
-.chat-options > summary {
-  cursor: pointer;
-  padding: var(--s-half) var(--s-3q);
-  border-radius: var(--r-control);
-  font-weight: 600;
-  list-style: none;
-}
-.chat-options > summary::-webkit-details-marker { display: none; }
-.chat-options > summary::before { content: '\203a'; margin-right: var(--s-half); display: inline-block; transition: transform 140ms ease; }
-.chat-options[open] > summary::before { transform: rotate(90deg); }
-.chat-options > summary:hover { color: var(--foreground); background: var(--muted); }
-.chat-options-body {
-  position: absolute;
-  z-index: 30;
-  bottom: calc(100% + 6px);
-  left: 0;
-  width: min(300px, calc(100% - 8px));
-  display: grid;
-  gap: var(--s-3q);
-  padding: var(--s-1);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--popover);
-  box-shadow: 0 14px 34px -22px oklch(30% 0.04 210 / 0.7);
-}
-.chat-options-body p { margin: 0; line-height: 1.45; }
-.chat-target-label {
-  color: var(--foreground);
-  font-size: var(--t-label);
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-.chat-select {
-  min-width: 0;
-  background: var(--background);
-  color: var(--foreground);
-  border: 1px solid var(--border-state);
-  border-radius: var(--r-control);
-  font-family: inherit;
+.topbar-error {
   font-size: var(--t-data);
-  min-height: var(--h-control);
-  padding: var(--s-half) var(--s-1);
-}
-.chat-select:focus { outline: none; border-color: var(--ring); }
-.chat-select option { overflow: hidden; text-overflow: ellipsis; }
-
-.chat-presets {
-  display: grid;
-  gap: var(--s-quarter);
-  padding: var(--s-1);
-}
-/* Set apart from the presets by a rule and a margin rather than by a warning colour: it is
-   a standing condition of the tool, not an alert about anything the operator just did. */
-.chat-presets-note {
-  margin: var(--s-1) var(--s-3q) 0;
-  padding-top: var(--s-1);
-  border-top: 1px solid var(--border);
-  color: var(--muted-foreground);
-  font-size: var(--t-data);
-  line-height: 1.45;
-  max-width: 38ch;
-}
-.chat-preset {
-  display: flex;
-  align-items: center;
-  gap: var(--s-3q);
-  width: 100%;
-  font-size: var(--t-data);
-  color: var(--muted-foreground);
-  background: transparent;
-  border: 0;
-  border-radius: var(--r-control);
-  padding: var(--s-half) var(--s-3q);
-  cursor: pointer;
-  font-family: inherit;
-  text-align: left;
+  color: var(--danger);
+  max-width: 240px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.chat-preset:hover { color: var(--primary); background: var(--muted); }
-.chat-preset svg { flex: none; }
 
-.chat-scroll {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: var(--s-1) var(--s-2);
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-1);
-}
+.health-chip { flex: none; }
 
-.chat-msg {
-  border: 1px solid var(--border);
-  border-radius: var(--r-control);
-  padding: var(--s-3q) var(--s-1);
-  background: var(--background);
-  font-size: var(--t-data);
-}
-.chat-msg-err {
-  border-color: color-mix(in oklab, var(--destructive) 40%, var(--border));
-}
-.chat-msg-pending {
-  border-style: dashed;
-  color: var(--muted-foreground);
-}
-.chat-msg-head {
+/* Counters. Only figures that change what the operator does next. */
+.counters {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--s-3q);
-  margin-bottom: var(--s-quarter);
-}
-.chat-msg-profile {
-  color: var(--primary);
-  font-weight: 600;
-  font-size: var(--t-data);
-  letter-spacing: 0.04em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.chat-msg-status {
-  color: var(--muted-foreground);
-  font-size: var(--t-label);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  white-space: nowrap;
-}
-.chat-msg-status-wait { color: var(--primary); }
-.chat-msg-input {
-  color: var(--foreground);
-  white-space: pre-wrap;
-  word-break: break-word;
-  margin-bottom: var(--s-half);
-}
-.chat-msg-result,
-.chat-msg-error {
-  margin: var(--s-half) 0 0;
-  padding: var(--s-3q) var(--s-1);
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--r-control);
-  color: var(--foreground);
-  font-size: var(--t-data);
-  line-height: 1.45;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 220px;
-  overflow: auto;
-}
-.chat-msg-error { color: var(--destructive); }
-
-/* The ending: the one part of a run written to be read rather than inspected. It earns its
-   prominence from the reading size, the room, and the quiet mint surface — not from an accent
-   rule down its edge, which this system reserves Clinical Sky for actions and never for state. */
-.chat-msg-ending {
-  margin: var(--s-3q) 0 0;
-  padding: var(--s-2);
-  background: color-mix(in oklab, var(--secondary) 45%, var(--card));
-  border: 1px solid var(--border);
-  border-radius: var(--r-control);
-  color: var(--foreground);
-  font-size: var(--t-body);
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 420px;
-  overflow: auto;
-}
-.chat-msg-steps { margin-top: var(--s-3q); }
-.chat-msg-steps > summary {
-  cursor: pointer;
-  font-size: var(--t-data);
-  color: var(--muted-foreground);
-  padding: var(--s-quarter) 0;
-}
-.chat-msg-steps > summary:hover { color: var(--foreground); }
-
-/* The run log: a diagnostic transcript, so it is monospaced, scrolls on both axes (a padded
-   event line must not wrap into unreadable ragged columns), and stays visually subordinate to
-   the ending above it until a failure opens it. */
-.chat-msg-log { margin-top: var(--s-3q); }
-.chat-msg-log > summary {
-  cursor: pointer;
-  font-size: var(--t-data);
-  color: var(--muted-foreground);
-  padding: var(--s-quarter) 0;
-}
-.chat-msg-log > summary:hover { color: var(--foreground); }
-.chat-msg-log-body {
-  margin-top: var(--s-half);
-  border: 1px solid var(--border);
-  border-radius: var(--r-control);
-  background: var(--card);
-  overflow: hidden;
-}
-.chat-msg-log-actions {
-  display: flex;
-  justify-content: flex-end;
-  padding: var(--s-half) var(--s-half) 0;
-}
-.chat-msg-log-text {
+  gap: 0;
   margin: 0;
-  padding: var(--s-3q) var(--s-1) var(--s-1);
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--t-data);
-  line-height: 1.45;
-  color: var(--foreground);
-  white-space: pre;
-  max-height: 320px;
-  overflow: auto;
+  padding-left: var(--s-4);
+  border-left: 1px solid var(--border);
 }
 
-.chat-foot {
-  border-top: 1px solid var(--border);
-  padding: var(--s-1);
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-3q);
-}
-.chat-textarea {
-  width: 100%;
-  box-sizing: border-box;
-  resize: none;
-  overflow-y: auto;
-  background: var(--background);
-  color: var(--foreground);
-  border: 1px solid var(--border-state);
-  border-radius: var(--r-control);
-  font-family: inherit;
-  font-size: var(--t-data);
-  line-height: 1.4;
-  padding: var(--s-3q) var(--s-1);
-  max-height: 120px;
-}
-/* Stated explicitly because the UA default is the text colour at half alpha, which put the
-   only instruction on this panel at 3:1. `opacity: 1` is the Firefox half of that default. */
-.chat-textarea::placeholder {
-  color: var(--muted-foreground);
-  opacity: 1;
-}
-.chat-textarea:focus { outline: none; border-color: var(--ring); }
-.chat-textarea:disabled { opacity: 0.5; }
-/* Routing sits left, the one action sits right. `relative` anchors the options popover. */
-.chat-foot-actions {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s-1);
-}
-
-/* --- corpus: the pack documents, loaded into the run box ------------------- */
-
-/* In the empty state the corpus is the first offer, so it reads as an action rather than
-   as a fourth canned phrase. */
-.chat-preset.is-corpus {
-  color: var(--primary);
-  font-weight: 600;
-}
-.chat-preset.is-corpus:hover { background: color-mix(in oklab, var(--primary) 9%, transparent); }
-
-.chat-corpus-btn { font-weight: 600; }
-.chat-corpus-btn svg { width: var(--sz-icon-sm); height: var(--sz-icon-sm); }
-
-/* What is in the box and where it came from. */
-.chat-loaded {
+.counter {
   display: flex;
   align-items: baseline;
-  gap: var(--s-3q);
-  margin: 0;
-  padding: var(--s-half) var(--s-1);
-  border-radius: var(--r-control);
-  background: color-mix(in oklab, var(--primary) 8%, transparent);
-  font-size: var(--t-data);
-  min-width: 0;
+  gap: var(--s-1);
+  padding-inline: var(--s-3);
 }
-.chat-loaded svg { width: 12px; height: 12px; flex: none; align-self: center; color: var(--primary); }
-/* The name is what identifies the run's input, so it keeps the room and the metadata
-   beside it gives way. Truncating the name first told the operator "tr-e…". */
-.chat-loaded-name {
-  flex: 1 1 auto;
-  min-width: 0;
-  color: var(--foreground);
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.chat-loaded-meta {
-  flex: 0 1 auto;
-  min-width: 0;
-  color: var(--muted-foreground);
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+.counter + .counter { border-left: 1px solid var(--border); }
 
-/* The picker takes the whole rail while it is open: a hundred documents with descriptions
-   is worth the panel for the seconds it takes to choose one. */
-.corpus {
-  position: absolute;
-  inset: 0;
-  z-index: 20;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  background: var(--card);
-}
-.corpus-head {
-  flex: none;
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: var(--s-half);
-  padding: var(--s-1);
-  border-bottom: 1px solid var(--border);
-}
-.corpus-search-icon {
-  width: var(--sz-icon);
-  height: var(--sz-icon);
-  flex: none;
-  color: var(--muted-foreground);
-}
-.corpus-search {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  background: transparent;
-  color: var(--foreground);
-  font-family: inherit;
+.counter dd {
+  margin: 0;
+  font-family: var(--font-mono);
   font-size: var(--t-body);
-  padding: var(--s-half) var(--s-quarter);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--foreground);
 }
-.corpus-search::placeholder { color: var(--muted-foreground); }
-.corpus-search:focus { outline: none; }
-.corpus-search::-webkit-search-cancel-button { appearance: none; }
-/* The field is the surface's whole point, so the focus ring belongs on the bar. */
-.corpus-head:focus-within { box-shadow: inset 0 -2px 0 var(--primary); }
-.corpus-close svg { width: var(--sz-icon); height: var(--sz-icon); }
+.counter dt {
+  font-size: var(--t-data);
+  color: var(--muted-foreground);
+}
+.counter.is-live dd { color: var(--primary); }
+.counter.is-danger dd { color: var(--danger); }
 
-.corpus-list { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: var(--s-1); }
-.corpus-status {
+.topbar-actions {
   display: flex;
   align-items: center;
-  gap: var(--s-3q);
-  margin: var(--s-1);
-  padding: var(--s-1);
-  border-radius: var(--r-control);
-  background: var(--muted);
-  color: var(--muted-foreground);
-  font-size: var(--t-data);
-  line-height: 1.45;
-}
-.corpus-status svg { width: var(--sz-icon); height: var(--sz-icon); flex: none; }
-.corpus-error {
+  gap: var(--s-1);
   flex: none;
-  margin: 0;
-  padding: var(--s-1) var(--s-2);
-  border-bottom: 1px solid color-mix(in oklab, var(--destructive) 35%, var(--border));
-  background: color-mix(in oklab, var(--destructive) 6%, var(--card));
-  color: var(--destructive);
-  font-size: var(--t-data);
-  line-height: 1.45;
 }
 
-/* A section heading that is also a control: the whole row opens and closes it. */
-.corpus-group-btn {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  gap: var(--s-3q);
-  width: 100%;
-  padding: var(--s-1) var(--s-2) var(--s-1) var(--s-1);
-  border: 0;
-  border-bottom: 1px solid color-mix(in oklab, var(--border) 55%, transparent);
-  background: var(--card);
-  font-family: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.corpus-group-btn.is-at-cursor { background: color-mix(in oklab, var(--primary) 8%, var(--card)); }
-.corpus-caret {
-  width: var(--sz-icon);
-  height: var(--sz-icon);
-  flex: none;
-  color: var(--muted-foreground);
-  transition: transform 140ms ease;
-}
-.corpus-caret.is-open { transform: rotate(90deg); }
-.corpus-group-name {
-  min-width: 0;
-  color: var(--foreground);
-  font-size: var(--t-body);
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.corpus-group-kind {
-  flex: none;
-  padding: 0 var(--s-3q);
-  border-radius: var(--r-pill);
-  background: var(--secondary);
-  color: var(--secondary-foreground);
-  font-size: var(--t-label);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-.corpus-group-count {
-  flex: none;
-  margin-left: auto;
-  color: var(--muted-foreground);
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--t-data);
-  font-variant-numeric: tabular-nums;
-}
+/* Server address: setup, not operation, so it stays a disclosure. */
+.conn { position: relative; flex: none; }
 
-/* A case that owns several documents: one heading, one description, then its notes. */
-.corpus-case {
-  display: grid;
-  gap: var(--s-quarter);
-  padding: var(--s-1) var(--s-2) var(--s-half) var(--s-4);
-}
-.corpus-case-name {
-  color: var(--foreground);
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--t-data);
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-.corpus-case-meta {
-  color: var(--muted-foreground);
-  font-size: var(--t-data);
-  font-variant-numeric: tabular-nums;
-}
-.corpus-case-count { color: var(--primary); font-weight: 600; }
-.corpus-case-note {
-  color: var(--muted-foreground);
-  font-size: var(--t-data);
-  line-height: 1.4;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
-  overflow: hidden;
-}
-
-.corpus-row {
-  display: grid;
-  gap: var(--s-quarter);
-  width: 100%;
-  padding: var(--s-3q) var(--s-2) var(--s-3q) var(--s-4);
-  border: 0;
-  border-left: 2px solid transparent;
-  background: transparent;
-  font-family: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-/* A note inside a multi-note case sits under its heading on a rule, so the sequence reads
-   as one record rather than as three documents that happen to be adjacent. */
-.corpus-row.is-in-run {
-  margin-left: var(--s-4);
-  padding-left: var(--s-1);
-  border-left-color: color-mix(in oklab, var(--border) 80%, transparent);
-}
-.corpus-row.is-in-run.is-at-cursor { border-left-color: var(--primary); }
-.corpus-row.is-at-cursor {
-  border-left-color: var(--primary);
-  background: color-mix(in oklab, var(--primary) 7%, transparent);
-}
-.corpus-row-head { display: flex; align-items: center; gap: var(--s-3q); min-width: 0; }
-.corpus-row-name {
-  min-width: 0;
-  color: var(--foreground);
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--t-data);
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.corpus-row-glyph { width: 12px; height: 12px; flex: none; margin-left: auto; color: var(--muted-foreground); }
-.corpus-row.is-at-cursor .corpus-row-glyph { color: var(--primary); }
-.corpus-row-meta {
-  color: var(--muted-foreground);
-  font-size: var(--t-data);
-  font-variant-numeric: tabular-nums;
-}
-.corpus-row-note {
-  color: var(--muted-foreground);
-  font-size: var(--t-data);
-  line-height: 1.4;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  overflow: hidden;
-}
-
-.corpus-foot {
-  flex: none;
-  margin: 0;
-  padding: var(--s-3q) var(--s-2);
-  border-top: 1px solid var(--border);
-  color: var(--muted-foreground);
-  font-size: var(--t-data);
-  line-height: 1.45;
-}
-
-.chat-scroll-actions {
-  flex: none;
-  display: flex;
-  justify-content: flex-end;
-  padding: var(--s-3q) var(--s-1) 0;
-}
-
-/* ---------------------------------------------------------------------------- */
-/* The stage: one bar, then the canvas.                                          */
-
-.graph-wrap {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  padding: 0 var(--s-2) var(--s-2);
-}
-.graph-wrap.is-graph-fullscreen {
-  position: fixed;
-  inset: 0;
-  z-index: 100;
-  width: 100vw;
-  height: 100vh;
-  height: 100dvh;
-  padding: var(--s-2);
-  background: var(--background);
-}
-.graph-wrap.is-graph-fullscreen .graph-canvas { border-radius: var(--r-node); }
-
-/*
- * One bar, one question: which run am I looking at, and where has it got to.
- * Anything that changes how the canvas is *drawn* is folded into View, so this row
- * never grows a second line of controls the way the toolbar it replaces did.
- */
-.stagebar {
-  flex: none;
-  min-height: var(--h-stagebar);
-  display: flex;
+.conn-chip {
+  display: inline-flex;
   align-items: center;
   gap: var(--s-2);
-  padding: var(--s-half) var(--s-quarter);
+  height: var(--h-control);
+  padding-inline: var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: var(--t-data);
+  color: var(--secondary-foreground);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.conn-chip:hover { background: var(--muted); border-color: var(--border-strong); }
+.conn-chip svg { width: var(--sz-icon-sm); height: var(--sz-icon-sm); color: var(--muted-foreground); }
+
+.conn-pop {
+  position: absolute;
+  top: calc(100% + var(--s-2));
+  left: 0;
+  z-index: 40;
+  width: 360px;
+  padding: var(--s-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  background: var(--popover);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-lg);
+}
+
+.conn-pop-row { display: flex; gap: var(--s-2); }
+.conn-input { flex: 1; font-family: var(--font-mono); }
+.conn-pop-note { margin: 0; font-size: var(--t-data); color: var(--muted-foreground); }
+
+/* ==========================================================================
+   5. Run bar
+   ========================================================================== */
+
+.stagebar {
+  height: var(--h-stagebar);
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  padding-inline: var(--s-5);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
   min-width: 0;
 }
 
+/* The run list is what gives way when the bar runs out of room: it already scrolls, and a
+   clipped chip is recoverable. `.stagebar-position` beside it does NOT shrink — it is the
+   answer to "where has this run got to", and squeezed to flex-basis it truncated to "w."
+   at 1280, which is the bar failing at exactly its one job. */
 .stagebar-runs {
   display: flex;
   align-items: center;
-  gap: var(--s-half);
+  gap: var(--s-2);
+  flex: 1 1 auto;
   min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
-  padding: var(--s-quarter) 0;
+  padding-block: var(--s-2);
+  /*
+   * The strip scrolls, so a cut edge has to read as "there is more" rather than as a chip
+   * sliced in half. Each fade is applied only on the side that is actually overflowing,
+   * because an unconditional left fade would wash out the first chip whenever the strip
+   * fits — which is most of the time. `--fade-l` / `--fade-r` are flipped by the scroll
+   * handler in PipelineGraph.
+   */
+  --fade-l: 0px;
+  --fade-r: 0px;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 var(--fade-l), #000 calc(100% - var(--fade-r)), transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 var(--fade-l), #000 calc(100% - var(--fade-r)), transparent 100%);
+  scroll-behavior: smooth;
 }
+.stagebar-runs.is-overflow-start { --fade-l: 24px; }
+.stagebar-runs.is-overflow-end { --fade-r: 28px; }
 .stagebar-runs::-webkit-scrollbar { display: none; }
-.stagebar-waiting { color: var(--muted-foreground); font-size: var(--t-data); white-space: nowrap; }
+
+.stagebar-waiting {
+  font-size: var(--t-data);
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+.run-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: var(--h-control);
+  padding-inline: var(--s-3);
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  font-size: var(--t-data);
+  color: var(--secondary-foreground);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.run-chip:hover { background: var(--muted); border-color: var(--border-strong); }
+.run-chip svg { width: var(--sz-icon-sm); height: var(--sz-icon-sm); }
+.run-chip-id { font-family: var(--font-mono); color: var(--faint-foreground); }
 
 .run-chip-on {
-  border-color: var(--primary);
-  background: color-mix(in oklab, var(--primary) 10%, var(--card));
+  background: var(--primary-soft);
+  border-color: var(--primary-border);
+  color: var(--foreground);
+  font-weight: 500;
 }
-.run-chip-id { color: var(--muted-foreground); }
+.run-chip-on .run-chip-id { color: var(--muted-foreground); }
 
-/* Where the run has got to: a mark, and the name of the thing doing the work. */
+.stagebar-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  margin-left: auto;
+  flex: none;
+}
+
+.stagebar-disclose { flex: none; }
+
+.stagebar-icon {
+  width: var(--sz-icon-btn);
+  height: var(--sz-icon-btn);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.stagebar-icon:hover { background: var(--muted); color: var(--foreground); }
+.stagebar-icon svg { width: var(--sz-icon); height: var(--sz-icon); }
+
+/* Where the run has got to. The one live sentence in the bar. */
 .stagebar-position {
   display: inline-flex;
   align-items: center;
-  gap: var(--s-3q);
-  flex: none;
-  padding: var(--s-quarter) var(--s-2);
+  gap: var(--s-2);
+  height: var(--h-control);
+  padding-inline: var(--s-3);
   border: 1px solid var(--border);
-  border-radius: var(--r-pill);
+  border-radius: var(--r-md);
   font-size: var(--t-data);
+  color: var(--muted-foreground);
+  background: var(--surface-2);
   white-space: nowrap;
+  flex: none;
+  max-width: 40%;
 }
-.stagebar-position svg { width: var(--sz-icon); height: var(--sz-icon); flex: none; }
+.stagebar-position svg { width: var(--sz-icon-sm); height: var(--sz-icon-sm); flex: none; }
+
 .stagebar-position-name {
-  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 24ch;
+  white-space: nowrap;
+  color: var(--foreground);
 }
 .stagebar-position-time {
-  color: var(--muted-foreground);
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+  flex: none;
 }
+
+/* Stage progress, beside the stage name. Prose, so it is set in the UI face; only the
+   clock beside it is a measured value. */
+.stagebar-position-step {
+  color: var(--muted-foreground);
+  padding-left: var(--s-3);
+  border-left: 1px solid var(--border);
+  flex: none;
+}
+
 .stagebar-position.is-live {
-  border-color: var(--success);
-  background: color-mix(in oklab, var(--success) 11%, var(--card));
-  color: color-mix(in oklab, var(--success) 72%, var(--foreground));
+  background: var(--primary-soft);
+  border-color: var(--primary-border);
+  color: var(--primary);
 }
-.stagebar-position.is-done { background: var(--muted); color: var(--muted-foreground); }
+.stagebar-position.is-live .stagebar-position-name { color: var(--primary); }
+
+.stagebar-position.is-done {
+  background: var(--ok-soft);
+  border-color: var(--ok-border);
+  color: var(--ok);
+}
+.stagebar-position.is-done .stagebar-position-name { color: var(--ok); }
+
 .stagebar-position.is-failed {
-  border-color: var(--destructive);
-  background: color-mix(in oklab, var(--destructive) 6%, var(--card));
-  color: var(--destructive);
+  background: var(--danger-soft);
+  border-color: var(--danger-border);
+  color: var(--danger);
 }
+.stagebar-position.is-failed .stagebar-position-name { color: var(--danger); }
 
-.stagebar-tools { display: flex; align-items: center; gap: var(--s-3q); flex: none; margin-left: auto; }
-.stagebar-tools [data-slot="button"] { height: var(--h-control-sm); }
-.stagebar-scope {
-  color: var(--muted-foreground);
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--t-data);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 30ch;
-}
-.stagebar-icon { padding-inline: var(--s-3q); }
-/* Expand/collapse, resident rather than under View: it reads as the quiet instruction it is
-   until the pointer is on it, and it names the direction the canvas is about to move. */
-.stagebar-disclose {
-  gap: var(--s-half);
-  padding-inline: var(--s-1);
-  color: var(--muted-foreground);
-}
-.stagebar-disclose:hover { color: var(--primary); }
+/* ==========================================================================
+   6. Canvas
+   ========================================================================== */
 
-.graph-canvas {
+.graph-wrap {
   flex: 1;
   min-height: 0;
-  width: 100%;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: color-mix(in oklab, var(--background) 84%, var(--card));
-  box-shadow: inset 0 1px 0 color-mix(in oklab, var(--card) 92%, white);
-  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   position: relative;
+  background: var(--canvas);
+}
+
+.graph-wrap.is-graph-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+}
+
+.graph-canvas { flex: 1; min-height: 0; position: relative; }
+
+.react-flow__background-pattern { color: var(--canvas-dot); }
+
+.react-flow__attribution { display: none; }
+
+.react-flow__edge-path { stroke: var(--edge); stroke-width: 1.5; }
+.react-flow__edge.is-in-run .react-flow__edge-path { stroke: var(--edge-taken); stroke-width: 2; }
+.react-flow__edge.is-ghost .react-flow__edge-path {
+  stroke: var(--edge-ghost);
+  stroke-dasharray: 3 4;
+  opacity: 0.75;
+}
+.react-flow__handle {
+  width: 5px; height: 5px;
+  min-width: 0; min-height: 0;
+  background: var(--border-strong);
+  border: none;
+  opacity: 0;
+}
+
+.react-flow__node { cursor: pointer; }
+.react-flow__node:focus-visible { outline: none; }
+.react-flow__node:focus-visible .g-compact,
+.react-flow__node:focus-visible .g-card {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
 
 .graph-empty {
@@ -1325,1216 +795,1453 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--s-3q);
-  color: var(--foreground);
-  font-size: var(--t-body);
+  gap: var(--s-2);
+  font-size: var(--t-lead);
+  color: var(--muted-foreground);
   pointer-events: none;
-  z-index: 5;
 }
 
-/* Suspense fallback for the lazy-loaded graph chunk: a stable, labelled surface. */
 .graph-loading-surface {
   flex: 1;
-  min-width: 0;
-  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: color-mix(in oklab, var(--background) 84%, var(--card));
-  margin: var(--s-1) var(--s-2) var(--s-2);
+  background: var(--canvas);
 }
-.graph-loading-copy {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--s-half);
-}
-.graph-loading-title { color: var(--foreground); font-weight: 700; font-size: var(--t-body); }
-.graph-loading-note { color: var(--muted-foreground); font-size: var(--t-data); }
+.graph-loading-copy { display: flex; flex-direction: column; align-items: center; gap: var(--s-1); }
+.graph-loading-title { font-size: var(--t-body); color: var(--foreground); }
+.graph-loading-note { font-size: var(--t-data); color: var(--muted-foreground); }
 
-/* --- compact legend; kept outside the canvas so it never obscures the graph */
-/* The legend is reference, so it floats in the canvas corner rather than taking a band
-   under it. Three corners, one thing in each: legend here, zoom bottom-left, overview
-   bottom-right. */
+/* Canvas corners: legend top-left, zoom bottom-left, overview bottom-right. */
 .graph-legend {
   position: absolute;
-  z-index: 6;
-  top: 10px;
-  left: 10px;
-  width: 168px;
-  display: grid;
-  gap: var(--s-1);
-  padding: var(--s-1) var(--s-2) var(--s-1);
-  border: 1px solid var(--border);
-  border-radius: var(--r-node);
-  background: color-mix(in oklab, var(--card) 94%, transparent);
-  backdrop-filter: blur(3px);
-  color: var(--muted-foreground);
-  font-size: var(--t-data);
-}
-.graph-legend-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s-1); }
-.graph-legend-heading {
-  color: var(--foreground);
-  font-size: var(--t-label);
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-}
-.graph-legend-close {
-  margin-right: calc(var(--s-quarter) * -1);
-}
-.graph-legend-close svg { width: var(--sz-icon); height: var(--sz-icon); }
-.graph-legend-group {
-  display: grid;
-  gap: var(--s-quarter);
-}
-.graph-legend-title {
-  margin-bottom: var(--s-quarter);
-  font-size: var(--t-data);
-  letter-spacing: 0.02em;
-  color: var(--secondary-foreground);
-  font-weight: 700;
-}
-.graph-legend-row { display: flex; align-items: center; gap: var(--s-3q); white-space: nowrap; }
-.graph-legend-note {
-  margin: 0;
-  padding-top: var(--s-1);
-  border-top: 1px solid color-mix(in oklab, var(--border) 65%, transparent);
-  line-height: 1.4;
-  opacity: 0.85;
-}
-.legend-now { display: inline-block; width: 18px; height: var(--s-1); border: 1px solid var(--success); border-radius: var(--r-pill); background: color-mix(in oklab, var(--success) 17%, var(--card)); }
-.legend-edge {
-  display: inline-block;
-  width: 22px;
-  height: 0;
-  border-top-width: 2px;
-  border-top-style: solid;
-  border-radius: 0;
-}
-.legend-edge-data { border-top-color: var(--muted-foreground); }
-.legend-edge-branch { border-top-color: var(--route-selected); }
-.legend-edge-ghost { border-top-color: var(--route-possible); border-top-style: dashed; }
-.legend-edge-muted { border-top-color: var(--route-possible); border-top-style: dashed; opacity: 0.3; }
-.legend-work {
-  display: inline-block;
-  width: var(--s-1);
-  height: var(--s-1);
-  border-radius: 50%;
-}
-.legend-work-model { background: color-mix(in oklab, var(--primary) 74%, white); }
-.legend-work-code { background: var(--muted-foreground); }
-.legend-work-route { background: var(--caution); }
-
-/* --- drawer (right slide-over) --------------------------------------------- */
-/* The rail's content vocabulary. `drawer-*` names survive the drawer itself: the
-   activity and inspector panels are written in them, and renaming them would be a
-   rewrite of two files to say the same thing. */
-.drawer-section-title {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--s-1);
-  margin: var(--s-4) 0 var(--s-1);
-  color: var(--foreground);
-  font-size: var(--t-data);
-  font-weight: 700;
-  letter-spacing: 0.01em;
-}
-.drawer-section-title:first-of-type { margin-top: 0; }
-.drawer-section-title span { color: var(--muted-foreground); font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 400; }
-.drawer-empty { padding: var(--s-3q) var(--s-1); border-radius: var(--r-control); background: var(--muted); color: var(--muted-foreground); font-size: var(--t-data); }
-.drawer-item { padding: var(--s-3q) 0; border-bottom: 1px solid color-mix(in oklab, var(--border) 65%, transparent); }
-.drawer-item-row { display: flex; align-items: center; gap: var(--s-3q); min-width: 0; }
-.drawer-item-row [data-slot="badge"] { width: var(--sz-icon-btn); height: var(--sz-icon-btn); padding: 0; border-radius: var(--r-control); }
-.drawer-item-row [data-slot="badge"] svg { width: 11px; height: 11px; }
-.drawer-item-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--foreground); font-size: var(--t-data); font-weight: 600; }
-.drawer-item-id, .drawer-item-meta, .drawer-item-detail, .drawer-data-row { color: var(--muted-foreground); font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: var(--t-data); }
-.drawer-item-id, .drawer-item-meta { margin-left: auto; white-space: nowrap; }
-.drawer-item-detail { margin: var(--s-quarter) 0 0 calc(var(--sz-icon-btn) + var(--s-3q)); overflow-wrap: anywhere; }
-.drawer-badges { display: flex; flex-wrap: wrap; gap: var(--s-half); }
-.drawer-data-row { display: flex; align-items: baseline; gap: var(--s-half); padding: var(--s-half) 0; border-bottom: 1px solid color-mix(in oklab, var(--border) 45%, transparent); overflow-wrap: anywhere; }
-.drawer-data-row > span:nth-child(2) { color: var(--foreground); }
-.stage-tree-item { margin: var(--s-quarter) 0; }
-.stage-tree-children { margin: var(--s-half) 0 0 var(--s-1); padding-left: var(--s-2); border-left: 1px solid var(--border); }
-.activity-summary { display: flex; align-items: center; gap: var(--s-1); padding: var(--s-1); border-radius: var(--r-control); background: var(--muted); font-size: var(--t-data); }
-.status-spin { animation: status-spin 1.4s linear infinite; }
-@keyframes status-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) {
-  .rail, .rail-tab, .rail-strip-btn, .conn-chip { transition: none; }
-  .status-spin { animation: none; }
-  .g-profile .g-card { transition: none; }
-  /* ReactFlow animates "live" edges with a marching-steps dash; the running state
-     is still readable from the node's own status text and aria, so it stops moving. */
-  .react-flow__edge.animated .react-flow__edge-path { animation: none; }
-}
-
-/* Keyboard reach on every control the shell draws itself, as one ring. It is inset rather
-   than outward because the node toggles live inside cards with `overflow: hidden`, where an
-   outward ring is clipped to nothing — which is how three of these came to be unreachable
-   to the eye while still being focusable. */
-.rail-tab:focus-visible,
-.rail-strip-btn:focus-visible,
-.rail-collapse:focus-visible,
-.conn-chip:focus-visible,
-.run-chip:focus-visible,
-.ev-row:focus-visible,
-.graph-legend-close:focus-visible,
-.ev-detail-close:focus-visible,
-.chat-corpus-btn:focus-visible,
-.corpus-close:focus-visible,
-.chat-options > summary:focus-visible,
-.c-header-toggle:focus-visible,
-.c-header-inspect:focus-visible,
-.c-step-toggle:focus-visible,
-.g-chip-toggle:focus-visible,
-.graph-canvas .react-flow__controls-button:focus-visible,
-[data-slot="button"]:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
-/* Full-width rows tint as well as ring: the ring alone reads as a border on a list item. */
-.chat-preset:focus-visible,
-.corpus-row:focus-visible,
-.corpus-group-btn:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; background: var(--muted); }
-
-/* --- inspected node detail (inspector drawer header) ------------------------ */
-.inspected {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: var(--s-1);
-  margin-bottom: var(--s-1);
-  background: color-mix(in oklab, var(--primary) 6%, transparent);
-}
-.inspected-kind {
-  font-size: var(--t-label);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted-foreground);
-}
-/* The inspector answers one question — what is this node — so the node's name is the
-   title of the panel, not another line of metadata the same size as its own timings. */
-.inspected-label { color: var(--foreground); font-weight: 600; font-size: var(--t-title); letter-spacing: -0.015em; line-height: 1.25; margin: var(--s-quarter) 0 var(--s-half); }
-.inspected-meta { color: var(--muted-foreground); font-size: var(--t-data); }
-.inspected-json {
-  margin: var(--s-3q) 0 0;
-  padding: var(--s-3q) var(--s-1);
-  background: var(--background);
-  border-radius: var(--r-control);
-  font-size: var(--t-data);
-  overflow: auto;
-  color: var(--muted-foreground);
-  max-height: 180px;
-}
-
-/* --- event log (the rail's last tab) -------------------------------------- */
-.eventlog {
-  flex: 1;
-  min-height: 0;
+  top: var(--s-4);
+  left: var(--s-4);
+  z-index: 10;
+  width: 190px;
+  padding: var(--s-4);
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  gap: var(--s-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-md);
 }
-.eventlog-bar {
-  flex: none;
+
+.graph-legend-head { display: flex; align-items: center; justify-content: space-between; }
+.graph-legend-heading { font-size: var(--t-data); font-weight: 600; }
+.graph-legend-close {
+  width: 20px; height: 20px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: var(--r-sm);
+  background: transparent; color: var(--muted-foreground); cursor: pointer;
+}
+.graph-legend-close:hover { background: var(--muted); color: var(--foreground); }
+.graph-legend-close svg { width: var(--sz-icon-sm); height: var(--sz-icon-sm); }
+
+.graph-legend-group { display: flex; flex-direction: column; gap: var(--s-2); }
+
+.graph-legend-row {
   display: flex;
   align-items: center;
-  gap: var(--s-1);
-  padding: var(--s-1);
-  border-bottom: 1px solid var(--border);
+  gap: var(--s-3);
+  font-size: var(--t-data);
+  color: var(--secondary-foreground);
 }
-.eventlog-bar [data-slot="button"] { height: var(--h-control-sm); flex: none; }
-.eventlog-volume {
-  min-width: 0;
+
+.graph-legend-note {
+  margin: 0;
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--border);
+  font-size: var(--t-data);
   color: var(--muted-foreground);
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.legend-edge { width: 18px; height: 0; border-top: 2px solid var(--edge); flex: none; }
+.legend-edge-data { border-top-style: solid; border-color: var(--edge); }
+.legend-edge-branch { border-color: var(--edge-taken); }
+.legend-edge-ghost { border-top-style: dashed; border-color: var(--edge-ghost); }
+
+.legend-now {
+  width: 10px; height: 10px; flex: none;
+  border-radius: var(--r-pill);
+  background: var(--primary);
+}
+
+.legend-work { width: 10px; height: 10px; flex: none; border-radius: 3px; }
+.legend-work-model { background: var(--primary); }
+.legend-work-code { background: var(--g-500); }
+.legend-work-route { background: var(--warn); }
+
+.graph-legend-row .g-glyph { width: 10px; height: 10px; border-radius: var(--r-pill); flex: none; }
+.graph-legend-row .g-glyph.ok { background: var(--ok); }
+.graph-legend-row .g-glyph.err { background: var(--danger); }
+.graph-legend-row .g-glyph.faint { background: var(--g-300); }
+
+.graph-minimap {
+  position: absolute;
+  right: var(--s-4);
+  bottom: var(--s-4);
+  z-index: 10;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md);
+  padding: var(--s-2);
+}
+.graph-minimap-node { fill: var(--g-300); }
+.graph-minimap-node.is-traversed { fill: var(--primary); }
+.graph-minimap-node.is-muted { fill: var(--border); }
+.graph-minimap-viewport { fill: none; stroke: var(--foreground); stroke-width: 1.5; opacity: 0.5; }
+
+/*
+ * @xyflow's stylesheet ships inside the lazy PipelineGraph chunk, so it is injected
+ * AFTER this file and wins every tie on equal specificity. Its controls are hard-coded
+ * near-white, which on the dark theme produced a white button strip with near-white
+ * icons — invisible. These selectors are deliberately over-qualified to outrank it;
+ * that is the reason for the extra `.graph-canvas`, not an accident.
+ */
+.graph-canvas .react-flow__controls {
+  box-shadow: var(--shadow-md);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.graph-canvas .react-flow__controls-button {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  color: var(--secondary-foreground);
+  width: 26px; height: 26px;
+}
+.graph-canvas .react-flow__controls-button:last-child { border-bottom: none; }
+.graph-canvas .react-flow__controls-button:hover { background: var(--muted); }
+.graph-canvas .react-flow__controls-button svg { fill: currentColor; }
+.graph-canvas .react-flow__controls-button:disabled { opacity: 0.4; }
+
+/* ==========================================================================
+   7. Compact workflow card
+   --------------------------------------------------------------------------
+   LAYOUT CONTRACT throughout: heights here are mirrored as constants in
+   lib/graph/core.ts and the canvas is laid out from those numbers, not measured.
+   ========================================================================== */
+
+.g-compact {
+  width: 360px;                      /* LAYOUT CONTRACT: COMPACT_W */
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.g-compact:hover { box-shadow: var(--shadow-md); }
+
+/* A route card runs inside a workflow, so it is recessed rather than lifted. */
+.g-compact.is-route {
+  background: var(--surface-2);
+  box-shadow: none;
+}
+
+/* A workflow the run did not take keeps its row in the catalogue, quietly. */
+.g-compact.is-muted { opacity: 0.6; }
+.g-compact.is-muted:hover { opacity: 1; }
+
+.g-compact.is-active { border-color: var(--primary-border); }
+.g-compact.is-failed { border-color: var(--danger-border); }
+
+/* --- header: 38px LAYOUT CONTRACT (COMPACT_HEADER_H) --- */
+.c-header {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding-inline: var(--s-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  min-width: 0;
+}
+.g-compact.is-route .c-header { background: var(--surface-2); }
+.g-compact.is-collapsed .c-header { border-bottom: none; }
+
+.c-header-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px; height: 14px;
+  flex: none;
+  color: var(--muted-foreground);
+}
+.c-header-glyph svg { width: 13px; height: 13px; }
+.is-active > .c-header .c-header-glyph { color: var(--primary); }
+.is-done > .c-header .c-header-glyph { color: var(--ok); }
+.is-failed > .c-header .c-header-glyph { color: var(--danger); }
+
+.c-header-label {
+  font-size: var(--t-body);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.c-header-cont {
+  font-size: var(--t-label);
+  color: var(--muted-foreground);
+  flex: none;
+}
+
+/* Only a state an operator can act on earns a word. */
+.c-header-status {
+  font-size: var(--t-label);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 1px var(--s-2);
+  border-radius: var(--r-sm);
+  flex: none;
+  margin-left: auto;
+}
+.is-active > .c-header .c-header-status { background: var(--primary-soft); color: var(--primary); }
+.is-failed > .c-header .c-header-status { background: var(--danger-soft); color: var(--danger); }
+
+.c-header-summary {
+  font-size: var(--t-data);
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  flex: none;
+  margin-left: auto;
+}
+
+.c-header-time {
+  font-family: var(--font-mono);
   font-size: var(--t-data);
   font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+  flex: none;
+}
+
+.c-header-toggle,
+.c-header-inspect {
+  width: 20px; height: 20px;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: none;
+  border: none; border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.c-header-toggle:hover,
+.c-header-inspect:hover { background: var(--muted); color: var(--foreground); }
+.c-header-inspect svg { width: var(--sz-icon-sm); height: var(--sz-icon-sm); }
+
+/* --- progress: 3px LAYOUT CONTRACT (COMPACT_PROGRESS_H) --- */
+.c-progress {
+  height: 3px;
+  background: var(--muted);
+  overflow: hidden;
+}
+.c-progress-empty { background: var(--muted); }
+
+.c-progress-fill {
+  height: 100%;
+  width: 100%;
+  transform-origin: left center;
+  background: var(--ok);
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.c-progress-active { background: var(--primary); }
+.is-failed .c-progress-fill { background: var(--danger); }
+
+/* --- terminals: 28px LAYOUT CONTRACT (COMPACT_TERMINAL_H) --- */
+.c-terminal {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding-inline: var(--s-4);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--t-data);
+  min-width: 0;
+}
+.c-terminal:last-child { border-bottom: none; border-top: 1px solid var(--border); }
+
+.c-terminal-icon { color: var(--muted-foreground); flex: none; }
+.c-terminal-label {
+  font-size: var(--t-label);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  flex: none;
+}
+.c-terminal-meta {
+  font-family: var(--font-mono);
+  font-size: var(--t-data);
+  color: var(--muted-foreground);
+  margin-left: auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.eventlog-jump { margin-left: auto; }
-.eventlog-list { flex: 1; min-height: 0; overflow: auto; }
-.eventlog-empty {
-  margin: var(--s-1);
-  padding: var(--s-1);
-  border-radius: var(--r-control);
-  background: var(--muted);
-  color: var(--muted-foreground);
-  font-size: var(--t-data);
-  line-height: 1.45;
-}
-.ev-row {
+
+/* --- route note: 22px LAYOUT CONTRACT (COMPACT_ROUTE_NOTE_H) --- */
+.c-route-note {
+  min-height: 22px;
   display: flex;
   align-items: center;
-  gap: var(--s-1);
-  width: 100%;
-  min-width: max-content;
-  min-height: var(--h-control-sm);
-  padding: var(--s-quarter) var(--s-1);
-  border: 0;
-  background: transparent;
-  font-family: inherit;
-  text-align: left;
-  cursor: pointer;
+  padding-inline: var(--s-4);
+  font-size: var(--t-data);
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ev-row:hover, .ev-pinned { background: var(--muted); }
-.ev-time, .ev-id {
+
+/* --- steps --- */
+.c-steps { display: flex; flex-direction: column; }
+
+.c-step { border-bottom: 1px solid var(--border); }
+.c-step:last-child { border-bottom: none; }
+
+/* 36px LAYOUT CONTRACT (COMPACT_STEP_H) */
+.c-step-main {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding-inline: var(--s-4);
+  min-width: 0;
+}
+
+.c-step-num {
+  font-family: var(--font-mono);
+  font-size: var(--t-label);
+  font-variant-numeric: tabular-nums;
+  color: var(--faint-foreground);
+  width: 13px;
   flex: none;
+  text-align: right;
+}
+
+.c-step-status {
+  width: 14px; height: 14px;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: none;
+  color: var(--g-300);
+}
+.c-step-status svg { width: 12px; height: 12px; }
+.c-step.is-active .c-step-status { color: var(--primary); }
+.c-step.is-done .c-step-status { color: var(--ok); }
+.c-step.is-failed .c-step-status { color: var(--danger); }
+
+.c-step-label {
+  font-size: var(--t-body);
+  color: var(--foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.c-step.is-idle .c-step-label { color: var(--muted-foreground); }
+.c-step.is-active .c-step-label { font-weight: 500; }
+
+.c-step-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-left: auto;
+  flex: none;
+}
+
+.c-step-profile {
+  font-family: var(--font-mono);
+  font-size: var(--t-data);
   color: var(--muted-foreground);
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.c-step-time {
+  font-family: var(--font-mono);
   font-size: var(--t-data);
   font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
 }
-/* The kind is what you scan the log for, so it carries the event's own hue. */
-.ev-kind { flex: none; font-size: var(--t-data); font-weight: 600; }
-.ev-detail { flex: none; max-height: 180px; overflow: auto; border-top: 1px solid var(--border); background: var(--background); }
+
+.c-step-toggle {
+  width: 18px; height: 18px;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: none;
+  border: none; border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.c-step-toggle:hover { background: var(--muted); color: var(--foreground); }
+
+/* 27px LAYOUT CONTRACT (COMPACT_ROUTER_H) */
+.c-step-router-info {
+  min-height: 27px;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding-left: 45px;
+  padding-right: var(--s-4);
+  font-size: var(--t-data);
+  color: var(--muted-foreground);
+  min-width: 0;
+}
+.c-step-router-info svg { width: 11px; height: 11px; flex: none; }
+
+.c-step-route-label {
+  font-size: var(--t-label);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  flex: none;
+}
+
+.c-step-chosen {
+  font-family: var(--font-mono);
+  font-size: var(--t-data);
+  font-weight: 500;
+  color: var(--foreground);
+  padding: 0 var(--s-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.c-step-conf,
+.c-step-rule {
+  font-size: var(--t-data);
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.c-step-rule { margin-left: auto; flex: none; }
+
+/* --- stages --- */
+/* LAYOUT CONTRACT: 2px top + 6px bottom pad + 4px margin = COMPACT_STAGES_EXTRAS_H (12) */
+.c-stages {
+  padding-top: 2px;
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+  margin-left: 45px;
+  margin-right: var(--s-4);
+  border-left: 1px solid var(--border);
+}
+
+/* 20px LAYOUT CONTRACT (COMPACT_STAGE_H): 2px pad top/bottom + 16px line */
+.c-stage {
+  min-height: 20px;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 2px 0 2px var(--s-3);
+  line-height: 16px;
+  font-size: var(--t-data);
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.c-stage-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 11px; height: 11px;
+  flex: none;
+  color: var(--faint-foreground);
+}
+.c-stage.is-active .c-stage-glyph { color: var(--primary); }
+.c-stage.is-done .c-stage-glyph { color: var(--ok); }
+.c-stage.is-failed .c-stage-glyph { color: var(--danger); }
+
+.c-stage-name {
+  color: var(--secondary-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.c-stage.is-idle .c-stage-name { color: var(--muted-foreground); }
+
+.c-stage-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-left: auto;
+  flex: none;
+  font-family: var(--font-mono);
+  color: var(--muted-foreground);
+}
+.c-stage-llm { overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+.c-stage-time { font-variant-numeric: tabular-nums; }
+
+.c-empty {
+  padding: var(--s-4);
+  font-size: var(--t-data);
+  color: var(--muted-foreground);
+}
+.c-empty-reason { font-style: normal; }
+
+/* ==========================================================================
+   8. Expanded graph nodes
+   ========================================================================== */
+
+/*
+ * Every node in this family renders as a bare positioning wrapper around one `.g-card`:
+ *   <div class="g-gateway"><div class="g-card"> … </div></div>
+ * The wrapper is structure and the card is the only thing with chrome. Styling both — as
+ * an earlier pass here did — gives each node two borders and two paddings, and because
+ * `lib/graph/core.ts` LAYS THE CANVAS OUT FROM FIXED HEIGHTS rather than measuring the
+ * DOM, the extra pixels do not push siblings down. They overlap them. A gateway that
+ * should stand 76px tall measured 136 and printed itself over the workflow card beneath.
+ *
+ * So: wrappers carry no paint, cards fit inside the height core.ts reserved for them, and
+ * `overflow: hidden` on the card keeps any future overrun inside its own box instead of
+ * on top of a neighbour.
+ */
+.g-step, .g-stage, .g-route, .g-input, .g-output, .g-gateway, .g-profile {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+}
+
+.g-card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
+  padding: var(--s-2) var(--s-4);
+  font-size: var(--t-data);
+  min-width: 0;
+}
+
+/* A branch is a chip, not a card: the pill shape is the whole point of it. */
+.g-card.g-chip {
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--s-2);
+  padding: 0 var(--s-3);
+  border-radius: var(--r-pill);
+}
+
+.g-card.is-active { border-color: var(--primary-border); }
+.g-card.is-failed { border-color: var(--danger-border); }
+.g-card.g-muted-path { opacity: 0.6; }
+.g-card.g-current { border-color: var(--primary); }
+
+/* The routing decision is one sentence on one line. Stacked — which is what it did before
+   this rule, since Tailwind's preflight makes every `svg` a block — it also ran the
+   confidence and the rule-vs-model verdict together into "100% confidencerule". */
+.g-decide {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+  white-space: nowrap;
+}
+.g-decide svg { width: 11px; height: 11px; flex: none; color: var(--muted-foreground); }
+/* The chosen workflow is a name the reader reads, not a digest they compare, so it is set
+   in the interface face and carries its weight instead. */
+.g-decide .g-route-line {
+  font-weight: 500;
+  color: var(--foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.g-decide .g-rule-vs { margin-left: auto; flex: none; }
+
+.g-title {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--t-body);
+  font-weight: 600;
+  color: var(--foreground);
+  min-width: 0;
+}
+
+.g-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.g-meta, .g-detail, .g-prof, .g-shape, .g-conf, .g-rule-vs, .g-transfer, .g-entry-tag {
+  font-size: var(--t-data);
+  color: var(--muted-foreground);
+}
+
+/*
+ * Monospace is for identifiers, digests, timings and token counts — things that get
+ * compared character by character. It is NOT a texture meaning "technical".
+ *
+ * `.g-meta` was in this list and it carries the router card's explanatory line ("1
+ * workflow · default: clinical-verified"), so an English sentence was being set in mono
+ * purely for flavour. On a surface whose audience was defined as wanting to see the
+ * machinery WITHOUT reading JSON, that is the costume working against the brief.
+ */
+.g-time, .g-profile, .g-entry-tag {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.g-time { font-size: var(--t-data); color: var(--muted-foreground); }
+
+.g-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  color: var(--muted-foreground);
+}
+.g-glyph.ok { color: var(--ok); }
+.g-glyph.err { color: var(--danger); }
+.g-glyph.faint { color: var(--g-300); }
+
+.g-err-text { color: var(--danger); font-size: var(--t-data); }
+
+.g-now { color: var(--primary); }
+
+.g-terminal-icon { color: var(--muted-foreground); }
+
+.g-work-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  padding: 1px var(--s-2);
+  border-radius: var(--r-sm);
+  font-size: var(--t-label);
+  font-weight: 600;
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+
+.g-route-label, .g-route-plan, .g-group-label, .g-decide {
+  font-size: var(--t-data);
+  color: var(--muted-foreground);
+}
+
+.g-route-line { display: flex; align-items: center; gap: var(--s-2); }
+
+.g-group {
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+  box-shadow: none;
+}
+.g-group-current { border-color: var(--primary-border); background: var(--primary-soft); }
+
+.g-chip-wrap { display: flex; align-items: center; gap: var(--s-2); }
+
+.g-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: 24px;
+  padding-inline: var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  font-size: var(--t-data);
+  color: var(--secondary-foreground);
+  white-space: nowrap;
+}
+.g-chip-dot { width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--g-500); flex: none; }
+.g-chip-meta { font-family: var(--font-mono); color: var(--muted-foreground); }
+.g-chip-copy, .g-chip-toggle {
+  width: 18px; height: 18px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: var(--r-sm);
+  background: transparent; color: var(--muted-foreground); cursor: pointer;
+}
+.g-chip-copy:hover, .g-chip-toggle:hover { background: var(--muted); color: var(--foreground); }
+
+.g-chev { color: var(--muted-foreground); }
+
+.g-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px;
+  border: none; border-radius: var(--r-sm);
+  background: transparent; color: var(--muted-foreground); cursor: pointer;
+}
+.g-toggle:hover { background: var(--muted); color: var(--foreground); }
+
+.g-profile-route { font-family: var(--font-mono); font-size: var(--t-data); color: var(--muted-foreground); }
+
+.g-router { border-color: var(--warn-border); }
+
+/* ==========================================================================
+   9. Rail
+   ========================================================================== */
+
+.rail {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+}
+
+body.is-rail-resizing { cursor: col-resize; user-select: none; }
+body.is-rail-resizing .rail { transition: none; }
+
+.rail-grip {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  z-index: 5;
+  cursor: col-resize;
+  background: transparent;
+}
+.rail-grip:hover, .rail-grip:focus-visible { background: var(--primary); opacity: 0.35; outline: none; }
+
+.rail-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: var(--h-topbar);
+  flex: none;
+  padding-inline: var(--s-3);
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+
+.rail-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: var(--h-control);
+  padding-inline: var(--s-2);
+  border: none;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: var(--t-data);
+  cursor: pointer;
+  min-width: 0;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.rail-tab svg { width: var(--sz-icon); height: var(--sz-icon); flex: none; }
+.rail-tab span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-tab:hover { background: var(--muted); color: var(--foreground); }
+
+.rail-tab.is-on {
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 500;
+}
+
+/*
+ * Every tab keeps its label at every width this surface ships at.
+ *
+ * An earlier pass folded the unselected tabs to bare glyphs below 1400px, which put
+ * `SquareDashedMousePointer` alone in a rail and expected a non-engineer to read
+ * "Inspector" off it — and dropped the feed count, the one number that says whether the
+ * log is worth opening. The rail's own minimum is 280px and four labelled tabs fit inside
+ * it, so the fold bought nothing and cost the audience the product is for. `aria-label`
+ * still carries the name for the collapsed icon strip, which genuinely has no room.
+ */
+
+.rail-tab-count {
+  font-family: var(--font-mono);
+  font-size: var(--t-label);
+  font-variant-numeric: tabular-nums;
+  padding: 0 var(--s-1);
+  border-radius: var(--r-sm);
+  background: var(--muted);
+  color: var(--muted-foreground);
+  flex: none;
+}
+.rail-tab.is-on .rail-tab-count { background: var(--surface); color: var(--primary); }
+
+.rail-collapse {
+  width: var(--sz-icon-btn);
+  height: var(--sz-icon-btn);
+  display: inline-flex; align-items: center; justify-content: center;
+  margin-left: auto;
+  flex: none;
+  border: none; border-radius: var(--r-md);
+  background: transparent; color: var(--muted-foreground); cursor: pointer;
+}
+.rail-collapse:hover { background: var(--muted); color: var(--foreground); }
+.rail-collapse svg { width: var(--sz-icon); height: var(--sz-icon); }
+
+.rail-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.rail-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-5); }
+.rail-hint { margin: 0 0 var(--s-4); font-size: var(--t-data); color: var(--muted-foreground); }
+
+.rail-strip {
+  width: var(--w-rail-strip);
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-1);
+  padding-top: var(--s-3);
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+}
+
+.rail-strip-btn {
+  width: 32px; height: 32px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: var(--r-md);
+  background: transparent; color: var(--muted-foreground); cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.rail-strip-btn:hover { background: var(--muted); color: var(--foreground); }
+.rail-strip-btn svg { width: 16px; height: 16px; }
+
+/* Below 900px the rail floats over the canvas rather than taking width from it. */
+@media (max-width: 899px) {
+  .workspace.is-rail-overlay { position: relative; }
+  .workspace.is-rail-overlay .rail {
+    position: absolute;
+    right: 0; top: 0; bottom: 0;
+    z-index: 30;
+    box-shadow: var(--shadow-lg);
+  }
+}
+
+/* ==========================================================================
+   10. Run panel
+   ========================================================================== */
+
+.runpanel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+.chat-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--s-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+/* No transcript yet: take no height at all, so the empty state owns the whole column and
+   its centring lands in the middle of the rail rather than the middle of half of it. */
+.chat-scroll.is-idle { flex: 0 0 auto; padding: 0; }
+
+.chat-msg {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+  font-size: var(--t-data);
+}
+
+.chat-msg-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--t-label);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.chat-msg-input {
+  background: var(--primary-soft);
+  border-color: var(--primary-border);
+}
+
+.chat-msg-profile {
+  font-family: var(--font-mono);
+  font-size: var(--t-data);
+  color: var(--muted-foreground);
+}
+
+.chat-msg-status {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--t-data);
+  color: var(--muted-foreground);
+}
+.chat-msg-status svg { width: var(--sz-icon-sm); height: var(--sz-icon-sm); }
+.chat-msg-status-wait { color: var(--muted-foreground); }
+
+.chat-msg-pending { color: var(--primary); }
+.chat-msg-error { color: var(--danger); border-color: var(--danger-border); background: var(--danger-soft); }
+.chat-msg-ending { color: var(--muted-foreground); }
+
+.chat-msg-result,
+.chat-msg-log-text {
+  font-family: var(--font-mono);
+  font-size: var(--t-data);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  padding: var(--s-3);
+  border-radius: var(--r-md);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  max-height: 280px;
+  overflow: auto;
+}
+
+.chat-msg-steps { display: flex; flex-direction: column; gap: var(--s-1); }
+
+.chat-msg-log { display: flex; flex-direction: column; gap: var(--s-2); }
+.chat-msg-log-head { display: flex; align-items: center; gap: var(--s-2); }
+.chat-msg-log-body { display: flex; flex-direction: column; gap: var(--s-2); }
+.chat-msg-log-actions { display: flex; gap: var(--s-2); }
+
+.chat-foot {
+  flex: none;
+  padding: var(--s-4);
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.chat-textarea {
+  width: 100%;
+  min-height: 78px;
+  max-height: 220px;
+  resize: vertical;
+  padding: var(--s-3);
+  border: 1px solid var(--input);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--foreground);
+  font-size: var(--t-body);
+  line-height: 1.5;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.chat-textarea::placeholder { color: var(--muted-foreground); }
+.chat-textarea:focus {
+  outline: none;
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 18%, transparent);
+}
+
+.chat-foot-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+.chat-options { display: flex; flex-direction: column; gap: var(--s-2); }
+.chat-options-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+
+.chat-select {
+  height: var(--h-control);
+  padding-inline: var(--s-2);
+  border: 1px solid var(--input);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--foreground);
+  font-size: var(--t-data);
+  cursor: pointer;
+}
+
+/* The empty state owns the column and sits in the middle of it. */
+.chat-empty {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-block: var(--s-6);
+}
+
+.chat-presets {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-4);
+  max-width: 34ch;
+}
+.chat-presets-note { font-size: var(--t-data); color: var(--muted-foreground); margin: 0; line-height: 1.55; }
+
+.chat-empty-live {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  padding: var(--s-3);
+  border: 1px solid var(--primary-border);
+  border-radius: var(--r-md);
+  background: var(--primary-soft);
+  font-size: var(--t-data);
+  color: var(--secondary-foreground);
+  line-height: 1.5;
+}
+.chat-empty-live svg { width: var(--sz-icon); height: var(--sz-icon); flex: none; color: var(--primary); margin-top: 1px; }
+.chat-empty-live b { font-weight: 600; color: var(--foreground); }
+
+/*
+ * These two are plain `<button>`s rather than the Button primitive, so nothing gives them
+ * a flex context — and Tailwind's preflight sets `svg { display: block }`, which put the
+ * folder icon on its own line above the label and turned both controls into tall squares.
+ * Any hand-rolled control holding an icon beside text needs this explicitly.
+ */
+.chat-preset,
+.chat-corpus-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: var(--h-control);
+  padding-inline: var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  font-size: var(--t-data);
+  color: var(--secondary-foreground);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.chat-preset:hover,
+.chat-corpus-btn:hover { background: var(--muted); border-color: var(--border-strong); }
+
+.chat-preset svg,
+.chat-corpus-btn svg { width: var(--sz-icon); height: var(--sz-icon); flex: none; color: var(--muted-foreground); }
+
+.chat-corpus-btn { flex: none; }
+
+/* The empty state's one action reads as the primary thing on an otherwise blank panel. */
+.chat-preset.is-corpus {
+  height: var(--h-control-lg);
+  border-color: var(--primary-border);
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 500;
+}
+.chat-preset.is-corpus:hover { background: var(--primary-soft); border-color: var(--primary); }
+.chat-preset.is-corpus svg { color: currentColor; }
+
+/* Routing disclosure: a <details>, so the marker and the summary need building by hand. */
+.chat-options > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: var(--h-control);
+  padding-inline: var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  font-size: var(--t-data);
+  color: var(--secondary-foreground);
+  cursor: pointer;
+  list-style: none;
+  white-space: nowrap;
+}
+.chat-options > summary::-webkit-details-marker { display: none; }
+.chat-options > summary::before {
+  content: "";
+  width: 0; height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  color: var(--muted-foreground);
+  transition: transform 0.15s ease;
+}
+.chat-options[open] > summary::before { transform: rotate(90deg); }
+.chat-options > summary:hover { background: var(--muted); border-color: var(--border-strong); }
+
+/* Run-detail and run-log disclosures inside a message. */
+.chat-msg details > summary {
+  cursor: pointer;
+  font-size: var(--t-data);
+  color: var(--muted-foreground);
+  list-style: none;
+}
+.chat-msg details > summary::-webkit-details-marker { display: none; }
+.chat-msg details > summary:hover { color: var(--foreground); }
+
+.chat-loaded {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--primary-border);
+  border-radius: var(--r-md);
+  background: var(--primary-soft);
+  font-size: var(--t-data);
+  min-width: 0;
+}
+.chat-loaded-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-loaded-meta { font-family: var(--font-mono); color: var(--muted-foreground); margin-left: auto; flex: none; }
+
+.chat-scroll-actions { display: flex; gap: var(--s-2); }
+
+/* ==========================================================================
+   11. Corpus picker
+   ========================================================================== */
+
+.corpus {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+}
+
+/* Relative so the search glyph, which is absolutely positioned, lands on the field
+   rather than in the corner of the panel. */
+.corpus-head {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  height: var(--h-topbar);
+  padding-inline: var(--s-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.corpus-search {
+  flex: 1;
+  height: var(--h-control);
+  padding-left: 28px;
+  padding-right: var(--s-3);
+  border: 1px solid var(--input);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  font-size: var(--t-data);
+  min-width: 0;
+}
+.corpus-search:focus {
+  outline: none;
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 18%, transparent);
+}
+.corpus-search-icon { color: var(--muted-foreground); pointer-events: none; }
+
+.corpus-close {
+  width: var(--sz-icon-btn); height: var(--sz-icon-btn);
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: none;
+  border: none; border-radius: var(--r-md);
+  background: transparent; color: var(--muted-foreground); cursor: pointer;
+}
+.corpus-close:hover { background: var(--muted); color: var(--foreground); }
+
+.corpus-list { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-3); }
+
+.corpus-group-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border: none;
+  border-radius: var(--r-md);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: var(--foreground);
+}
+.corpus-group-btn:hover { background: var(--muted); }
+
+.corpus-caret { color: var(--muted-foreground); flex: none; }
+.corpus-group-name { font-size: var(--t-body); font-weight: 500; }
+.corpus-group-kind { font-size: var(--t-label); color: var(--muted-foreground); text-transform: uppercase; letter-spacing: 0.04em; }
+.corpus-group-count { margin-left: auto; font-family: var(--font-mono); font-size: var(--t-data); color: var(--muted-foreground); }
+
+.corpus-row {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s-2) var(--s-3) var(--s-2) var(--s-6);
+  border: none;
+  border-radius: var(--r-md);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: var(--foreground);
+}
+.corpus-row:hover { background: var(--muted); }
+
+.corpus-row-head { display: flex; align-items: center; gap: var(--s-2); min-width: 0; }
+.corpus-row-glyph { color: var(--muted-foreground); flex: none; }
+.corpus-row-name { font-size: var(--t-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.corpus-row-meta { margin-left: auto; font-family: var(--font-mono); font-size: var(--t-data); color: var(--muted-foreground); flex: none; }
+.corpus-row-note { font-size: var(--t-data); color: var(--muted-foreground); padding-left: 20px; }
+
+.corpus-case { display: flex; flex-direction: column; gap: 2px; }
+.corpus-case-name { font-size: var(--t-body); }
+.corpus-case-meta { font-family: var(--font-mono); font-size: var(--t-data); color: var(--muted-foreground); }
+.corpus-case-note { font-size: var(--t-data); color: var(--muted-foreground); }
+.corpus-case-count { font-family: var(--font-mono); font-size: var(--t-data); color: var(--muted-foreground); }
+
+.corpus-foot {
+  flex: none;
+  padding: var(--s-3) var(--s-4);
+  border-top: 1px solid var(--border);
+  font-size: var(--t-data);
+  color: var(--muted-foreground);
+}
+.corpus-status { font-size: var(--t-data); color: var(--muted-foreground); padding: var(--s-4); }
+.corpus-error { font-size: var(--t-data); color: var(--danger); padding: var(--s-4); }
+.is-corpus { position: relative; }
+
+/* ==========================================================================
+   12. Activity / inspector
+   ========================================================================== */
+
+.activity-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  padding-bottom: var(--s-4);
+  margin-bottom: var(--s-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.activity-feed { display: flex; flex-direction: column; gap: var(--s-2); }
+
+.drawer-section-title { margin-bottom: var(--s-2); }
+
+.drawer-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  padding: var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+
+.drawer-item-row { display: flex; align-items: center; gap: var(--s-2); min-width: 0; }
+.drawer-item-name { font-size: var(--t-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drawer-item-id { font-family: var(--font-mono); font-size: var(--t-data); color: var(--faint-foreground); }
+.drawer-item-meta { font-family: var(--font-mono); font-size: var(--t-data); color: var(--muted-foreground); margin-left: auto; flex: none; }
+.drawer-item-detail { font-size: var(--t-data); color: var(--muted-foreground); }
+
+.drawer-badges { display: flex; flex-wrap: wrap; gap: var(--s-1); }
+.drawer-data-row { display: flex; align-items: center; gap: var(--s-2); font-size: var(--t-data); }
+
+.drawer-empty {
+  padding: var(--s-6) var(--s-4);
+  text-align: center;
+  font-size: var(--t-data);
+  color: var(--muted-foreground);
+}
+
+.inspected {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding-bottom: var(--s-4);
+  margin-bottom: var(--s-4);
+  border-bottom: 1px solid var(--border);
+}
+.inspected-kind {
+  font-size: var(--t-label);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.inspected-label { font-size: var(--t-lead); font-weight: 600; }
+.inspected-meta { font-family: var(--font-mono); font-size: var(--t-data); color: var(--muted-foreground); }
+.inspected-json {
+  font-family: var(--font-mono);
+  font-size: var(--t-data);
+  line-height: 1.6;
+  margin: var(--s-2) 0 0;
+  padding: var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-sunken);
+  max-height: 360px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.inspector-feed { display: flex; flex-direction: column; gap: var(--s-3); }
+
+.stage-tree-item { display: flex; align-items: center; gap: var(--s-2); font-size: var(--t-data); }
+.stage-tree-children { margin-left: var(--s-4); padding-left: var(--s-3); border-left: 1px solid var(--border); }
+
+/* ==========================================================================
+   13. Event log
+   ========================================================================== */
+
+/* `position: relative` is load-bearing, not cosmetic: `.eventlog-jump` anchors to it, and
+   without it the jump-to-latest button escapes to the viewport. */
+.eventlog { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
+
+.eventlog-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.eventlog-volume { font-family: var(--font-mono); font-size: var(--t-data); color: var(--muted-foreground); margin-left: auto; }
+
+/* The feed is filtered by something the operator did on the canvas, not in this panel, so
+   it says so here and can be undone here. */
+.eventlog-focus {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--primary-soft);
+  font-size: var(--t-data);
+  color: var(--secondary-foreground);
+  min-width: 0;
+}
+.eventlog-focus-label { flex: none; color: var(--muted-foreground); }
+.eventlog-focus-name {
+  font-weight: 500;
+  color: var(--foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.eventlog-focus-clear {
+  width: 18px; height: 18px;
+  display: inline-flex; align-items: center; justify-content: center;
+  margin-left: auto;
+  flex: none;
+  border: none; border-radius: var(--r-sm);
+  background: transparent; color: var(--muted-foreground); cursor: pointer;
+}
+.eventlog-focus-clear:hover { background: var(--surface); color: var(--foreground); }
+.eventlog-focus-clear svg { width: var(--sz-icon-sm); height: var(--sz-icon-sm); }
+
+.eventlog-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--s-2) 0;
+}
+
+.ev-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-3);
+  padding: 3px var(--s-4);
+  font-family: var(--font-mono);
+  font-size: var(--t-data);
+  line-height: 1.6;
+  cursor: pointer;
+}
+.ev-row:hover { background: var(--muted); }
+/* The tint is the whole signal. A 2px coloured stripe down the left of a list row was
+   doing the same job a second time, and a coloured left border above a hairline is a
+   card-accent tell this system does not use. */
+.ev-pinned { background: var(--primary-soft); }
+.ev-pinned .ev-kind { color: var(--primary); font-weight: 600; }
+
+.ev-time { color: var(--faint-foreground); flex: none; font-variant-numeric: tabular-nums; }
+.ev-kind { color: var(--primary); flex: none; }
+.ev-id { color: var(--muted-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.eventlog-empty {
+  padding: var(--s-6) var(--s-4);
+  text-align: center;
+  font-size: var(--t-data);
+  color: var(--muted-foreground);
+}
+
+.eventlog-jump {
+  position: absolute;
+  bottom: var(--s-4);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  box-shadow: var(--shadow-md);
+}
+
+.ev-detail {
+  flex: none;
+  max-height: 45%;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
 .ev-detail-head {
   position: sticky;
   top: 0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--s-1);
-  padding: var(--s-half) var(--s-1) var(--s-half) var(--s-1);
-  background: var(--background);
-  color: var(--primary);
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--t-data);
-}
-.ev-detail-close svg { width: var(--sz-icon); height: var(--sz-icon); }
-.ev-detail pre { margin: 0; padding: var(--s-quarter) var(--s-1) var(--s-1); font-size: var(--t-data); color: var(--muted-foreground); }
-
-/* --- narrow viewports ------------------------------------------------------ */
-@media (max-width: 899px) {
-  .topbar {
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: var(--s-3q) var(--s-1);
-    padding: var(--s-3q) var(--s-1);
-  }
-  /* The rack drops under the identity and wraps rather than squeezing its cells. */
-  .topbar-rack { grid-column: 1; grid-row: 2; justify-self: start; flex-wrap: wrap; }
-  .topbar .topbar-rack > * + * { margin-left: var(--s-1); padding-left: var(--s-1); }
-  .topbar-state { justify-content: flex-start; gap: var(--s-3q); }
-  .health-state { font-size: var(--t-data); }
-  .topbar-model { max-width: min(160px, 34vw); }
-  .topbar-error { max-width: min(160px, 34vw); }
-  .counter:first-child { padding-left: 0; }
-  .topbar-actions { grid-column: 2; grid-row: 2; padding-left: 0; border-left: 0; }
-  .topbar [data-slot="button"] { min-height: var(--h-touch); }
-  .conn-chip { max-width: 46vw; min-height: var(--h-touch); }
-  .run-chip { min-height: var(--h-touch); }
-  .stagebar { flex-wrap: wrap; gap: var(--s-1); }
-  .stagebar-runs { order: 2; width: 100%; }
-  .stagebar-tools { order: 1; }
-  .stagebar-scope { display: none; }
-  .graph-wrap { padding-left: var(--s-1); padding-right: var(--s-1); }
-  .graph-minimap { display: none; }
-  .graph-legend { display: none; }
-}
-
-/* --- graph nodes ------------------------------------------------------------ */
-.g-card {
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-half);
-  background: var(--card);
-  border: 1px solid var(--border-state);
-  border-radius: var(--r-node);
-  padding: var(--s-1) var(--s-2);
-  font-size: var(--t-data);
-  color: var(--foreground);
-  box-shadow: 0 7px 16px -17px oklch(30% 0.04 210 / 0.55);
-  position: relative;
-  overflow: hidden;
-}
-.g-card:hover { border-color: var(--ring); }
-.g-card.g-work-model { box-shadow: 0 7px 16px -17px oklch(30% 0.04 210 / 0.55), inset 0 3px 0 color-mix(in oklab, var(--primary) 68%, white); }
-.g-card.g-work-code { box-shadow: 0 7px 16px -17px oklch(30% 0.04 210 / 0.55), inset 0 3px 0 color-mix(in oklab, var(--muted-foreground) 62%, white); }
-.g-card.g-work-decision { box-shadow: 0 7px 16px -17px oklch(30% 0.04 210 / 0.55), inset 0 3px 0 var(--caution); }
-
-.g-active,
-.g-traversed,
-.g-done {
-  border-color: color-mix(in oklab, var(--success) 72%, var(--border));
-  background: color-mix(in oklab, var(--success) 10%, var(--card));
-  opacity: 1;
-}
-/* The second border pixel is taken out of the padding rather than added to the card, so a
-   node becoming current never nudges its own contents or outgrows the height `core.ts`
-   reserved for it. Derived from the card's padding so the two cannot drift apart. */
-.g-current {
-  border-color: var(--success);
-  border-width: 2px;
-  padding: calc(var(--s-1) - 1px) calc(var(--s-2) - 1px);
-  background: color-mix(in oklab, var(--success) 17%, var(--card));
-}
-.g-failed { border-color: color-mix(in oklab, var(--destructive) 48%, var(--border)); background: color-mix(in oklab, var(--destructive) 5%, var(--card)); }
-.g-idle { border-color: var(--border); }
-.g-card.g-idle { opacity: 0.72; }
-.g-card.g-muted-path {
-  opacity: 0.68;
-  filter: saturate(0.55);
-}
-
-.g-input .g-card { background: color-mix(in oklab, var(--primary) 8%, var(--card)); }
-.g-output .g-card { background: color-mix(in oklab, var(--success) 9%, var(--card)); }
-.g-router .g-card {
-  border-color: var(--caution);
-  background: color-mix(in oklab, var(--caution) 10%, var(--card));
-}
-.g-route .g-card { border-color: var(--caution); background: color-mix(in oklab, var(--caution) 10%, var(--card)); }
-
-.g-chip {
-  flex-direction: row;
-  align-items: center;
-  padding: var(--s-half) var(--s-1);
-  border-radius: var(--r-pill);
-  border-left-width: 1px;
-  font-size: var(--t-data);
-}
-.g-chip-copy { display: flex; flex-direction: column; min-width: 0; }
-.g-chip-meta {
-  color: var(--muted-foreground);
-  font-size: var(--t-data);
-  line-height: 1.25;
-}
-.g-chip-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--success);
-  flex: none;
-}
-.g-chip-toggle {
-  margin-left: auto;
-}
-.g-chip-toggle svg { width: 12px; height: 12px; }
-.g-profile .g-card {
-  min-height: 62px;
-  justify-content: center;
-  transition: opacity 180ms ease-out, filter 180ms ease-out, border-color 180ms ease-out, background-color 180ms ease-out;
-}
-.g-profile .g-card:has(.g-profile-route) {
-  border-color: var(--success);
-  background: var(--queued-surface);
-}
-.g-profile-route {
-  color: var(--success);
-  font-size: var(--t-data);
-  font-weight: 700;
-}
-.g-now {
-  position: absolute;
-  top: 0;
-  right: 0;
-  padding: var(--s-quarter) var(--s-3q) var(--s-quarter);
-  border-radius: 0 var(--r-control) 0 var(--r-control);
-  background: var(--primary);
-  color: var(--primary-foreground);
-  font-size: var(--t-data);
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  line-height: 1;
-}
-
-.g-step { width: 264px; }
-.g-stage { width: 248px; }
-.g-input, .g-output { width: 240px; }
-.g-chip-wrap { width: 168px; }
-.g-profile { width: 196px; }
-
-.g-title { display: flex; align-items: center; gap: var(--s-3q); min-width: 0; }
-.g-chev { display: inline-flex; color: var(--muted-foreground); flex: none; }
-.g-glyph { flex: none; width: 12px; display: inline-flex; align-items: center; justify-content: center; }
-.g-glyph svg { width: 11px; height: 11px; stroke-width: 2.2; }
-.run-chip svg { width: var(--sz-icon-sm); height: var(--sz-icon-sm); }
-.graph-legend .g-glyph { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-.g-glyph.ok { color: var(--success); }
-.g-glyph.info { color: var(--primary); }
-.g-glyph.err { color: var(--destructive); }
-.g-glyph.faint { color: var(--muted-foreground); opacity: 0.6; }
-.g-label {
-  font-weight: 600;
-  color: var(--foreground);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.g-work-badge {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--s-quarter);
-  flex: none;
-  padding: 0 var(--s-half);
-  border-radius: var(--r-control);
-  background: var(--muted);
-  color: var(--muted-foreground);
-  font-size: var(--t-data);
-  font-weight: 700;
-  line-height: 1.35;
-}
-.g-work-badge svg { width: 9px; height: 9px; }
-.g-work-badge-model { background: color-mix(in oklab, var(--primary) 9%, var(--card)); color: var(--primary); }
-.g-work-badge-code { background: color-mix(in oklab, var(--muted-foreground) 13%, var(--card)); color: var(--secondary-foreground); }
-.g-work-badge-decision { background: color-mix(in oklab, var(--caution) 22%, var(--card)); color: var(--ev-workflow); }
-.g-terminal-icon {
-  position: absolute;
-  right: 10px;
-  bottom: 8px;
-  width: 18px;
-  height: 18px;
-  color: var(--primary);
-  opacity: 0.22;
-}
-.g-entry-tag {
-  flex: none;
-  margin-left: auto;
-  padding: 0 var(--s-half);
-  border: 1px solid color-mix(in oklab, var(--primary) 58%, var(--border));
-  border-radius: var(--r-control);
-  background: var(--secondary);
-  color: var(--primary);
-  font-size: var(--t-data);
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  line-height: 1.2;
-}
-.g-meta {
-  font-size: var(--t-data);
-  color: var(--muted-foreground);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.g-prof { color: var(--secondary-foreground); }
-.g-time { color: var(--muted-foreground); opacity: 0.8; margin-left: var(--s-3q); }
-.g-refs { color: var(--primary); font-weight: 600; }
-.g-transfer {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: baseline;
-  gap: var(--s-3q);
-  color: var(--muted-foreground);
-  font-size: var(--t-data);
-}
-.g-transfer > span { font-weight: 700; }
-.g-transfer code {
-  overflow: hidden;
-  color: var(--primary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.g-detail {
-  font-size: var(--t-data);
-  color: var(--muted-foreground);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 100%;
-}
-.g-err-text { color: var(--destructive); }
-.g-shape {
-  color: var(--secondary-foreground);
-  border: 1px solid var(--border);
-  border-radius: var(--r-pill);
-  padding: 0 var(--s-3q);
-  font-size: var(--t-data);
-}
-.g-conf { color: var(--ev-workflow); font-weight: 700; }
-.g-decide {
-  display: flex;
-  align-items: center;
-  gap: var(--s-3q);
-  font-size: var(--t-data);
-  color: var(--muted-foreground);
-}
-.g-route-line { color: var(--success); font-weight: 700; }
-.g-route-plan {
-  display: flex;
-  align-items: center;
-  gap: var(--s-half);
-  min-width: 0;
-  color: var(--secondary-foreground);
-  font-size: var(--t-data);
-}
-.g-route-plan > span:first-child { color: var(--muted-foreground); font-weight: 700; }
-.g-route-plan b { margin-right: var(--s-half); color: var(--primary); }
-.g-rule-vs {
-  font-size: var(--t-data);
-  border: 1px solid var(--border);
-  border-radius: var(--r-pill);
-  padding: 0 var(--s-half);
-  color: var(--muted-foreground);
-}
-.g-toggle {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--s-quarter);
-  font-family: inherit;
-  font-size: var(--t-data);
-  color: var(--muted-foreground);
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: var(--r-control);
-  padding: 0 var(--s-3q);
-  cursor: pointer;
-  margin-top: var(--s-quarter);
-}
-.g-toggle:hover { color: var(--primary); border-color: var(--ring); }
-
-/* --- ReactFlow chrome --------------------------------------------------------- */
-.react-flow { background: transparent; }
-.react-flow__node { cursor: default; }
-/* `input` and `output` are custom node types here, but React Flow also ships
-   built-in styles under those type names. Reset that 150px box so our card is
-   the only visible surface and owns the complete focus/hit area. */
-.react-flow__node-input,
-.react-flow__node-output {
-  width: auto;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: inherit;
-  font-size: inherit;
-  text-align: inherit;
-}
-.react-flow__node-input.selectable:hover,
-.react-flow__node-input.selectable.selected,
-.react-flow__node-output.selectable:hover,
-.react-flow__node-output.selectable.selected {
-  box-shadow: none;
-}
-.react-flow__node-group {
-  pointer-events: none;
-  z-index: 0 !important;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
-.g-group {
-  box-sizing: border-box;
-  position: relative;
-  width: 100%;
-  height: 100%;
-  border: 1px solid color-mix(in oklab, var(--border) 82%, var(--primary));
-  border-radius: var(--r-surface);
-  background: color-mix(in oklab, var(--secondary) 34%, transparent);
-  padding: var(--s-3q) var(--s-1);
-}
-.g-group-label {
-  position: absolute;
-  top: 7px;
-  right: 10px;
-  display: block;
-  max-width: calc(50% - 14px);
-  color: var(--muted-foreground);
-  font-size: var(--t-label);
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  text-align: right;
-}
-.g-group-current {
-  border-color: color-mix(in oklab, var(--success) 72%, var(--border));
-  background: color-mix(in oklab, var(--success) 8%, transparent);
-}
-.react-flow__node:focus { outline: none; }
-.react-flow__node:focus-visible .g-card {
-  outline: 2px solid var(--ring);
-  outline-offset: 3px;
-}
-.react-flow__handle {
-  opacity: 0;
-  pointer-events: none;
-}
-
-.react-flow__controls {
-  box-shadow: none;
-  border: 1px solid var(--border);
-  border-radius: var(--r-control);
-  overflow: hidden;
-}
-/* React Flow ships these at its own 26px square with its own icon size. They sit in the
-   canvas corner beside controls this system draws, so they take the dense control height
-   and the shell's icon size rather than staying the one stock widget on the board. */
-/* Scoped to the canvas because React Flow's own sheet ships in the lazy graph chunk and
-   therefore lands after this file; at equal specificity its 26px square would win. */
-.graph-canvas .react-flow__controls-button {
-  width: var(--h-control-sm);
-  height: var(--h-control-sm);
-  padding: 0;
-  background: var(--card);
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  background: var(--surface-2);
   border-bottom: 1px solid var(--border);
-  color: var(--foreground);
-}
-.graph-canvas .react-flow__controls-button:last-child { border-bottom: 0; }
-.graph-canvas .react-flow__controls-button:hover { background: var(--muted); }
-.graph-canvas .react-flow__controls-button svg {
-  width: var(--sz-icon-sm);
-  height: var(--sz-icon-sm);
-  max-width: none;
-  max-height: none;
-  fill: var(--foreground);
-}
-
-.graph-minimap {
-  position: absolute;
-  right: 14px;
-  bottom: 14px;
-  z-index: 5;
-  width: 200px;
-  height: 150px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-control);
-  overflow: hidden;
-  /* The minimap sits on top of the board it describes, so it reads through rather than
-     occluding: at 94% opaque it buried whichever stage the layout happened to put here. */
-  background: color-mix(in oklab, var(--card) 78%, transparent);
-  backdrop-filter: blur(3px);
-  box-shadow: 0 9px 24px -20px oklch(30% 0.04 210 / 0.55);
-  cursor: crosshair;
-}
-.graph-minimap:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 3px;
-}
-/* non-scaling-stroke is required, not optional: the viewBox is in world units (~4000
-   wide into 200px), so a plain stroke-width would scale to roughly a twentieth of a pixel
-   and vanish. It does mean these widths are literal screen pixels — which is why 6 and 8
-   turned every thumbnail rect into a blob of ink and made the viewport frame the
-   highest-contrast object in the application. Screen pixels, so read them as such. */
-.graph-minimap-node {
-  stroke: var(--foreground);
-  stroke-width: 1px;
-  vector-effect: non-scaling-stroke;
-  opacity: 0.58;
-}
-.graph-minimap-node.is-traversed { stroke: var(--success); opacity: 1; }
-.graph-minimap-node.is-muted { opacity: 0.48; }
-.graph-minimap-viewport {
-  fill: var(--minimap-viewport);
-  stroke: var(--primary);
-  stroke-width: 1.5px;
-  vector-effect: non-scaling-stroke;
-  pointer-events: none;
-}
-.graph-wrap.is-graph-fullscreen .graph-minimap {
-  display: block;
-  width: 200px;
-  height: 150px;
-}
-
-@media (max-width: 700px) {
-  .graph-wrap.is-graph-fullscreen { padding: var(--s-1); }
-  .graph-wrap.is-graph-fullscreen .graph-minimap {
-    width: 152px;
-    height: 112px;
-  }
-}
-
-/* --- compact pipeline node --------------------------------------------------
-
-   Three tiers share one card grammar and are told apart by material, never by a
-   label: the workflow card is the lifted white surface that owns the document, a
-   route card is recessed into the canvas because it runs INSIDE that workflow, and
-   colour is reserved for work that actually happened. At rest the whole board is
-   paper and ink, so the first tint on it is information.
-
-   Row heights here are a layout contract: `core.ts` advances the deterministic
-   sibling layout by them and nothing measures the DOM first. Changing a min-height
-   below means changing its constant in the same edit. */
-.g-compact {
-  position: relative;
-  width: 360px;
-  box-sizing: border-box;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--r-node);
-  padding: 0;
   font-size: var(--t-data);
-  color: var(--foreground);
-  box-shadow: 0 8px 18px -16px oklch(30% 0.04 210 / 0.5);
-  overflow: hidden;
-  transition: border-color 180ms ease-out, background-color 180ms ease-out, box-shadow 180ms ease-out;
 }
-.g-compact:hover { border-color: var(--ring); }
-.g-compact.is-active {
-  border-color: color-mix(in oklab, var(--primary) 55%, var(--border));
-  box-shadow: 0 10px 22px -16px color-mix(in oklab, var(--primary) 45%, transparent);
-}
-.g-compact.is-done { border-color: color-mix(in oklab, var(--success) 45%, var(--border)); }
-.g-compact.is-failed { border-color: color-mix(in oklab, var(--destructive) 45%, var(--border)); background: var(--failed-surface); }
-.g-compact.is-muted { opacity: 0.7; }
-
-/* A route card is one branch of a profile's own decision, nested in the workflow that
-   runs it: same card language, recessed into the canvas, so it reads as contained
-   rather than as a peer of the workflow above it. */
-.g-compact.is-route {
-  background: color-mix(in oklab, var(--muted) 45%, var(--card));
-  border-style: dashed;
-  box-shadow: none;
-}
-.g-compact.is-route.is-active,
-.g-compact.is-route.is-done,
-.g-compact.is-route.is-failed { border-style: solid; }
-.g-compact.is-route .c-header {
-  background: transparent;
-  border-bottom-color: color-mix(in oklab, var(--border) 70%, transparent);
-}
-.g-compact.is-route .c-header-label { font-size: var(--t-data); font-weight: 600; }
-
-.c-route-note {
-  box-sizing: border-box;
-  min-height: 22px;
-  padding: var(--s-half) var(--s-2);
-  font-size: var(--t-data);
-  letter-spacing: 0.01em;
-  color: color-mix(in oklab, var(--muted-foreground) 88%, transparent);
-}
-.is-failed > .c-route-note { color: var(--destructive); }
-
-.c-header {
-  display: flex;
-  align-items: center;
-  gap: var(--s-1);
-  min-height: 38px;
-  padding: var(--s-3q) var(--s-2);
-  border-bottom: 1px solid var(--border);
-  background: color-mix(in oklab, var(--secondary) 30%, transparent);
-}
-.is-active > .c-header { background: color-mix(in oklab, var(--primary) 10%, var(--card)); }
-.is-done > .c-header { background: color-mix(in oklab, var(--success) 11%, var(--card)); }
-.is-failed > .c-header { background: color-mix(in oklab, var(--destructive) 8%, var(--card)); }
-
-.c-header-glyph { display: inline-flex; align-items: center; justify-content: center; width: var(--sz-icon); color: var(--success); flex: none; }
-.is-active .c-header-glyph { color: var(--primary); }
-.is-failed .c-header-glyph { color: var(--destructive); }
-.is-idle .c-header-glyph { display: none; }
-.c-header-glyph svg { width: var(--sz-icon); height: var(--sz-icon); }
-.c-header-label {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-weight: 700;
-  font-size: var(--t-body);
-  letter-spacing: -0.012em;
-  color: var(--foreground);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Collapsed to its header: a workflow the run did not take, keeping its place in the
-   catalogue without spending the board's height on steps nobody is reading. */
-.g-compact.is-collapsed .c-header { border-bottom: 0; }
-.g-compact.is-collapsed:hover { opacity: 1; }
-
-
-/* The second half of a workflow that was cut open at its branch. Quiet: the label beside it
-   already names the workflow, and this only says which piece of it you are looking at. */
-.c-header-cont {
-  flex: none;
-  padding: 0 var(--s-3q);
-  border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
-  border-radius: var(--r-pill);
-  font-size: var(--t-label);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--muted-foreground);
-  white-space: nowrap;
-}
-
-/* What the card holds, where a repeated "Queued" chip would have gone. */
-.c-header-summary {
-  flex: none;
-  font-size: var(--t-data);
-  color: var(--muted-foreground);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.c-header-status {
-  flex: none;
-  padding: 0 var(--s-3q);
-  border-radius: var(--r-pill);
-  font-size: var(--t-data);
-  font-weight: 700;
-  white-space: nowrap;
-  background: color-mix(in oklab, var(--primary) 14%, var(--card));
-  color: color-mix(in oklab, var(--primary) 55%, var(--foreground));
-}
-.is-failed .c-header-status { background: color-mix(in oklab, var(--destructive) 12%, var(--card)); color: var(--destructive); }
-.c-header-time {
-  flex: none;
-  color: var(--muted-foreground);
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--t-data);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.c-header-inspect {
-  margin-right: calc(var(--s-quarter) * -1);
-}
-.c-header-inspect svg { width: var(--sz-icon); height: var(--sz-icon); }
-
-/* 3px of progress under the header, and nothing at all before the first step lands. */
-.c-progress {
-  height: 3px;
-  background: color-mix(in oklab, var(--muted) 70%, transparent);
-  overflow: hidden;
-}
-.c-progress-empty { background: transparent; }
-.c-progress-fill {
-  width: 100%;
-  height: 100%;
-  background: var(--success);
-  transform-origin: left center;
-  transition: transform 280ms ease-out;
-}
-.c-progress-active { background: var(--primary); }
-/* The finished steps are solid; a light scans the part that has not happened yet. */
-.c-progress-running {
-  background-image: linear-gradient(90deg, transparent, color-mix(in oklab, var(--primary) 85%, transparent), transparent);
-  background-repeat: no-repeat;
-  background-size: 32% 100%;
-  animation: c-scan 1.9s cubic-bezier(0.45, 0, 0.55, 1) infinite;
-}
-
-/* The two rows that are not work: where the document came in and what left. */
-.c-terminal {
-  display: flex;
-  align-items: center;
-  gap: var(--s-3q);
-  min-height: 28px;
-  padding: var(--s-half) var(--s-2);
-  font-size: var(--t-label);
-  color: var(--muted-foreground);
-  background: color-mix(in oklab, var(--muted) 26%, transparent);
-  border-bottom: 1px solid color-mix(in oklab, var(--border) 55%, transparent);
-}
-.c-terminal:last-child { border-bottom: 0; border-top: 1px solid color-mix(in oklab, var(--border) 55%, transparent); }
-.c-terminal-icon { width: 12px; height: 12px; opacity: 0.6; flex: none; }
-.c-terminal-label {
-  font-weight: 700;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-}
-.c-terminal-meta {
+.ev-detail-close {
   margin-left: auto;
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--t-data);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0;
-  text-transform: none;
+  width: 20px; height: 20px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: var(--r-sm);
+  background: transparent; color: var(--muted-foreground); cursor: pointer;
+}
+.ev-detail-close:hover { background: var(--muted); color: var(--foreground); }
+
+/* ==========================================================================
+   14. Primitives
+   ========================================================================== */
+
+.is-confirming {
+  background: var(--danger-soft) !important;
+  color: var(--danger) !important;
 }
 
-.c-steps {
-  display: flex;
-  flex-direction: column;
-}
-.c-empty {
-  padding: var(--s-1) var(--s-2);
-  color: var(--muted-foreground);
-  font-size: var(--t-data);
-  font-style: italic;
-}
-.c-empty-reason {
-  color: var(--destructive);
-  font-style: normal;
-}
+/* Badge variants are the component's own Tailwind classes, and they map to the tokens
+   above through @theme inline — so this deliberately styles only what the component
+   does not: the tracking, and the one badge the header sizes down. A `[data-slot]`
+   rule resetting background here would out-specify `bg-destructive` and silently turn
+   every MODEL OFFLINE badge grey. */
+[data-slot="badge"] { letter-spacing: 0.02em; }
 
-.c-step {
-  display: flex;
-  flex-direction: column;
-  padding: 0 var(--s-2);
-  border-bottom: 1px solid color-mix(in oklab, var(--border) 45%, transparent);
-}
-.c-step:last-child { border-bottom: 0; }
-/* Idle rows stay paper: colour on this card always means work happened. */
-.c-step.is-active { background: color-mix(in oklab, var(--primary) 9%, var(--card)); }
-.c-step.is-done { background: color-mix(in oklab, var(--success) 5%, var(--card)); }
-.c-step.is-failed { background: color-mix(in oklab, var(--destructive) 6%, var(--card)); }
-.c-step.c-step-router.is-active { background: color-mix(in oklab, var(--caution) 12%, var(--card)); }
+.health-chip { font-size: var(--t-label); padding-inline: var(--s-2); }
 
-.c-step-main {
-  display: flex;
-  align-items: center;
-  gap: var(--s-1);
-  min-height: 36px;
-  cursor: default;
-}
-.c-step-num {
-  width: var(--sz-step-num);
-  flex: none;
-  text-align: right;
-  color: var(--muted-foreground);
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--t-data);
-  font-variant-numeric: tabular-nums;
-}
-.c-step-status { display: inline-flex; align-items: center; justify-content: center; width: var(--sz-step-status); color: var(--muted-foreground); flex: none; }
-.c-step-status svg { width: 12px; height: 12px; }
-.is-active > .c-step-main > .c-step-status { color: var(--primary); }
-.is-done > .c-step-main > .c-step-status { color: var(--success); }
-.is-failed > .c-step-main > .c-step-status { color: var(--destructive); }
-.c-step-label {
-  flex: 1 1 auto;
-  min-width: 5ch;
-  color: var(--foreground);
-  font-weight: 600;
-  font-size: var(--t-data);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.is-idle > .c-step-main > .c-step-label { color: color-mix(in oklab, var(--foreground) 82%, transparent); }
-.c-step-meta { display: inline-flex; align-items: baseline; justify-content: flex-end; gap: var(--s-1); min-width: 0; max-width: 52%; margin-left: auto; flex: 0 1 auto; }
-/* Only ever painted when the step hands off to another profile — the card names its own. */
-.c-step-profile {
-  color: var(--muted-foreground);
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--t-data);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.c-step-time {
-  color: var(--muted-foreground);
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--t-data);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  flex: none;
-}
-.c-step-toggle {
-  margin-right: calc(var(--s-half) * -1);
-}
-
-/* Everything that hangs under a step starts where the step's own text does: past the
-   number, the gap, and the status glyph. Written as the sum rather than as the 33px it
-   comes to, because the three parts are tokens now and a literal would drift off them. */
-.c-step-router-info {
-  display: flex;
-  align-items: center;
-  gap: var(--s-3q);
-  min-height: 27px;
-  padding: 0 0 var(--s-3q) var(--c-step-indent);
-  color: var(--muted-foreground);
-  font-size: var(--t-data);
-}
-.c-step-router-info svg { width: 10px; height: 10px; flex: none; opacity: 0.7; }
-.c-step-route-label { font-weight: 600; }
-.c-step-chosen { color: color-mix(in oklab, var(--success) 52%, var(--foreground)); font-weight: 700; }
-.c-step-conf { color: var(--ev-workflow); font-weight: 700; font-variant-numeric: tabular-nums; }
-.c-step-rule {
-  font-size: var(--t-data);
-  border: 1px solid var(--border);
-  border-radius: var(--r-pill);
-  padding: 0 var(--s-half);
-  color: var(--muted-foreground);
-}
-
-/* Disclosed stages hang off a guide rail under the step that ran them. */
-.c-stages {
-  display: flex;
-  flex-direction: column;
-  padding: var(--s-quarter) 0 var(--s-3q) var(--s-3);
-  border-left: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
-  margin: 0 0 var(--s-half) var(--c-step-indent);
-}
-
-.c-stage {
-  display: flex;
-  align-items: center;
-  gap: var(--s-3q);
-  padding: var(--s-quarter) 0;
-  font-size: var(--t-data);
-  /* Pinned, not inherited: COMPACT_STAGE_H in lib/graph/core.ts is 2px padding plus a
-     16px line, and that module lays the board out without ever measuring the DOM. Left
-     to the inherited 1.45 ratio this row would grow with the type scale and silently
-     desync every card height from the constant that claims to describe it. */
-  line-height: 16px;
-  color: color-mix(in oklab, var(--foreground) 74%, transparent);
-}
-.c-stage-glyph {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 12px;
-  flex: none;
-  color: color-mix(in oklab, var(--muted-foreground) 70%, transparent);
-}
-.c-stage.is-active .c-stage-glyph { color: var(--primary); }
-.c-stage.is-done .c-stage-glyph { color: var(--success); }
-.c-stage.is-failed .c-stage-glyph { color: var(--destructive); }
-.c-stage.is-active { color: var(--foreground); font-weight: 600; }
-.c-stage svg { width: 11px; height: 11px; flex: none; }
-.c-stage-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.c-stage-meta { display: inline-flex; align-items: baseline; gap: var(--s-1); margin-left: auto; white-space: nowrap; flex: none; color: var(--muted-foreground); }
-.c-stage-time { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: var(--t-data); font-variant-numeric: tabular-nums; }
-.c-stage-llm { font-size: var(--t-data); }
-
-/* --- motion: a run in flight --------------------------------------------------
-
-   A case here takes tens of seconds on purpose — a small model on local hardware —
-   so motion's whole job is to say the machine is alive and to say WHERE the work is.
-   One material carries it: a slow light travelling in the direction the document
-   moves, along the edge into the running card, across the running row, and through
-   the part of the progress track that has not happened yet. Everything else is
-   arrival: a check that stamps in, a row that settles out of its landing colour. The
-   running row itself stays still — its tint and spinner already say so, and a light
-   crossing the text is harder to read past than it is worth.
-   Nothing loops except inside a card that is actually running, so a finished board
-   is completely still. */
-
-@keyframes c-scan {
-  from { background-position: -55% 0; }
-  to { background-position: 155% 0; }
-}
-
-/* A running card breathes at the edge of its own frame: one ring, no glow. */
-.g-compact.is-active::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border: 1px solid var(--primary);
-  border-radius: var(--r-node);
-  opacity: 0.3;
-  pointer-events: none;
-  animation: c-breathe 3.2s ease-in-out infinite;
-}
-@keyframes c-breathe {
-  0%, 100% { opacity: 0.14; }
-  50% { opacity: 0.5; }
-}
-
-/* Arrivals, and only while the card is still working: a finished board never flashes. */
-.g-compact.is-active .c-step.is-done { animation: c-settle 760ms cubic-bezier(0.16, 1, 0.3, 1) 1; }
-@keyframes c-settle {
-  from { background-color: color-mix(in oklab, var(--success) 22%, var(--card)); }
-  to { background-color: color-mix(in oklab, var(--success) 5%, var(--card)); }
-}
-.g-compact.is-active .c-step.is-done .c-step-status svg { animation: c-stamp 260ms cubic-bezier(0.16, 1, 0.3, 1) 1; }
-@keyframes c-stamp {
-  from { opacity: 0; transform: scale(0.5); }
-  to { opacity: 1; transform: none; }
-}
-/* Stages land one at a time inside the step that is running them. */
-.g-compact.is-active .c-stage { animation: c-stage-in 200ms ease-out both; }
-@keyframes c-stage-in {
-  from { opacity: 0; transform: translateY(-2px); }
-  to { opacity: 1; transform: none; }
-}
-
-/* A card arriving on the canvas rises into place once, and never again. Muted cards
-   land at their own resting opacity so the entrance cannot un-mute them. */
-.react-flow__node .g-compact:not(.is-muted),
-.react-flow__node .g-gateway { animation: g-node-in 300ms cubic-bezier(0.16, 1, 0.3, 1) both; }
-.react-flow__node .g-compact.is-muted { animation: g-node-in-muted 300ms cubic-bezier(0.16, 1, 0.3, 1) both; }
-@keyframes g-node-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: none; }
-}
-@keyframes g-node-in-muted {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 0.7; transform: none; }
-}
-
-/* The edge that currently carries the document. */
-.react-flow__edge.is-live .react-flow__edge-path {
-  stroke-dasharray: 4 8;
-  animation: g-edge-flow 700ms linear infinite;
-}
-@keyframes g-edge-flow {
-  to { stroke-dashoffset: -12; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .c-progress-fill, .g-compact { transition: none; }
-  .c-progress-active, .status-spin { animation: none; }
-  /* Keep every state legible, drop the travel: no scanning light, no breathing ring,
-     no entrances, no marching edge. An arrival still fades in, because a step landing
-     is the one event worth noticing. */
-  .c-progress-running,
-  .g-compact.is-active::after,
-  .g-compact.is-active .c-step.is-done,
-  .g-compact.is-active .c-stage,
-  .react-flow__node .g-compact:not(.is-muted),
-  .react-flow__node .g-compact.is-muted,
-  .react-flow__node .g-gateway,
-  .react-flow__edge.is-live .react-flow__edge-path { animation: none; }
-  /* A frozen gradient is a stray highlight, not a still frame of a sweep. */
-  .c-progress-running { background-image: none; }
-  .g-compact.is-active .c-step.is-done .c-step-status svg { animation: c-stamp-in 200ms ease-out 1; }
-}
-@keyframes c-stamp-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-/* compact mode toggle button */
-.graph-mode-toggle {
-  display: flex;
-  align-items: center;
-  gap: 0;
-}
-.graph-mode-toggle [data-slot="button"] {
-  height: var(--h-control-sm);
-  padding-inline: var(--s-1);
-  border-radius: 0;
-}
-.graph-mode-toggle [data-slot="button"]:first-child { border-radius: var(--r-control) 0 0 var(--r-control); }
-.graph-mode-toggle [data-slot="button"]:last-child { border-radius: 0 var(--r-control) var(--r-control) 0; }
-
-.react-flow__edge { cursor: default; }
-.react-flow__edge-path { stroke-linecap: round; }
-.react-flow__edge-text { fill: var(--muted-foreground); font-size: var(--t-data); }
-
-/* --- gateway node (product pipeline front door) -------------------------------
-   The front door is where the board starts reading, so it takes the compact card's
-   voice — same name weight, same quiet paper — and earns its distinction from being
-   the one node that states a decision rather than listing work. */
-.g-gateway { width: 340px; }
-.g-gateway .g-card {
-  gap: var(--s-quarter);
-  padding: var(--s-1) var(--s-2);
-  background: var(--card);
-  border-color: var(--border);
-  box-shadow: 0 8px 18px -16px oklch(30% 0.04 210 / 0.5);
-}
-.g-gateway .g-label {
-  font-size: var(--t-body);
-  font-weight: 700;
-  letter-spacing: -0.012em;
-}
-.g-gateway .g-glyph { color: var(--muted-foreground); }
-.g-gateway.g-done .g-glyph,
-.g-gateway .g-done .g-glyph { color: var(--success); }
-/* "ENTRY" is a wayfinding note, not a badge competing with the node's name. */
-.g-gateway .g-entry-tag {
-  margin-left: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--muted-foreground);
-  font-size: var(--t-data);
-  font-weight: 700;
-  letter-spacing: 0.09em;
-}
-.g-gateway .g-work-badge {
-  background: color-mix(in oklab, var(--caution) 20%, var(--card));
-  color: var(--ev-workflow);
-  font-size: var(--t-data);
-}
-.g-gateway .g-meta { font-size: var(--t-data); }
-.g-gateway .g-decide { gap: var(--s-3q); font-size: var(--t-data); }
-.g-gateway .g-decide svg { width: 10px; height: 10px; flex: none; opacity: 0.7; }
-.g-route-label { font-weight: 600; }
+/* Theme toggle: one icon control, its two glyphs swapped by the resolved theme. */
+.theme-toggle svg { width: var(--sz-icon); height: var(--sz-icon); }

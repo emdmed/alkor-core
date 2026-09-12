@@ -27,19 +27,25 @@ share the harness rather than reimplementing it:
 
 ## Users
 
-Two audiences. Which one leads depends on the surface, and both are real:
+Three audiences. Which one leads depends on the surface, and all three are real:
 
 1. **Someone evaluating alkor cold** — an engineer or clinical-informatics reader who has
    not read the repository, arriving at a result document and deciding whether the tool is
    credible. Confirmed as the audience for `report.html`, and the reason the README and the
    docs under `docs/` read the way they do.
 2. **The maintainer and collaborators** — writing and revising contract packs, reading eval
-   traces, deciding whether a prompt change earned its keep. This is the audience for the two
-   live dashboards, and their situation is specific: a run is in flight on the machine in
+   traces, deciding whether a prompt change earned its keep. This is the audience for the
+   terminal dashboard, and their situation is specific: a run is in flight on the machine in
    front of them, one case at a time, slow enough that watching is a real activity, and they
    need to see where it has got to and what a given node actually sent and received.
+3. **A curious technical-adjacent user** — a researcher, a self-hoster, a small clinic's
+   tech-inclined person. Comfortable with software, **not an engineer**. Confirmed on
+   2026-09-12 as the audience the **web dashboard** leads for. They are running alkor on
+   their own machine and want to watch the machinery work and understand it, without being
+   asked to read JSON, SSE frames, or a contract pack to do so. The raw material stays
+   reachable one level down; it is no longer the front door.
 
-The job in both cases is the same: decide whether a small local model, wrapped in this
+The job in every case is the same: decide whether a small local model, wrapped in this
 harness, produces output good enough to ship for one specific extraction contract.
 
 ## Product Purpose
@@ -114,6 +120,14 @@ reads. Narrower on purpose.
   clinical tool.
 - Voice in existing docs: plain, exact, unhedged; states what a number does not show in the
   same breath as the number. Never oversells.
+- **The web dashboard is a conventional modern dashboard, and that is a standing decision,
+  not a default nobody made.** Asked on 2026-09-12 to choose between four derived visual
+  directions and the category standard, the user chose the category standard in plain
+  words, with Linear, Vercel and Stripe named as the craft bar. Convention is therefore the
+  commitment: neutral surfaces, a single accent, borders carrying structure, restrained
+  motion, executed at that level of finish and without irony. Future work on this surface
+  raises the craft, never smuggles a metaphor back in. The one element carried across from
+  the superseded worlds is the `alkor` wordmark with its Mizar/Alcor star pair.
 - Apache-2.0.
 
 ## Evidence on Hand

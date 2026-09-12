@@ -30,3 +30,28 @@ export const Logotype = ({ className }: { className?: string }) => (
     />
   </svg>
 )
+
+/**
+ * The star pair: Mizar, and Alcor beside it.
+ *
+ * Alcor is the faint companion of Mizar in the handle of the Plough, and for centuries
+ * resolving it was a test of eyesight — whether you could split the pair told you whether
+ * your instrument was good enough. That is the same job a corpus of discriminating cases
+ * does, which is why the mark carries it and why the second dot is drawn faint rather than
+ * merely smaller: the point is that it is hard to see, not that it is secondary.
+ *
+ * It accompanies the wordmark and is never a bullet or a section ornament (DESIGN.md).
+ * `aria-hidden` because the mark beside it already carries the accessible name — a
+ * screen reader announcing "alkor, two dots" is worse than one announcing "alkor".
+ */
+export const StarPair = ({ className }: { className?: string }) => (
+  <svg
+    className={className}
+    viewBox="0 0 26 8"
+    aria-hidden="true"
+    focusable="false"
+  >
+    <circle cx="4" cy="4" r="3.2" fill="currentColor" />
+    <circle cx="20" cy="4" r="2.4" fill="currentColor" opacity="0.38" />
+  </svg>
+)

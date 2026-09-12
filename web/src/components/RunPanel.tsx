@@ -7,7 +7,7 @@
  * surface that feeds work into it.
  */
 import { memo, useEffect, useRef, useState } from 'react'
-import { FolderOpen, Send } from 'lucide-react'
+import { FolderOpen, LoaderCircle, Send } from 'lucide-react'
 import {
   type WorkflowDefinition,
   type ProjectState,
@@ -57,6 +57,8 @@ export const RunPanel = memo(({ state, run, serverUrl }: RunPanelProps) => {
   const [loaded, setLoaded] = useState<CorpusDocument | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  /** A run this dashboard is watching but did not send from here. */
+  const inFlight = [...state.runs.values()].find((r) => r.status === 'started')
 
   // The workflow catalogue from the topology snapshot. It appears only in the explicit
   // diagnostic override; the normal path asks the pipeline router to choose.
@@ -169,18 +171,35 @@ export const RunPanel = memo(({ state, run, serverUrl }: RunPanelProps) => {
           better first test, so browsing the corpus is the only thing standing here; the
           composer beside it is where anything typed goes. */}
       {messages.length === 0 && (
-        <div className="chat-presets">
-          <button className="chat-preset is-corpus" onClick={() => setPickerOpen(true)} type="button">
-            <FolderOpen size={12} aria-hidden="true" />Browse the pack corpus
-          </button>
-          {/* Read once, by the person who needs it: someone meeting this screen cold, with
-              sepsis and shock lanes on the canvas, has no other way to learn that none of
-              this is clinical evidence. PRODUCT.md requires the caveat to travel with the
-              output, and the empty state is the one place it costs the operator nothing. */}
-          <p className="chat-presets-note">
-            Not a medical device, and not clinical decision support. The pack corpus contains
-            no patients — every case in it is synthetic.
-          </p>
+        /* Centred in its own column rather than pinned to the top of an 800px void: an
+           empty panel that hugs the ceiling reads as one that failed to load. */
+        <div className="chat-empty">
+          <div className="chat-presets">
+            {/* This panel used to say nothing at all while a run was executing, which made
+                the rail's first tab silent about the one thing the whole screen was
+                watching. It does not duplicate the canvas — it says where to look, and
+                what sending a note would do instead. */}
+            {inFlight && (
+              <div className="chat-empty-live" role="status" aria-live="polite">
+                <LoaderCircle className="status-spin" aria-hidden="true" />
+                <span>
+                  <b>{inFlight.profile}</b> is running now — follow it on the canvas.
+                  Sending a note here starts a second run.
+                </span>
+              </div>
+            )}
+            <button className="chat-preset is-corpus" onClick={() => setPickerOpen(true)} type="button">
+              <FolderOpen size={12} aria-hidden="true" />Browse the pack corpus
+            </button>
+            {/* Read once, by the person who needs it: someone meeting this screen cold, with
+                sepsis and shock lanes on the canvas, has no other way to learn that none of
+                this is clinical evidence. PRODUCT.md requires the caveat to travel with the
+                output, and the empty state is the one place it costs the operator nothing. */}
+            <p className="chat-presets-note">
+              Not a medical device, and not clinical decision support. The pack corpus contains
+              no patients — every case in it is synthetic.
+            </p>
+          </div>
         </div>
       )}
 
@@ -192,8 +211,13 @@ export const RunPanel = memo(({ state, run, serverUrl }: RunPanelProps) => {
         </div>
       )}
 
-      {/* Transcript */}
-      <div className="chat-scroll" ref={scrollRef}>
+      {/* Transcript.
+          `is-idle` collapses this region to nothing while there is no transcript. It and
+          the empty state are siblings and both used to claim `flex: 1`, so the column was
+          split in half and the "centred" empty block came to rest in the middle of the TOP
+          half with a ~560px void beneath it. Centring was never the problem; having two
+          things centre inside two half-columns was. */}
+      <div className={`chat-scroll${messages.length === 0 ? ' is-idle' : ''}`} ref={scrollRef}>
         {messages.map((msg, index) => (
           <div key={msg.id} className={cn('chat-msg', msg.status === 'error' && 'chat-msg-err')}>
             <div className="chat-msg-head">
