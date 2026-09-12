@@ -200,7 +200,7 @@ export const COMPACT_TERMINAL_H = 28 /* .c-terminal min-height, border-box */
 export const COMPACT_STEP_H = 36 /* .c-step-main min-height, border-box */
 export const COMPACT_ROUTER_H = 27 /* .c-step-router-info min-height, border-box */
 export const COMPACT_STAGE_H = 20 /* one .c-stage row: 2px pad top/bottom + 16px nowrap line */
-export const COMPACT_STAGES_EXTRAS_H = 13 /* .c-stages pad-top 3 + pad-bottom 6 + margin-bottom 4 */
+export const COMPACT_STAGES_EXTRAS_H = 12 /* .c-stages pad-top 2 + pad-bottom 6 + margin-bottom 4 */
 export const COMPACT_ROUTE_NOTE_H = 22 /* .c-route-note min-height, border-box */
 
 /**

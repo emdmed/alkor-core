@@ -35,19 +35,56 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  /* Tailwind's four radius rungs land on the three this system commits to, so a shadcn
+     primitive written against `rounded-md` comes out the same shape as a control the
+     stylesheet draws by hand. Both small rungs resolve to the control radius on purpose:
+     the system has one answer for "this is a control", not two. */
+  --radius-sm: var(--r-control);
+  --radius-md: var(--r-control);
+  --radius-lg: var(--r-node);
+  --radius-xl: var(--r-surface);
 }
 
 /* Calm clinical workspace: a warm-white base with legible, low-saturation state colour. */
 :root {
-  /* Shell rhythm: the 4px base scale the dashboard's regions compose on. */
+  /* Shell rhythm. 8px is the unit and the fractions are named from it, so a value's name
+     says where it sits on the scale rather than what it measures. Six rungs, and nothing
+     between them: the spread of 3, 5, 7, 9 and 11px this replaced was not density, it was
+     fifty separate decisions nobody made twice the same way. */
+  --s-quarter: 2px;
   --s-half: 4px;
+  --s-3q: 6px;
   --s-1: 8px;
   --s-2: 12px;
   --s-3: 16px;
+  --s-4: 20px;
+
+  /* Corner radius. DESIGN.md commits to exactly three, and they are told apart by what the
+     shape IS, not by how big it is: a control, an execution node, a workspace surface. The
+     pill is the fourth and it is only ever for small selectable chips. */
+  --r-control: 8px;
+  --r-node: 12px;
+  --r-surface: 14px;
+  --r-pill: 999px;
+
+  /* Control heights. One default, one dense variant for the two instrument bars, and the
+     coarse-pointer minimum. Icon buttons are square and share one size. */
+  --h-control: 32px;
+  --h-control-sm: 28px;
+  --h-touch: 38px;
+  --sz-icon-btn: 22px;
+
+  /* Icon sizes in the shell chrome. Graph nodes keep their own smaller inline glyphs,
+     which are sized against a reserved card height rather than against this scale. */
+  --sz-icon-sm: 12px;
+  --sz-icon: 14px;
+  --sz-icon-lg: 16px;
+
+  /* A compact step's number and its status glyph, and the indent everything hanging under
+     that step shares. Kept here because three rules depend on the same sum. */
+  --sz-step-num: 13px;
+  --sz-step-status: 12px;
+  --c-step-indent: calc(var(--sz-step-num) + var(--s-1) + var(--sz-step-status));
 
   /* Shell regions. The workspace is two zones — a canvas and one rail — so these are the
      only fixed dimensions in the shell; everything else takes what is left. */
@@ -76,7 +113,7 @@
   color-scheme: light;
   caret-color: var(--primary);
 
-  --radius: 0.875rem;
+  --radius: var(--r-surface);
   --background: oklch(97.5% 0.012 180);
   --foreground: oklch(28% 0.025 235);
   --card: oklch(99% 0.007 180);
@@ -165,6 +202,100 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
   flex-direction: column;
 }
 
+/* --- the two button families --------------------------------------------------
+
+   Every control the workspace draws by hand is one of these two, and the rules below are
+   the whole definition: what follows later in the file says only where a given one sits,
+   never what it looks like. They were nine and four separate implementations, agreeing on
+   neither their resting colour nor what hover meant — three different hover treatments
+   across buttons a user reads as the same control.
+
+   Hover resolves to Clinical Sky in both families. DESIGN.md reserves that hue for
+   actions, and a button is the one thing on this surface that always is one. */
+
+/* Square, transparent, icon only: the rail strip and its collapse, every panel's close,
+   every node's disclosure and inspect. */
+.rail-collapse,
+.rail-strip-btn,
+.corpus-close,
+.graph-legend-close,
+.ev-detail-close,
+.c-header-toggle,
+.c-header-inspect,
+.c-step-toggle,
+.g-chip-toggle {
+  display: inline-grid;
+  place-items: center;
+  position: relative;
+  flex: none;
+  width: var(--sz-icon-btn);
+  height: var(--sz-icon-btn);
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-control);
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: color 140ms ease, background-color 140ms ease;
+}
+.rail-collapse:hover,
+.rail-strip-btn:hover,
+.corpus-close:hover,
+.graph-legend-close:hover,
+.ev-detail-close:hover,
+.c-header-toggle:hover,
+.c-header-inspect:hover,
+.c-step-toggle:hover,
+.g-chip-toggle:hover {
+  color: var(--primary);
+  background: var(--muted);
+}
+/* 22px is the drawn size, not the reachable one. The pad is invisible and costs no layout,
+   which matters because several of these sit in rows whose height is a contract with
+   `lib/graph/core.ts`. */
+.rail-collapse::before,
+.corpus-close::before,
+.graph-legend-close::before,
+.ev-detail-close::before,
+.c-header-toggle::before,
+.c-header-inspect::before,
+.c-step-toggle::before,
+.g-chip-toggle::before {
+  content: '';
+  position: absolute;
+  inset: -8px;
+}
+/* The strip is a navigation target rather than an affordance tucked into a row: it takes
+   the full control height and the width of the strip, so it needs no invisible pad. */
+.rail-strip-btn { width: auto; height: var(--h-control); }
+
+/* Pill, bordered, a label and usually an icon: the server address, a run, the corpus. */
+.conn-chip,
+.run-chip,
+.chat-corpus-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-3q);
+  flex: none;
+  min-height: var(--h-control-sm);
+  padding: var(--s-quarter) var(--s-1);
+  border: 1px solid var(--border-state);
+  border-radius: var(--r-pill);
+  background: var(--card);
+  color: var(--foreground);
+  font-family: inherit;
+  font-size: var(--t-data);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 140ms ease, border-color 140ms ease, background-color 140ms ease;
+}
+.conn-chip:hover,
+.run-chip:hover,
+.chat-corpus-btn:hover {
+  color: var(--primary);
+  border-color: var(--ring);
+}
+
 /* ---------------------------------------------------------------------------- */
 /* Top bar — the workspace's one permanent band.                                  */
 
@@ -190,7 +321,7 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
   min-width: 0;
 }
 /* Qualified by .topbar on purpose: `.topbar-rack > * + *` scores (0,1,0) — the universal
-   selectors count for nothing — so `.counters { margin: 0; padding: 0 }` further down the
+   selectors count for nothing — so `.counters { margin: 0; padding: 0}` further down the
    file tied on specificity and won on order, leaving the divider with no space around it. */
 .topbar .topbar-rack > * + * {
   margin-left: var(--s-2);
@@ -200,9 +331,7 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
 .topbar-rack .counter:first-child { padding-left: 0; }
 .topbar-rack .counter:last-child { padding-right: 0; }
 /* Actuators hold to 30px so the band stays at 46px with usable hit targets. */
-.topbar [data-slot="button"] { height: 30px; }
-/* The actuators sit under the session's own type: they were the only 14px words here. */
-.topbar-actions [data-slot="button"] { font-size: var(--t-data); }
+.topbar [data-slot="button"] { height: var(--h-control); }
 
 .topbar-identity { display: inline-flex; align-items: center; gap: var(--s-1); min-width: 0; }
 /* An armed Clear says so in the destructive hue. It is the only place in the workspace a
@@ -217,7 +346,7 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
   color: var(--muted-foreground);
   font-size: var(--t-data);
   white-space: nowrap;
-  padding-left: 2px;
+  padding-left: var(--s-quarter);
 }
 @media (max-width: 1100px) { .brand-descriptor { display: none; } }
 /* The wordmark is outlines, not text -- see Logotype.tsx for why. Height rather than
@@ -234,26 +363,15 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
 /* The server address: a chip that reads at a glance, a form only when you mean to move. */
 .conn { position: relative; min-width: 0; }
 .conn-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
+  /* A server address is a measured value, so it keeps the mono face and a width cap;
+     everything else about it is the chip. */
   max-width: min(240px, 22vw);
-  padding: 3px 6px 3px 8px;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  background: var(--muted);
-  color: var(--muted-foreground);
   font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--t-data);
   line-height: 1.3;
-  cursor: pointer;
-  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  transition: color 140ms ease, border-color 140ms ease;
 }
-.conn-chip:hover { color: var(--foreground); border-color: var(--border); }
-.conn-chip svg { width: 13px; height: 13px; flex: none; opacity: 0.7; }
+.conn-chip svg { width: var(--sz-icon); height: var(--sz-icon); flex: none; opacity: 0.7; }
 .conn-chip[aria-expanded="true"] { color: var(--foreground); border-color: var(--ring); background: var(--secondary); }
 .conn-pop {
   position: absolute;
@@ -263,8 +381,8 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
   width: 372px;
   max-width: calc(100vw - 24px);
   display: grid;
-  gap: 7px;
-  padding: 12px;
+  gap: var(--s-3q);
+  padding: var(--s-2);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--popover);
@@ -277,10 +395,10 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
-.conn-pop-row { display: flex; align-items: center; gap: 6px; }
+.conn-pop-row { display: flex; align-items: center; gap: var(--s-3q); }
 .conn-input {
   min-width: 0;
-  height: 32px;
+  height: var(--h-control);
   font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: var(--t-body);
 }
@@ -291,13 +409,13 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--s-1);
   overflow: hidden;
 }
 .health-state {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--s-3q);
   flex: none;
   font-size: var(--t-label);
   font-weight: 700;
@@ -335,8 +453,8 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
 .counter {
   display: inline-flex;
   align-items: baseline;
-  gap: 5px;
-  padding: 0 11px;
+  gap: var(--s-half);
+  padding: 0 var(--s-2);
   color: var(--muted-foreground);
   font-size: var(--t-data);
 }
@@ -368,7 +486,7 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
 .topbar-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--s-quarter);
   padding-left: var(--s-2);
   border-left: 1px solid var(--border);
 }
@@ -380,88 +498,6 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
 .info { color: var(--primary); }
 .muted { color: var(--muted-foreground); }
 .faint { color: var(--muted-foreground); opacity: 0.6; }
-
-/* --- Execution pane ------------------------------------------------------------------- */
-
-.pipeline + .pipeline { margin-top: 14px; border-top: 1px dashed var(--border); padding-top: 10px; }
-.pipeline-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
-.pipeline-name { color: var(--foreground); font-weight: 600; }
-
-.pipeline-graph {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-wrap: wrap;
-  padding: 4px 0 8px 0;
-  font-size: var(--t-title);
-}
-.arrow { color: var(--secondary-foreground); }
-
-.pipeline-steps { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
-.step-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.step-num { color: var(--border); width: 1.4em; }
-.step-name { color: var(--foreground); }
-
-.available { margin-top: 14px; border-top: 1px dashed var(--border); padding-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
-
-/* --- Decision tree (Execution pane) ------------------------------------------------------ */
-
-.dtree { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; padding-left: 2px; }
-
-.dtree-node {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  font-size: var(--t-body);
-  padding: 1px 0;
-  white-space: nowrap;
-}
-.dtree-name { color: var(--foreground); }
-.dtree-meta { color: var(--secondary-foreground); font-size: var(--t-data); white-space: nowrap; }
-.dtree-detail { color: var(--muted-foreground); font-size: var(--t-data); overflow: hidden; text-overflow: ellipsis; max-width: 40vw; white-space: nowrap; }
-
-/* Column-rule marks a vertical data-flow edge from a parent onto its children. */
-.dtree-children {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  margin-left: 0.6em;
-  padding-left: 0.7em;
-  border-left: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
-}
-
-/* An explicit, labelled data-flow ref between pipeline steps (input → step.next → output). */
-.dtree-edge {
-  margin: 1px 0 1px 1.3em;
-  padding: 0 0.4em;
-  align-self: flex-start;
-  font-size: var(--t-data);
-  color: var(--primary);
-  font-style: normal;
-  border: 1px dashed var(--secondary);
-  border-top-width: 0;
-  border-left-width: 0;
-  border-radius: 0 0 var(--radius-sm) 0;
-}
-.dtree-ref::before { content: '└─ '; color: var(--muted-foreground); }
-
-.dtree-runchip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: var(--t-data);
-  color: var(--foreground);
-  background: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 1px 8px;
-  cursor: pointer;
-  font-family: inherit;
-}
-.dtree-runchip:hover { border-color: var(--ring); }
-.dtree-runchip-on { border-color: var(--primary); background: color-mix(in oklab, var(--primary) 14%, var(--muted)); }
-
-.dtree-node .w-3\.5 { flex: none; }
 
 /* event kind colours, ported from the terminal renderer */
 .ev-llm { color: var(--ev-llm); }
@@ -477,7 +513,7 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
 .ev-server { color: var(--ev-server); }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: color-mix(in oklab, var(--primary) 28%, var(--secondary)); border: 5px solid var(--background); border-radius: 999px; }
+::-webkit-scrollbar-thumb { background: color-mix(in oklab, var(--primary) 28%, var(--secondary)); border: 5px solid var(--background); border-radius: var(--r-pill); }
 ::-webkit-scrollbar-track { background: var(--background); }
 
 /* ---------------------------------------------------------------------------- */
@@ -542,8 +578,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   flex: none;
   display: flex;
   align-items: stretch;
-  gap: 1px;
-  padding: 5px 5px 0;
+  gap: 0;
+  padding: var(--s-half) var(--s-half) 0;
   border-bottom: 1px solid var(--border);
 }
 /* Only the open tab spells its name. Four labels never fit a rail narrow enough to be
@@ -554,8 +590,9 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 7px 9px;
+  gap: var(--s-3q);
+  min-height: var(--h-control);
+  padding: var(--s-3q) var(--s-1);
   margin-bottom: -1px;
   border: 0;
   border-bottom: 2px solid transparent;
@@ -568,7 +605,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   white-space: nowrap;
   transition: color 140ms ease, border-color 140ms ease;
 }
-.rail-tab svg { width: 15px; height: 15px; flex: none; }
+.rail-tab svg { width: var(--sz-icon); height: var(--sz-icon); flex: none; }
 .rail-tab > span:not(.rail-tab-count) { display: none; }
 .rail-tab.is-on > span:not(.rail-tab-count) { display: inline; white-space: nowrap; }
 .rail-tab:hover { color: var(--foreground); background: color-mix(in oklab, var(--muted) 60%, transparent); }
@@ -576,8 +613,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .rail-tab.is-on:hover { background: transparent; }
 .rail-tab-count {
   flex: none;
-  padding: 0 5px;
-  border-radius: 999px;
+  padding: 0 var(--s-half);
+  border-radius: var(--r-pill);
   background: var(--muted);
   color: var(--muted-foreground);
   font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -586,25 +623,16 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   font-variant-numeric: tabular-nums;
 }
 .rail-collapse {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  padding: 0 6px;
   margin-bottom: 1px;
-  border: 0;
-  background: transparent;
-  color: var(--muted-foreground);
-  cursor: pointer;
 }
-.rail-collapse:hover { color: var(--foreground); }
-.rail-collapse svg { width: 15px; height: 15px; }
+.rail-collapse svg { width: var(--sz-icon); height: var(--sz-icon); }
 
 .rail-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .rail-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-2) var(--s-3) var(--s-3); }
 .rail-hint {
-  margin: 0 0 14px;
-  padding: 9px 10px;
-  border-radius: 8px;
+  margin: 0 0 var(--s-2);
+  padding: var(--s-1);
+  border-radius: var(--r-control);
   background: var(--muted);
   color: var(--muted-foreground);
   font-size: var(--t-data);
@@ -617,25 +645,15 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   width: var(--w-rail-strip);
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 6px 4px;
+  gap: var(--s-quarter);
+  padding: var(--s-3q) var(--s-half);
   border-left: 1px solid var(--border);
   background: var(--card);
 }
 .rail-strip-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 34px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted-foreground);
-  cursor: pointer;
-  transition: color 140ms ease, background-color 140ms ease;
+  width: auto;
 }
-.rail-strip-btn:hover { color: var(--primary); background: var(--muted); }
-.rail-strip-btn svg { width: 16px; height: 16px; }
+.rail-strip-btn svg { width: var(--sz-icon-lg); height: var(--sz-icon-lg); }
 
 /* --- run panel (the rail's first tab) -------------------------------------- */
 .runpanel {
@@ -649,16 +667,15 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .chat-options { color: var(--muted-foreground); font-size: var(--t-data); }
 .chat-options > summary {
   cursor: pointer;
-  padding: 4px 7px;
-  border-radius: 8px;
+  padding: var(--s-half) var(--s-3q);
+  border-radius: var(--r-control);
   font-weight: 600;
   list-style: none;
 }
 .chat-options > summary::-webkit-details-marker { display: none; }
-.chat-options > summary::before { content: '\203a'; margin-right: 5px; display: inline-block; transition: transform 140ms ease; }
+.chat-options > summary::before { content: '\203a'; margin-right: var(--s-half); display: inline-block; transition: transform 140ms ease; }
 .chat-options[open] > summary::before { transform: rotate(90deg); }
 .chat-options > summary:hover { color: var(--foreground); background: var(--muted); }
-.chat-options > summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
 .chat-options-body {
   position: absolute;
   z-index: 30;
@@ -666,8 +683,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   left: 0;
   width: min(300px, calc(100% - 8px));
   display: grid;
-  gap: 6px;
-  padding: 10px;
+  gap: var(--s-3q);
+  padding: var(--s-1);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--popover);
@@ -686,24 +703,24 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   background: var(--background);
   color: var(--foreground);
   border: 1px solid var(--border-state);
-  border-radius: 8px;
+  border-radius: var(--r-control);
   font-family: inherit;
   font-size: var(--t-data);
-  min-height: 30px;
-  padding: 4px 8px;
+  min-height: var(--h-control);
+  padding: var(--s-half) var(--s-1);
 }
 .chat-select:focus { outline: none; border-color: var(--ring); }
 .chat-select option { overflow: hidden; text-overflow: ellipsis; }
 
 .chat-presets {
   display: grid;
-  gap: 2px;
-  padding: var(--s-1) 10px var(--s-1);
+  gap: var(--s-quarter);
+  padding: var(--s-1);
 }
 /* Set apart from the presets by a rule and a margin rather than by a warning colour: it is
    a standing condition of the tool, not an alert about anything the operator just did. */
 .chat-presets-note {
-  margin: var(--s-1) 7px 0;
+  margin: var(--s-1) var(--s-3q) 0;
   padding-top: var(--s-1);
   border-top: 1px solid var(--border);
   color: var(--muted-foreground);
@@ -714,14 +731,14 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .chat-preset {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--s-3q);
   width: 100%;
   font-size: var(--t-data);
   color: var(--muted-foreground);
   background: transparent;
   border: 0;
-  border-radius: 8px;
-  padding: 4px 7px;
+  border-radius: var(--r-control);
+  padding: var(--s-half) var(--s-3q);
   cursor: pointer;
   font-family: inherit;
   text-align: left;
@@ -736,16 +753,16 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 10px 12px;
+  padding: var(--s-1) var(--s-2);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--s-1);
 }
 
 .chat-msg {
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 7px 9px;
+  border-radius: var(--r-control);
+  padding: var(--s-3q) var(--s-1);
   background: var(--background);
   font-size: var(--t-data);
 }
@@ -760,8 +777,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
-  margin-bottom: 3px;
+  gap: var(--s-3q);
+  margin-bottom: var(--s-quarter);
 }
 .chat-msg-profile {
   color: var(--primary);
@@ -784,15 +801,15 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   color: var(--foreground);
   white-space: pre-wrap;
   word-break: break-word;
-  margin-bottom: 4px;
+  margin-bottom: var(--s-half);
 }
 .chat-msg-result,
 .chat-msg-error {
-  margin: 4px 0 0;
-  padding: 6px 8px;
+  margin: var(--s-half) 0 0;
+  padding: var(--s-3q) var(--s-1);
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-control);
   color: var(--foreground);
   font-size: var(--t-data);
   line-height: 1.45;
@@ -807,11 +824,11 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
    prominence from the reading size, the room, and the quiet mint surface — not from an accent
    rule down its edge, which this system reserves Clinical Sky for actions and never for state. */
 .chat-msg-ending {
-  margin: 6px 0 0;
-  padding: 12px 14px;
+  margin: var(--s-3q) 0 0;
+  padding: var(--s-2);
   background: color-mix(in oklab, var(--secondary) 45%, var(--card));
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-control);
   color: var(--foreground);
   font-size: var(--t-body);
   line-height: 1.5;
@@ -820,41 +837,41 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   max-height: 420px;
   overflow: auto;
 }
-.chat-msg-steps { margin-top: 6px; }
+.chat-msg-steps { margin-top: var(--s-3q); }
 .chat-msg-steps > summary {
   cursor: pointer;
   font-size: var(--t-data);
   color: var(--muted-foreground);
-  padding: 2px 0;
+  padding: var(--s-quarter) 0;
 }
 .chat-msg-steps > summary:hover { color: var(--foreground); }
 
 /* The run log: a diagnostic transcript, so it is monospaced, scrolls on both axes (a padded
    event line must not wrap into unreadable ragged columns), and stays visually subordinate to
    the ending above it until a failure opens it. */
-.chat-msg-log { margin-top: 6px; }
+.chat-msg-log { margin-top: var(--s-3q); }
 .chat-msg-log > summary {
   cursor: pointer;
   font-size: var(--t-data);
   color: var(--muted-foreground);
-  padding: 2px 0;
+  padding: var(--s-quarter) 0;
 }
 .chat-msg-log > summary:hover { color: var(--foreground); }
 .chat-msg-log-body {
-  margin-top: 4px;
+  margin-top: var(--s-half);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-control);
   background: var(--card);
   overflow: hidden;
 }
 .chat-msg-log-actions {
   display: flex;
   justify-content: flex-end;
-  padding: 4px 4px 0;
+  padding: var(--s-half) var(--s-half) 0;
 }
 .chat-msg-log-text {
   margin: 0;
-  padding: 6px 8px 8px;
+  padding: var(--s-3q) var(--s-1) var(--s-1);
   font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: var(--t-data);
   line-height: 1.45;
@@ -866,10 +883,10 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 
 .chat-foot {
   border-top: 1px solid var(--border);
-  padding: 8px 10px 10px;
+  padding: var(--s-1);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--s-3q);
 }
 .chat-textarea {
   width: 100%;
@@ -879,11 +896,11 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   background: var(--background);
   color: var(--foreground);
   border: 1px solid var(--border-state);
-  border-radius: 8px;
+  border-radius: var(--r-control);
   font-family: inherit;
   font-size: var(--t-data);
   line-height: 1.4;
-  padding: 7px 10px;
+  padding: var(--s-3q) var(--s-1);
   max-height: 120px;
 }
 /* Stated explicitly because the UA default is the text colour at half alpha, which put the
@@ -913,34 +930,17 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 }
 .chat-preset.is-corpus:hover { background: color-mix(in oklab, var(--primary) 9%, transparent); }
 
-.chat-corpus-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  flex: none;
-  padding: 4px 9px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--card);
-  color: var(--muted-foreground);
-  font-family: inherit;
-  font-size: var(--t-data);
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: color 140ms ease, border-color 140ms ease;
-}
-.chat-corpus-btn:hover { color: var(--primary); border-color: var(--ring); }
-.chat-corpus-btn svg { width: 12px; height: 12px; }
+.chat-corpus-btn { font-weight: 600; }
+.chat-corpus-btn svg { width: var(--sz-icon-sm); height: var(--sz-icon-sm); }
 
 /* What is in the box and where it came from. */
 .chat-loaded {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--s-3q);
   margin: 0;
-  padding: 5px 9px;
-  border-radius: 8px;
+  padding: var(--s-half) var(--s-1);
+  border-radius: var(--r-control);
   background: color-mix(in oklab, var(--primary) 8%, transparent);
   font-size: var(--t-data);
   min-width: 0;
@@ -984,13 +984,13 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   position: relative;
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: var(--s-1) var(--s-1) var(--s-1) 10px;
+  gap: var(--s-half);
+  padding: var(--s-1);
   border-bottom: 1px solid var(--border);
 }
 .corpus-search-icon {
-  width: 14px;
-  height: 14px;
+  width: var(--sz-icon);
+  height: var(--sz-icon);
   flex: none;
   color: var(--muted-foreground);
 }
@@ -1002,44 +1002,33 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   color: var(--foreground);
   font-family: inherit;
   font-size: var(--t-body);
-  padding: 5px 2px;
+  padding: var(--s-half) var(--s-quarter);
 }
 .corpus-search::placeholder { color: var(--muted-foreground); }
 .corpus-search:focus { outline: none; }
 .corpus-search::-webkit-search-cancel-button { appearance: none; }
 /* The field is the surface's whole point, so the focus ring belongs on the bar. */
 .corpus-head:focus-within { box-shadow: inset 0 -2px 0 var(--primary); }
-.corpus-close {
-  flex: none;
-  display: inline-flex;
-  padding: 4px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted-foreground);
-  cursor: pointer;
-}
-.corpus-close:hover { color: var(--foreground); background: var(--muted); }
-.corpus-close svg { width: 14px; height: 14px; }
+.corpus-close svg { width: var(--sz-icon); height: var(--sz-icon); }
 
 .corpus-list { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: var(--s-1); }
 .corpus-status {
   display: flex;
   align-items: center;
-  gap: 7px;
-  margin: 10px;
-  padding: 9px 10px;
-  border-radius: 8px;
+  gap: var(--s-3q);
+  margin: var(--s-1);
+  padding: var(--s-1);
+  border-radius: var(--r-control);
   background: var(--muted);
   color: var(--muted-foreground);
   font-size: var(--t-data);
   line-height: 1.45;
 }
-.corpus-status svg { width: 13px; height: 13px; flex: none; }
+.corpus-status svg { width: var(--sz-icon); height: var(--sz-icon); flex: none; }
 .corpus-error {
   flex: none;
   margin: 0;
-  padding: 8px 12px;
+  padding: var(--s-1) var(--s-2);
   border-bottom: 1px solid color-mix(in oklab, var(--destructive) 35%, var(--border));
   background: color-mix(in oklab, var(--destructive) 6%, var(--card));
   color: var(--destructive);
@@ -1054,9 +1043,9 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   z-index: 1;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--s-3q);
   width: 100%;
-  padding: 8px 12px 8px 8px;
+  padding: var(--s-1) var(--s-2) var(--s-1) var(--s-1);
   border: 0;
   border-bottom: 1px solid color-mix(in oklab, var(--border) 55%, transparent);
   background: var(--card);
@@ -1066,8 +1055,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 }
 .corpus-group-btn.is-at-cursor { background: color-mix(in oklab, var(--primary) 8%, var(--card)); }
 .corpus-caret {
-  width: 14px;
-  height: 14px;
+  width: var(--sz-icon);
+  height: var(--sz-icon);
   flex: none;
   color: var(--muted-foreground);
   transition: transform 140ms ease;
@@ -1085,8 +1074,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 }
 .corpus-group-kind {
   flex: none;
-  padding: 1px 7px;
-  border-radius: 999px;
+  padding: 0 var(--s-3q);
+  border-radius: var(--r-pill);
   background: var(--secondary);
   color: var(--secondary-foreground);
   font-size: var(--t-label);
@@ -1106,8 +1095,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 /* A case that owns several documents: one heading, one description, then its notes. */
 .corpus-case {
   display: grid;
-  gap: 1px;
-  padding: 8px 12px 4px 22px;
+  gap: var(--s-quarter);
+  padding: var(--s-1) var(--s-2) var(--s-half) var(--s-4);
 }
 .corpus-case-name {
   color: var(--foreground);
@@ -1135,9 +1124,9 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 
 .corpus-row {
   display: grid;
-  gap: 1px;
+  gap: var(--s-quarter);
   width: 100%;
-  padding: 7px 12px 7px 22px;
+  padding: var(--s-3q) var(--s-2) var(--s-3q) var(--s-4);
   border: 0;
   border-left: 2px solid transparent;
   background: transparent;
@@ -1148,8 +1137,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 /* A note inside a multi-note case sits under its heading on a rule, so the sequence reads
    as one record rather than as three documents that happen to be adjacent. */
 .corpus-row.is-in-run {
-  margin-left: 22px;
-  padding-left: 10px;
+  margin-left: var(--s-4);
+  padding-left: var(--s-1);
   border-left-color: color-mix(in oklab, var(--border) 80%, transparent);
 }
 .corpus-row.is-in-run.is-at-cursor { border-left-color: var(--primary); }
@@ -1157,7 +1146,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   border-left-color: var(--primary);
   background: color-mix(in oklab, var(--primary) 7%, transparent);
 }
-.corpus-row-head { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.corpus-row-head { display: flex; align-items: center; gap: var(--s-3q); min-width: 0; }
 .corpus-row-name {
   min-width: 0;
   color: var(--foreground);
@@ -1189,7 +1178,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .corpus-foot {
   flex: none;
   margin: 0;
-  padding: 7px 12px;
+  padding: var(--s-3q) var(--s-2);
   border-top: 1px solid var(--border);
   color: var(--muted-foreground);
   font-size: var(--t-data);
@@ -1200,7 +1189,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   flex: none;
   display: flex;
   justify-content: flex-end;
-  padding: 6px 8px 0;
+  padding: var(--s-3q) var(--s-1) 0;
 }
 
 /* ---------------------------------------------------------------------------- */
@@ -1225,7 +1214,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   padding: var(--s-2);
   background: var(--background);
 }
-.graph-wrap.is-graph-fullscreen .graph-canvas { border-radius: 12px; }
+.graph-wrap.is-graph-fullscreen .graph-canvas { border-radius: var(--r-node); }
 
 /*
  * One bar, one question: which run am I looking at, and where has it got to.
@@ -1238,39 +1227,22 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   display: flex;
   align-items: center;
   gap: var(--s-2);
-  padding: var(--s-half) 2px;
+  padding: var(--s-half) var(--s-quarter);
   min-width: 0;
 }
 
 .stagebar-runs {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--s-half);
   min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
-  padding: 2px 0;
+  padding: var(--s-quarter) 0;
 }
 .stagebar-runs::-webkit-scrollbar { display: none; }
 .stagebar-waiting { color: var(--muted-foreground); font-size: var(--t-data); white-space: nowrap; }
 
-.run-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex: none;
-  padding: 3px 9px;
-  border: 1px solid var(--border-state);
-  border-radius: 999px;
-  background: var(--card);
-  color: var(--foreground);
-  font-family: inherit;
-  font-size: var(--t-data);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: border-color 140ms ease, background-color 140ms ease;
-}
-.run-chip:hover { border-color: var(--ring); }
 .run-chip-on {
   border-color: var(--primary);
   background: color-mix(in oklab, var(--primary) 10%, var(--card));
@@ -1281,15 +1253,15 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .stagebar-position {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--s-3q);
   flex: none;
-  padding: 3px 11px;
+  padding: var(--s-quarter) var(--s-2);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   font-size: var(--t-data);
   white-space: nowrap;
 }
-.stagebar-position svg { width: 13px; height: 13px; flex: none; }
+.stagebar-position svg { width: var(--sz-icon); height: var(--sz-icon); flex: none; }
 .stagebar-position-name {
   font-weight: 600;
   overflow: hidden;
@@ -1313,8 +1285,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   color: var(--destructive);
 }
 
-.stagebar-tools { display: flex; align-items: center; gap: 6px; flex: none; margin-left: auto; }
-.stagebar-tools [data-slot="button"] { height: 28px; }
+.stagebar-tools { display: flex; align-items: center; gap: var(--s-3q); flex: none; margin-left: auto; }
+.stagebar-tools [data-slot="button"] { height: var(--h-control-sm); }
 .stagebar-scope {
   color: var(--muted-foreground);
   font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -1324,13 +1296,12 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   text-overflow: ellipsis;
   max-width: 30ch;
 }
-.stagebar-icon { padding-inline: 7px; }
+.stagebar-icon { padding-inline: var(--s-3q); }
 /* Expand/collapse, resident rather than under View: it reads as the quiet instruction it is
    until the pointer is on it, and it names the direction the canvas is about to move. */
 .stagebar-disclose {
-  gap: 5px;
-  padding-inline: 9px;
-  font-size: var(--t-data);
+  gap: var(--s-half);
+  padding-inline: var(--s-1);
   color: var(--muted-foreground);
 }
 .stagebar-disclose:hover { color: var(--primary); }
@@ -1354,9 +1325,9 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--s-3q);
   color: var(--foreground);
-  font-size: 14px;
+  font-size: var(--t-body);
   pointer-events: none;
   z-index: 5;
 }
@@ -1372,13 +1343,13 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: color-mix(in oklab, var(--background) 84%, var(--card));
-  margin: 10px 12px 12px;
+  margin: var(--s-1) var(--s-2) var(--s-2);
 }
 .graph-loading-copy {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: var(--s-half);
 }
 .graph-loading-title { color: var(--foreground); font-weight: 700; font-size: var(--t-body); }
 .graph-loading-note { color: var(--muted-foreground); font-size: var(--t-data); }
@@ -1394,16 +1365,16 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   left: 10px;
   width: 168px;
   display: grid;
-  gap: 10px;
-  padding: 9px 11px 10px;
+  gap: var(--s-1);
+  padding: var(--s-1) var(--s-2) var(--s-1);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--r-node);
   background: color-mix(in oklab, var(--card) 94%, transparent);
   backdrop-filter: blur(3px);
   color: var(--muted-foreground);
   font-size: var(--t-data);
 }
-.graph-legend-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.graph-legend-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s-1); }
 .graph-legend-heading {
   color: var(--foreground);
   font-size: var(--t-label);
@@ -1412,37 +1383,29 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   text-transform: uppercase;
 }
 .graph-legend-close {
-  display: inline-flex;
-  padding: 2px;
-  margin: -2px -3px -2px 0;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted-foreground);
-  cursor: pointer;
+  margin-right: calc(var(--s-quarter) * -1);
 }
-.graph-legend-close:hover { color: var(--foreground); background: var(--muted); }
-.graph-legend-close svg { width: 13px; height: 13px; }
+.graph-legend-close svg { width: var(--sz-icon); height: var(--sz-icon); }
 .graph-legend-group {
   display: grid;
-  gap: 3px;
+  gap: var(--s-quarter);
 }
 .graph-legend-title {
-  margin-bottom: 2px;
+  margin-bottom: var(--s-quarter);
   font-size: var(--t-data);
   letter-spacing: 0.02em;
   color: var(--secondary-foreground);
   font-weight: 700;
 }
-.graph-legend-row { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+.graph-legend-row { display: flex; align-items: center; gap: var(--s-3q); white-space: nowrap; }
 .graph-legend-note {
   margin: 0;
-  padding-top: 8px;
+  padding-top: var(--s-1);
   border-top: 1px solid color-mix(in oklab, var(--border) 65%, transparent);
   line-height: 1.4;
   opacity: 0.85;
 }
-.legend-now { display: inline-block; width: 18px; height: 8px; border: 1px solid var(--success); border-radius: 8px; background: color-mix(in oklab, var(--success) 17%, var(--card)); }
+.legend-now { display: inline-block; width: 18px; height: var(--s-1); border: 1px solid var(--success); border-radius: var(--r-pill); background: color-mix(in oklab, var(--success) 17%, var(--card)); }
 .legend-edge {
   display: inline-block;
   width: 22px;
@@ -1457,9 +1420,9 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .legend-edge-muted { border-top-color: var(--route-possible); border-top-style: dashed; opacity: 0.3; }
 .legend-work {
   display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 8px;
+  width: var(--s-1);
+  height: var(--s-1);
+  border-radius: 50%;
 }
 .legend-work-model { background: color-mix(in oklab, var(--primary) 74%, white); }
 .legend-work-code { background: var(--muted-foreground); }
@@ -1473,8 +1436,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 8px;
-  margin: 20px 0 8px;
+  gap: var(--s-1);
+  margin: var(--s-4) 0 var(--s-1);
   color: var(--foreground);
   font-size: var(--t-data);
   font-weight: 700;
@@ -1482,21 +1445,21 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 }
 .drawer-section-title:first-of-type { margin-top: 0; }
 .drawer-section-title span { color: var(--muted-foreground); font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 400; }
-.drawer-empty { padding: 7px 9px; border-radius: 8px; background: var(--muted); color: var(--muted-foreground); font-size: var(--t-data); }
-.drawer-item { padding: 7px 0; border-bottom: 1px solid color-mix(in oklab, var(--border) 65%, transparent); }
-.drawer-item-row { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.drawer-item-row [data-slot="badge"] { width: 20px; height: 20px; padding: 0; border-radius: 8px; }
+.drawer-empty { padding: var(--s-3q) var(--s-1); border-radius: var(--r-control); background: var(--muted); color: var(--muted-foreground); font-size: var(--t-data); }
+.drawer-item { padding: var(--s-3q) 0; border-bottom: 1px solid color-mix(in oklab, var(--border) 65%, transparent); }
+.drawer-item-row { display: flex; align-items: center; gap: var(--s-3q); min-width: 0; }
+.drawer-item-row [data-slot="badge"] { width: var(--sz-icon-btn); height: var(--sz-icon-btn); padding: 0; border-radius: var(--r-control); }
 .drawer-item-row [data-slot="badge"] svg { width: 11px; height: 11px; }
 .drawer-item-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--foreground); font-size: var(--t-data); font-weight: 600; }
 .drawer-item-id, .drawer-item-meta, .drawer-item-detail, .drawer-data-row { color: var(--muted-foreground); font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: var(--t-data); }
 .drawer-item-id, .drawer-item-meta { margin-left: auto; white-space: nowrap; }
-.drawer-item-detail { margin: 3px 0 0 27px; overflow-wrap: anywhere; }
-.drawer-badges { display: flex; flex-wrap: wrap; gap: 5px; }
-.drawer-data-row { display: flex; align-items: baseline; gap: 5px; padding: 4px 0; border-bottom: 1px solid color-mix(in oklab, var(--border) 45%, transparent); overflow-wrap: anywhere; }
+.drawer-item-detail { margin: var(--s-quarter) 0 0 calc(var(--sz-icon-btn) + var(--s-3q)); overflow-wrap: anywhere; }
+.drawer-badges { display: flex; flex-wrap: wrap; gap: var(--s-half); }
+.drawer-data-row { display: flex; align-items: baseline; gap: var(--s-half); padding: var(--s-half) 0; border-bottom: 1px solid color-mix(in oklab, var(--border) 45%, transparent); overflow-wrap: anywhere; }
 .drawer-data-row > span:nth-child(2) { color: var(--foreground); }
-.stage-tree-item { margin: 3px 0; }
-.stage-tree-children { margin: 4px 0 0 10px; padding-left: 12px; border-left: 1px solid var(--border); }
-.activity-summary { display: flex; align-items: center; gap: 8px; padding: 10px; border-radius: 8px; background: var(--muted); font-size: var(--t-data); }
+.stage-tree-item { margin: var(--s-quarter) 0; }
+.stage-tree-children { margin: var(--s-half) 0 0 var(--s-1); padding-left: var(--s-2); border-left: 1px solid var(--border); }
+.activity-summary { display: flex; align-items: center; gap: var(--s-1); padding: var(--s-1); border-radius: var(--r-control); background: var(--muted); font-size: var(--t-data); }
 .status-spin { animation: status-spin 1.4s linear infinite; }
 @keyframes status-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
@@ -1508,7 +1471,10 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   .react-flow__edge.animated .react-flow__edge-path { animation: none; }
 }
 
-/* Keyboard reach on shell chrome: a visible ring on every control the shell draws itself. */
+/* Keyboard reach on every control the shell draws itself, as one ring. It is inset rather
+   than outward because the node toggles live inside cards with `overflow: hidden`, where an
+   outward ring is clipped to nothing — which is how three of these came to be unreachable
+   to the eye while still being focusable. */
 .rail-tab:focus-visible,
 .rail-strip-btn:focus-visible,
 .rail-collapse:focus-visible,
@@ -1516,19 +1482,27 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .run-chip:focus-visible,
 .ev-row:focus-visible,
 .graph-legend-close:focus-visible,
-.ev-detail-close:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.ev-detail-close:focus-visible,
+.chat-corpus-btn:focus-visible,
+.corpus-close:focus-visible,
+.chat-options > summary:focus-visible,
+.c-header-toggle:focus-visible,
+.c-header-inspect:focus-visible,
+.c-step-toggle:focus-visible,
+.g-chip-toggle:focus-visible,
+.graph-canvas .react-flow__controls-button:focus-visible,
+[data-slot="button"]:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+/* Full-width rows tint as well as ring: the ring alone reads as a border on a list item. */
 .chat-preset:focus-visible,
 .corpus-row:focus-visible,
 .corpus-group-btn:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; background: var(--muted); }
-.chat-corpus-btn:focus-visible,
-.corpus-close:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
 
 /* --- inspected node detail (inspector drawer header) ------------------------ */
 .inspected {
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 8px 10px;
-  margin-bottom: 10px;
+  padding: var(--s-1);
+  margin-bottom: var(--s-1);
   background: color-mix(in oklab, var(--primary) 6%, transparent);
 }
 .inspected-kind {
@@ -1539,13 +1513,13 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 }
 /* The inspector answers one question — what is this node — so the node's name is the
    title of the panel, not another line of metadata the same size as its own timings. */
-.inspected-label { color: var(--foreground); font-weight: 600; font-size: var(--t-title); letter-spacing: -0.015em; line-height: 1.25; margin: 2px 0 4px; }
+.inspected-label { color: var(--foreground); font-weight: 600; font-size: var(--t-title); letter-spacing: -0.015em; line-height: 1.25; margin: var(--s-quarter) 0 var(--s-half); }
 .inspected-meta { color: var(--muted-foreground); font-size: var(--t-data); }
 .inspected-json {
-  margin: 6px 0 0;
-  padding: 6px 8px;
+  margin: var(--s-3q) 0 0;
+  padding: var(--s-3q) var(--s-1);
   background: var(--background);
-  border-radius: 8px;
+  border-radius: var(--r-control);
   font-size: var(--t-data);
   overflow: auto;
   color: var(--muted-foreground);
@@ -1565,10 +1539,10 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   display: flex;
   align-items: center;
   gap: var(--s-1);
-  padding: var(--s-1) 10px;
+  padding: var(--s-1);
   border-bottom: 1px solid var(--border);
 }
-.eventlog-bar [data-slot="button"] { height: 28px; flex: none; }
+.eventlog-bar [data-slot="button"] { height: var(--h-control-sm); flex: none; }
 .eventlog-volume {
   min-width: 0;
   color: var(--muted-foreground);
@@ -1582,9 +1556,9 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .eventlog-jump { margin-left: auto; }
 .eventlog-list { flex: 1; min-height: 0; overflow: auto; }
 .eventlog-empty {
-  margin: 10px;
-  padding: 9px 10px;
-  border-radius: 8px;
+  margin: var(--s-1);
+  padding: var(--s-1);
+  border-radius: var(--r-control);
   background: var(--muted);
   color: var(--muted-foreground);
   font-size: var(--t-data);
@@ -1596,8 +1570,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   gap: var(--s-1);
   width: 100%;
   min-width: max-content;
-  min-height: 26px;
-  padding: 3px 10px;
+  min-height: var(--h-control-sm);
+  padding: var(--s-quarter) var(--s-1);
   border: 0;
   background: transparent;
   font-family: inherit;
@@ -1622,49 +1596,39 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   align-items: center;
   justify-content: space-between;
   gap: var(--s-1);
-  padding: 5px 8px 5px 10px;
+  padding: var(--s-half) var(--s-1) var(--s-half) var(--s-1);
   background: var(--background);
   color: var(--primary);
   font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: var(--t-data);
 }
-.ev-detail-close {
-  display: inline-flex;
-  padding: 2px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted-foreground);
-  cursor: pointer;
-}
-.ev-detail-close:hover { color: var(--foreground); background: var(--muted); }
-.ev-detail-close svg { width: 13px; height: 13px; }
-.ev-detail pre { margin: 0; padding: 2px 10px 8px; font-size: var(--t-data); color: var(--muted-foreground); }
+.ev-detail-close svg { width: var(--sz-icon); height: var(--sz-icon); }
+.ev-detail pre { margin: 0; padding: var(--s-quarter) var(--s-1) var(--s-1); font-size: var(--t-data); color: var(--muted-foreground); }
 
 /* --- narrow viewports ------------------------------------------------------ */
 @media (max-width: 899px) {
   .topbar {
     grid-template-columns: minmax(0, 1fr) auto;
-    gap: 6px 10px;
-    padding: 7px 10px;
+    gap: var(--s-3q) var(--s-1);
+    padding: var(--s-3q) var(--s-1);
   }
   /* The rack drops under the identity and wraps rather than squeezing its cells. */
   .topbar-rack { grid-column: 1; grid-row: 2; justify-self: start; flex-wrap: wrap; }
-  .topbar .topbar-rack > * + * { margin-left: 10px; padding-left: 10px; }
-  .topbar-state { justify-content: flex-start; gap: 7px; }
+  .topbar .topbar-rack > * + * { margin-left: var(--s-1); padding-left: var(--s-1); }
+  .topbar-state { justify-content: flex-start; gap: var(--s-3q); }
   .health-state { font-size: var(--t-data); }
   .topbar-model { max-width: min(160px, 34vw); }
   .topbar-error { max-width: min(160px, 34vw); }
   .counter:first-child { padding-left: 0; }
   .topbar-actions { grid-column: 2; grid-row: 2; padding-left: 0; border-left: 0; }
-  .topbar [data-slot="button"] { min-height: 38px; }
-  .conn-chip { max-width: 46vw; min-height: 30px; }
-  .run-chip { min-height: 32px; }
+  .topbar [data-slot="button"] { min-height: var(--h-touch); }
+  .conn-chip { max-width: 46vw; min-height: var(--h-touch); }
+  .run-chip { min-height: var(--h-touch); }
   .stagebar { flex-wrap: wrap; gap: var(--s-1); }
   .stagebar-runs { order: 2; width: 100%; }
   .stagebar-tools { order: 1; }
   .stagebar-scope { display: none; }
-  .graph-wrap { padding-left: 8px; padding-right: 8px; }
+  .graph-wrap { padding-left: var(--s-1); padding-right: var(--s-1); }
   .graph-minimap { display: none; }
   .graph-legend { display: none; }
 }
@@ -1674,11 +1638,11 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--s-half);
   background: var(--card);
   border: 1px solid var(--border-state);
-  border-radius: 12px;
-  padding: 9px 11px;
+  border-radius: var(--r-node);
+  padding: var(--s-1) var(--s-2);
   font-size: var(--t-data);
   color: var(--foreground);
   box-shadow: 0 7px 16px -17px oklch(30% 0.04 210 / 0.55);
@@ -1697,10 +1661,13 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   background: color-mix(in oklab, var(--success) 10%, var(--card));
   opacity: 1;
 }
+/* The second border pixel is taken out of the padding rather than added to the card, so a
+   node becoming current never nudges its own contents or outgrows the height `core.ts`
+   reserved for it. Derived from the card's padding so the two cannot drift apart. */
 .g-current {
   border-color: var(--success);
   border-width: 2px;
-  padding: 8px 10px;
+  padding: calc(var(--s-1) - 1px) calc(var(--s-2) - 1px);
   background: color-mix(in oklab, var(--success) 17%, var(--card));
 }
 .g-failed { border-color: color-mix(in oklab, var(--destructive) 48%, var(--border)); background: color-mix(in oklab, var(--destructive) 5%, var(--card)); }
@@ -1722,8 +1689,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .g-chip {
   flex-direction: row;
   align-items: center;
-  padding: 5px 10px;
-  border-radius: 999px;
+  padding: var(--s-half) var(--s-1);
+  border-radius: var(--r-pill);
   border-left-width: 1px;
   font-size: var(--t-data);
 }
@@ -1741,19 +1708,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   flex: none;
 }
 .g-chip-toggle {
-  display: inline-grid;
-  place-items: center;
-  flex: none;
-  width: 22px;
-  height: 22px;
   margin-left: auto;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted-foreground);
-  cursor: pointer;
 }
-.g-chip-toggle:hover { background: var(--muted); color: var(--foreground); }
 .g-chip-toggle svg { width: 12px; height: 12px; }
 .g-profile .g-card {
   min-height: 62px;
@@ -1773,8 +1729,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   position: absolute;
   top: 0;
   right: 0;
-  padding: 2px 6px 3px;
-  border-radius: 0 8px 0 8px;
+  padding: var(--s-quarter) var(--s-3q) var(--s-quarter);
+  border-radius: 0 var(--r-control) 0 var(--r-control);
   background: var(--primary);
   color: var(--primary-foreground);
   font-size: var(--t-data);
@@ -1789,11 +1745,11 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .g-chip-wrap { width: 168px; }
 .g-profile { width: 196px; }
 
-.g-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.g-title { display: flex; align-items: center; gap: var(--s-3q); min-width: 0; }
 .g-chev { display: inline-flex; color: var(--muted-foreground); flex: none; }
 .g-glyph { flex: none; width: 12px; display: inline-flex; align-items: center; justify-content: center; }
 .g-glyph svg { width: 11px; height: 11px; stroke-width: 2.2; }
-.run-chip svg { width: 12px; height: 12px; }
+.run-chip svg { width: var(--sz-icon-sm); height: var(--sz-icon-sm); }
 .graph-legend .g-glyph { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .g-glyph.ok { color: var(--success); }
 .g-glyph.info { color: var(--primary); }
@@ -1810,10 +1766,10 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   margin-left: auto;
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: var(--s-quarter);
   flex: none;
-  padding: 1px 5px;
-  border-radius: 8px;
+  padding: 0 var(--s-half);
+  border-radius: var(--r-control);
   background: var(--muted);
   color: var(--muted-foreground);
   font-size: var(--t-data);
@@ -1836,9 +1792,9 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .g-entry-tag {
   flex: none;
   margin-left: auto;
-  padding: 1px 5px;
+  padding: 0 var(--s-half);
   border: 1px solid color-mix(in oklab, var(--primary) 58%, var(--border));
-  border-radius: 8px;
+  border-radius: var(--r-control);
   background: var(--secondary);
   color: var(--primary);
   font-size: var(--t-data);
@@ -1854,13 +1810,13 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   text-overflow: ellipsis;
 }
 .g-prof { color: var(--secondary-foreground); }
-.g-time { color: var(--muted-foreground); opacity: 0.8; margin-left: 6px; }
+.g-time { color: var(--muted-foreground); opacity: 0.8; margin-left: var(--s-3q); }
 .g-refs { color: var(--primary); font-weight: 600; }
 .g-transfer {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: baseline;
-  gap: 6px;
+  gap: var(--s-3q);
   color: var(--muted-foreground);
   font-size: var(--t-data);
 }
@@ -1883,15 +1839,15 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .g-shape {
   color: var(--secondary-foreground);
   border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 0 6px;
+  border-radius: var(--r-pill);
+  padding: 0 var(--s-3q);
   font-size: var(--t-data);
 }
 .g-conf { color: var(--ev-workflow); font-weight: 700; }
 .g-decide {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--s-3q);
   font-size: var(--t-data);
   color: var(--muted-foreground);
 }
@@ -1899,34 +1855,34 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .g-route-plan {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--s-half);
   min-width: 0;
   color: var(--secondary-foreground);
   font-size: var(--t-data);
 }
 .g-route-plan > span:first-child { color: var(--muted-foreground); font-weight: 700; }
-.g-route-plan b { margin-right: 5px; color: var(--primary); }
+.g-route-plan b { margin-right: var(--s-half); color: var(--primary); }
 .g-rule-vs {
   font-size: var(--t-data);
   border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 0 5px;
+  border-radius: var(--r-pill);
+  padding: 0 var(--s-half);
   color: var(--muted-foreground);
 }
 .g-toggle {
   align-self: flex-start;
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: var(--s-quarter);
   font-family: inherit;
   font-size: var(--t-data);
   color: var(--muted-foreground);
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 1px 6px;
+  border-radius: var(--r-control);
+  padding: 0 var(--s-3q);
   cursor: pointer;
-  margin-top: 2px;
+  margin-top: var(--s-quarter);
 }
 .g-toggle:hover { color: var(--primary); border-color: var(--ring); }
 
@@ -1967,9 +1923,9 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   width: 100%;
   height: 100%;
   border: 1px solid color-mix(in oklab, var(--border) 82%, var(--primary));
-  border-radius: 14px;
+  border-radius: var(--r-surface);
   background: color-mix(in oklab, var(--secondary) 34%, transparent);
-  padding: 7px 10px;
+  padding: var(--s-3q) var(--s-1);
 }
 .g-group-label {
   position: absolute;
@@ -2004,16 +1960,31 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .react-flow__controls {
   box-shadow: none;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-control);
   overflow: hidden;
 }
-.react-flow__controls-button {
+/* React Flow ships these at its own 26px square with its own icon size. They sit in the
+   canvas corner beside controls this system draws, so they take the dense control height
+   and the shell's icon size rather than staying the one stock widget on the board. */
+/* Scoped to the canvas because React Flow's own sheet ships in the lazy graph chunk and
+   therefore lands after this file; at equal specificity its 26px square would win. */
+.graph-canvas .react-flow__controls-button {
+  width: var(--h-control-sm);
+  height: var(--h-control-sm);
+  padding: 0;
   background: var(--card);
   border-bottom: 1px solid var(--border);
   color: var(--foreground);
 }
-.react-flow__controls-button:hover { background: var(--muted); }
-.react-flow__controls-button svg { fill: var(--foreground); }
+.graph-canvas .react-flow__controls-button:last-child { border-bottom: 0; }
+.graph-canvas .react-flow__controls-button:hover { background: var(--muted); }
+.graph-canvas .react-flow__controls-button svg {
+  width: var(--sz-icon-sm);
+  height: var(--sz-icon-sm);
+  max-width: none;
+  max-height: none;
+  fill: var(--foreground);
+}
 
 .graph-minimap {
   position: absolute;
@@ -2023,7 +1994,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   width: 200px;
   height: 150px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-control);
   overflow: hidden;
   /* The minimap sits on top of the board it describes, so it reads through rather than
      occluding: at 94% opaque it buried whichever stage the layout happened to put here. */
@@ -2087,7 +2058,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   box-sizing: border-box;
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--r-node);
   padding: 0;
   font-size: var(--t-data);
   color: var(--foreground);
@@ -2124,7 +2095,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .c-route-note {
   box-sizing: border-box;
   min-height: 22px;
-  padding: 4px 12px;
+  padding: var(--s-half) var(--s-2);
   font-size: var(--t-data);
   letter-spacing: 0.01em;
   color: color-mix(in oklab, var(--muted-foreground) 88%, transparent);
@@ -2134,9 +2105,9 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .c-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--s-1);
   min-height: 38px;
-  padding: 7px 12px;
+  padding: var(--s-3q) var(--s-2);
   border-bottom: 1px solid var(--border);
   background: color-mix(in oklab, var(--secondary) 30%, transparent);
 }
@@ -2144,11 +2115,11 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .is-done > .c-header { background: color-mix(in oklab, var(--success) 11%, var(--card)); }
 .is-failed > .c-header { background: color-mix(in oklab, var(--destructive) 8%, var(--card)); }
 
-.c-header-glyph { display: inline-flex; align-items: center; justify-content: center; width: 14px; color: var(--success); flex: none; }
+.c-header-glyph { display: inline-flex; align-items: center; justify-content: center; width: var(--sz-icon); color: var(--success); flex: none; }
 .is-active .c-header-glyph { color: var(--primary); }
 .is-failed .c-header-glyph { color: var(--destructive); }
 .is-idle .c-header-glyph { display: none; }
-.c-header-glyph svg { width: 13px; height: 13px; }
+.c-header-glyph svg { width: var(--sz-icon); height: var(--sz-icon); }
 .c-header-label {
   flex: 1 1 auto;
   min-width: 0;
@@ -2166,29 +2137,14 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .g-compact.is-collapsed .c-header { border-bottom: 0; }
 .g-compact.is-collapsed:hover { opacity: 1; }
 
-.c-header-toggle {
-  display: inline-grid;
-  place-items: center;
-  flex: none;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted-foreground);
-  cursor: pointer;
-}
-.c-header-toggle:hover { background: color-mix(in oklab, var(--primary) 12%, transparent); color: var(--primary); }
-.c-header-toggle:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
 
 /* The second half of a workflow that was cut open at its branch. Quiet: the label beside it
    already names the workflow, and this only says which piece of it you are looking at. */
 .c-header-cont {
   flex: none;
-  padding: 0 6px;
+  padding: 0 var(--s-3q);
   border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   font-size: var(--t-label);
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -2207,8 +2163,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 }
 .c-header-status {
   flex: none;
-  padding: 1px 7px;
-  border-radius: 999px;
+  padding: 0 var(--s-3q);
+  border-radius: var(--r-pill);
   font-size: var(--t-data);
   font-weight: 700;
   white-space: nowrap;
@@ -2225,27 +2181,9 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   white-space: nowrap;
 }
 .c-header-inspect {
-  display: inline-grid;
-  place-items: center;
-  flex: none;
-  width: 22px;
-  height: 22px;
-  margin-right: -3px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: color-mix(in oklab, var(--muted-foreground) 80%, transparent);
-  cursor: pointer;
-  position: relative;
+  margin-right: calc(var(--s-quarter) * -1);
 }
-.c-header-inspect svg { width: 13px; height: 13px; }
-.c-header-inspect::before {
-  content: '';
-  position: absolute;
-  inset: -8px -6px -8px -6px;
-}
-.c-header-inspect:hover { background: color-mix(in oklab, var(--primary) 12%, transparent); color: var(--primary); }
-.c-header-inspect:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.c-header-inspect svg { width: var(--sz-icon); height: var(--sz-icon); }
 
 /* 3px of progress under the header, and nothing at all before the first step lands. */
 .c-progress {
@@ -2274,9 +2212,9 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .c-terminal {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--s-3q);
   min-height: 28px;
-  padding: 5px 12px;
+  padding: var(--s-half) var(--s-2);
   font-size: var(--t-label);
   color: var(--muted-foreground);
   background: color-mix(in oklab, var(--muted) 26%, transparent);
@@ -2303,7 +2241,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   flex-direction: column;
 }
 .c-empty {
-  padding: 10px 12px;
+  padding: var(--s-1) var(--s-2);
   color: var(--muted-foreground);
   font-size: var(--t-data);
   font-style: italic;
@@ -2316,7 +2254,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .c-step {
   display: flex;
   flex-direction: column;
-  padding: 0 12px;
+  padding: 0 var(--s-2);
   border-bottom: 1px solid color-mix(in oklab, var(--border) 45%, transparent);
 }
 .c-step:last-child { border-bottom: 0; }
@@ -2329,12 +2267,12 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .c-step-main {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--s-1);
   min-height: 36px;
   cursor: default;
 }
 .c-step-num {
-  width: 13px;
+  width: var(--sz-step-num);
   flex: none;
   text-align: right;
   color: var(--muted-foreground);
@@ -2342,7 +2280,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   font-size: var(--t-data);
   font-variant-numeric: tabular-nums;
 }
-.c-step-status { display: inline-flex; align-items: center; justify-content: center; width: 12px; color: var(--muted-foreground); flex: none; }
+.c-step-status { display: inline-flex; align-items: center; justify-content: center; width: var(--sz-step-status); color: var(--muted-foreground); flex: none; }
 .c-step-status svg { width: 12px; height: 12px; }
 .is-active > .c-step-main > .c-step-status { color: var(--primary); }
 .is-done > .c-step-main > .c-step-status { color: var(--success); }
@@ -2358,7 +2296,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   text-overflow: ellipsis;
 }
 .is-idle > .c-step-main > .c-step-label { color: color-mix(in oklab, var(--foreground) 82%, transparent); }
-.c-step-meta { display: inline-flex; align-items: baseline; justify-content: flex-end; gap: 8px; min-width: 0; max-width: 52%; margin-left: auto; flex: 0 1 auto; }
+.c-step-meta { display: inline-flex; align-items: baseline; justify-content: flex-end; gap: var(--s-1); min-width: 0; max-width: 52%; margin-left: auto; flex: 0 1 auto; }
 /* Only ever painted when the step hands off to another profile — the card names its own. */
 .c-step-profile {
   color: var(--muted-foreground);
@@ -2377,35 +2315,18 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   flex: none;
 }
 .c-step-toggle {
-  display: inline-grid;
-  place-items: center;
-  flex: none;
-  width: 22px;
-  height: 22px;
-  margin-right: -5px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: color-mix(in oklab, var(--muted-foreground) 80%, transparent);
-  cursor: pointer;
-  position: relative;
+  margin-right: calc(var(--s-half) * -1);
 }
-/* The compact rows reserve 36px; give the toggle a 44px effective hit area on
-   coarse pointers without shifting the deterministic layout measurements. */
-.c-step-toggle::before {
-  content: '';
-  position: absolute;
-  inset: -11px -8px -11px -8px;
-}
-.c-step-toggle:hover { background: var(--muted); color: var(--foreground); }
-.c-step-toggle:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
 
+/* Everything that hangs under a step starts where the step's own text does: past the
+   number, the gap, and the status glyph. Written as the sum rather than as the 33px it
+   comes to, because the three parts are tokens now and a literal would drift off them. */
 .c-step-router-info {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--s-3q);
   min-height: 27px;
-  padding: 0 0 6px 33px;
+  padding: 0 0 var(--s-3q) var(--c-step-indent);
   color: var(--muted-foreground);
   font-size: var(--t-data);
 }
@@ -2416,8 +2337,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .c-step-rule {
   font-size: var(--t-data);
   border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 0 5px;
+  border-radius: var(--r-pill);
+  padding: 0 var(--s-half);
   color: var(--muted-foreground);
 }
 
@@ -2425,16 +2346,16 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .c-stages {
   display: flex;
   flex-direction: column;
-  padding: 3px 0 6px 16px;
+  padding: var(--s-quarter) 0 var(--s-3q) var(--s-3);
   border-left: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
-  margin: 0 0 4px 33px;
+  margin: 0 0 var(--s-half) var(--c-step-indent);
 }
 
 .c-stage {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 2px 0;
+  gap: var(--s-3q);
+  padding: var(--s-quarter) 0;
   font-size: var(--t-data);
   /* Pinned, not inherited: COMPACT_STAGE_H in lib/graph/core.ts is 2px padding plus a
      16px line, and that module lays the board out without ever measuring the DOM. Left
@@ -2457,7 +2378,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
 .c-stage.is-active { color: var(--foreground); font-weight: 600; }
 .c-stage svg { width: 11px; height: 11px; flex: none; }
 .c-stage-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.c-stage-meta { display: inline-flex; align-items: baseline; gap: 8px; margin-left: auto; white-space: nowrap; flex: none; color: var(--muted-foreground); }
+.c-stage-meta { display: inline-flex; align-items: baseline; gap: var(--s-1); margin-left: auto; white-space: nowrap; flex: none; color: var(--muted-foreground); }
 .c-stage-time { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: var(--t-data); font-variant-numeric: tabular-nums; }
 .c-stage-llm { font-size: var(--t-data); }
 
@@ -2485,7 +2406,7 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   position: absolute;
   inset: 0;
   border: 1px solid var(--primary);
-  border-radius: 12px;
+  border-radius: var(--r-node);
   opacity: 0.3;
   pointer-events: none;
   animation: c-breathe 3.2s ease-in-out infinite;
@@ -2566,12 +2487,12 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   gap: 0;
 }
 .graph-mode-toggle [data-slot="button"] {
-  height: 28px;
-  padding-inline: 8px;
+  height: var(--h-control-sm);
+  padding-inline: var(--s-1);
   border-radius: 0;
 }
-.graph-mode-toggle [data-slot="button"]:first-child { border-radius: 8px 0 0 8px; }
-.graph-mode-toggle [data-slot="button"]:last-child { border-radius: 0 8px 8px 0; }
+.graph-mode-toggle [data-slot="button"]:first-child { border-radius: var(--r-control) 0 0 var(--r-control); }
+.graph-mode-toggle [data-slot="button"]:last-child { border-radius: 0 var(--r-control) var(--r-control) 0; }
 
 .react-flow__edge { cursor: default; }
 .react-flow__edge-path { stroke-linecap: round; }
@@ -2583,8 +2504,8 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
    the one node that states a decision rather than listing work. */
 .g-gateway { width: 340px; }
 .g-gateway .g-card {
-  gap: 3px;
-  padding: 9px 12px;
+  gap: var(--s-quarter);
+  padding: var(--s-1) var(--s-2);
   background: var(--card);
   border-color: var(--border);
   box-shadow: 0 8px 18px -16px oklch(30% 0.04 210 / 0.5);
@@ -2614,6 +2535,6 @@ body.is-rail-resizing { cursor: col-resize; user-select: none; }
   font-size: var(--t-data);
 }
 .g-gateway .g-meta { font-size: var(--t-data); }
-.g-gateway .g-decide { gap: 6px; font-size: var(--t-data); }
+.g-gateway .g-decide { gap: var(--s-3q); font-size: var(--t-data); }
 .g-gateway .g-decide svg { width: 10px; height: 10px; flex: none; opacity: 0.7; }
 .g-route-label { font-weight: 600; }

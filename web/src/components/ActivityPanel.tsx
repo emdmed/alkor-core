@@ -51,7 +51,7 @@ export const ActivityPanel = memo(({ state }: { state: ProjectState }) => {
         )
       })}
 
-      <Separator className="my-2.5" />
+      <Separator className="my-3" />
 
       <h3 className="drawer-section-title">Model requests</h3>
       {state.llmRequests.size === 0 && <div className="drawer-empty">No model requests observed.</div>}
