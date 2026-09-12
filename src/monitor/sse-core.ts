@@ -1,15 +1,14 @@
 /**
  * Transport-agnostic SSE core: frame parsing, splitting, and the wire policy
- * (spec refusal + seq dedup). The terminal client (undici) and the web client (fetch)
- * both consume this module; a browser can import it directly because nothing here
- * touches Node. Keep it dependency-free.
+ * (spec refusal + seq dedup). The web client (fetch) consumes this module directly,
+ * because nothing here touches Node. Keep it dependency-free.
  */
 import { ACTIVITY_SPEC, ACTIVITY_INSTANCE_HEADER, type ActivityEvent } from '../core/activity-types.ts'
 
 // Re-exported so a client needs one import for the whole wire policy.
 export { ACTIVITY_INSTANCE_HEADER }
 
-/** Connection states reported by both clients to a dashboard. */
+/** Connection states a client reports to a dashboard. */
 export type SseConnectionStatus =
   | { kind: 'connecting' }
   | { kind: 'live' }

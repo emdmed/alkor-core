@@ -1,13 +1,12 @@
 /**
- * Formatting helpers ported from the terminal renderer (`src/tui/app.ts`) so both
- * dashboards say the same thing: same marks, same colour connotations, written as CSS
- * classes instead of ANSI fg() spans.
+ * Formatting helpers for the dashboard: the marks and colour connotations the whole
+ * board shares, written as CSS classes.
  */
-import type { ConnectionStatus, ModelEntry, ProjectState } from '../../../src/tui/state.ts'
+import type { ConnectionStatus, ModelEntry, ProjectState } from '../../../src/monitor/state.ts'
 
 export type NodeState = 'active' | 'done' | 'failed' | 'idle'
 
-/** The glyph the terminal uses for each node state; kept identical for continuity. */
+/** The glyph for each node state. */
 export const nodeMark: Record<NodeState, string> = {
   active: '●',
   done: '✓',
@@ -25,7 +24,7 @@ export const nodeCls: Record<NodeState, string> = {
 export const runState = (status: string): NodeState =>
   status === 'started' ? 'active' : status === 'failed' ? 'failed' : 'done'
 
-/** First identified model, with the path and .gguf suffix stripped — as the TUI shows it. */
+/** First identified model, with the path and .gguf suffix stripped. */
 export const modelName = (models: Map<string, ModelEntry>): string => {
   for (const m of models.values()) {
     if (m.identified && m.model) {
@@ -88,5 +87,5 @@ export type KindGroup = (typeof KIND_GROUPS)[number]
 export const kindMatches = (kind: string, group: KindGroup): boolean =>
   group === 'all' || kind.startsWith(`${group}.`) || kind === group
 
-/** Milliseconds to a compact seconds figure, as the TUI prints it. */
+/** Milliseconds to a compact seconds figure. */
 export const fmtSec = (wallMs?: number): string => (wallMs == null ? '' : `${(wallMs / 1000).toFixed(1)}s`)

@@ -20,7 +20,7 @@ import {
   DropdownMenuContent,
   DropdownMenuCheckboxItem,
 } from '../ui/dropdown-menu'
-import type { ProjectState } from '../../../../src/tui/state.ts'
+import type { ProjectState } from '../../../../src/monitor/state.ts'
 
 export interface PipelineGraphProps {
   state: ProjectState

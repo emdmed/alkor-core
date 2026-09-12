@@ -201,9 +201,8 @@ reference pack declares its default in `packs/clinical/models.default.toml` — 
 sha256, size and context size — so the number a run reports stays attributable to exact
 bytes. Budget ~4.6 GB for the weights plus KV cache for `ctx_size`.
 
-Two things are opt-in and need more: the **TUI** wants Node ≥ 26.4 with
-`--experimental-ffi` or Bun ≥ 1.3, and the **web dashboard** has its own `npm install
---prefix web`. Neither is needed to extract or to eval.
+One thing is opt-in and needs more: the **web dashboard** has its own `npm install
+--prefix web`. It is not needed to extract or to eval.
 
 ## Contributing
 

@@ -1,7 +1,7 @@
 /**
  * Pure reducer: `applyEvent(state, ActivityEvent) → state`.
  *
- * All intelligence is here. The OpenTUI layer only renders what this produces.
+ * All intelligence is here. The view layer only renders what this produces.
  * No clinical concept is named — the view is generic over event kinds.
  */
 import { ACTIVITY_SPEC, type ActivityEvent, type StageOperation, type TemplateRefEntry } from '../core/activity-types.ts'

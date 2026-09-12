@@ -1,5 +1,5 @@
 /**
- * TUI state reducer: every event kind, dedup, gaps, refusal, orphan stages, failure rate.
+ * Monitor state reducer: every event kind, dedup, gaps, refusal, orphan stages, failure rate.
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -13,7 +13,7 @@ import {
   tokPerSec,
   stageTreeForRun,
   setTopology,
-} from '../src/tui/state.ts'
+} from '../src/monitor/state.ts'
 import { ACTIVITY_SPEC, type ActivityEvent } from '../src/core/activity.ts'
 
 const mkEvent = (partial: Record<string, unknown> & { seq: number }): ActivityEvent => ({

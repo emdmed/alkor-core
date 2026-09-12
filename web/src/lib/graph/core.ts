@@ -6,7 +6,7 @@
  * here is a contract both `run.ts` and `project.ts` build against. Advancing by the
  * old one-size estimates would let the next card land on top of a reserved row.
  */
-import type { StageEntry, LlmRequestEntry } from '../../../../src/tui/state.ts'
+import type { StageEntry, LlmRequestEntry } from '../../../../src/monitor/state.ts'
 import type { NodeState } from '../format.ts'
 import type { GraphBuild, GraphEdge, GraphNode, GraphNodeData, GraphNodeKind, GraphOperation, CompactStepData } from './types.ts'
 

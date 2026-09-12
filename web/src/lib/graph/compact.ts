@@ -11,8 +11,8 @@
  * that decides, the fan is drawn between the halves, and every branch converges back into
  * the segment that consumes it.
  */
-import { stageTreeForRun } from '../../../../src/tui/state.ts'
-import type { WorkflowDefinition, WorkflowStepEntry, ProjectState, RunEntry, StageEntry } from '../../../../src/tui/state.ts'
+import { stageTreeForRun } from '../../../../src/monitor/state.ts'
+import type { WorkflowDefinition, WorkflowStepEntry, ProjectState, RunEntry, StageEntry } from '../../../../src/monitor/state.ts'
 import { CHIP_GAP, CHIP_W, COMPACT_W, MAIN_X, MAIN_Y, ROUTE_GAP, ROW_GAP, compactCardKey, compactStepKey, detailTextOf, flowEdge, layoutHeightOf, layoutWidthOf, llmOf, node, obj, operationFor, shortDigest, stageState, stepIndexOf } from './core.ts'
 import { declaredPreDecisionStages, declaredRouteGroups, inputReference, matchTopology, routeForRun, type RouteGroup } from './run.ts'
 import type { ProfileTopologyStage } from '../../../../src/core/topology.ts'

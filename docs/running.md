@@ -20,22 +20,6 @@ node src/cli.ts workflow --profile clinical-verified --input "ward-round.txt"
 node scripts/model-manager.ts status
 ```
 
-### TUI (terminal dashboard)
-
-```bash
-npm run tui                    # connect to http://127.0.0.1:3000
-node --experimental-ffi src/tui.ts --url http://127.0.0.1:3001
-```
-
-The TUI is an **opt-in entry** that requires a runtime with native FFI:
-
-- **Node.js ≥ 26.4.0** with `--experimental-ffi`, **or**
-- **Bun ≥ 1.3**
-
-The rest of the harness (tests, CLI, server) runs unchanged on Node ≥ 24. The TUI
-consumes the same `GET /events` SSE stream that the server already exposes; no
-in-process coupling, no additional API, no build step.
-
 ### Web dashboard (browser)
 
 ```bash
@@ -44,12 +28,13 @@ npm run web                        # dev server on http://localhost:5173
 npm run web:build                  # static build to web/dist/
 ```
 
-A React + Vite dashboard that renders the same activity feed in the browser — the
-terminal TUI's panels plus an inspector (sessions, stage trees, tools, routes, HTTP
-traffic), an editable server URL, pause/resume, and a filterable, click-to-inspect event
-log. It is a browser over the same three layers as the terminal TUI: the pure reducer in
-`src/tui/state.ts` and the SSE core in `src/tui/sse-core.ts` are shared verbatim; only
-the transport differs (browser `fetch` + `ReadableStream` instead of `undici`).
+A React + Vite dashboard over the activity feed: live panels plus an inspector (sessions,
+stage trees, tools, routes, HTTP traffic), an editable server URL, pause/resume, and a
+filterable, click-to-inspect event log. It consumes the same `GET /events` SSE stream the
+server already exposes — no in-process coupling, no additional API. The intelligence is
+not in the app: the pure reducer in `src/monitor/state.ts` and the SSE core in
+`src/monitor/sse-core.ts` are dependency-free and unit-tested on Node; the app supplies
+only the transport (`fetch` + `ReadableStream`) and the paint.
 
 The dashboard is cross-origin by definition, so the server answers CORS for **loopback
 `Origin`s when an `Origin` header is present**; nothing else is granted by default. Set
@@ -62,7 +47,7 @@ PORT=3000 ALKOR_CORS="http://192.168.1.20:5173" node src/server.ts
 
 Point the dashboard at a different server with the URL field, or set
 `VITE_ALKOR_URL` at build time. The wire carries only metadata-flowing event fields,
-under the same banned-key guarantee the terminal TUI relies on.
+under the server's banned-key guarantee.
 
 ### Extracting from one note
 

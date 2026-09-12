@@ -1,6 +1,6 @@
 import { memo } from 'react'
-import type { ProjectState } from '../../../src/tui/state.ts'
-import { inFlightCount, tokPerSec } from '../../../src/tui/state.ts'
+import type { ProjectState } from '../../../src/monitor/state.ts'
+import { inFlightCount, tokPerSec } from '../../../src/monitor/state.ts'
 import { runState, fmtSec } from '../lib/format.ts'
 import { Badge } from './ui/badge'
 import { Separator } from './ui/separator'

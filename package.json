@@ -9,8 +9,7 @@
   },
   "bin": {
     "alkor": "./src/cli.ts",
-    "alkor-server": "./src/server.ts",
-    "alkor-tui": "./src/tui.ts"
+    "alkor-server": "./src/server.ts"
   },
   "private": true,
   "engines": {
@@ -26,7 +25,6 @@
     "route": "node src/cli.ts route",
     "workflow": "node src/cli.ts workflow",
     "server": "node src/server.ts",
-    "tui": "node --experimental-ffi src/tui.ts",
     "web": "npm --prefix web run dev",
     "web:build": "npm --prefix web run build",
     "web:typecheck": "npm --prefix web run typecheck",
@@ -39,8 +37,5 @@
   "devDependencies": {
     "@types/node": "^26.2.0",
     "typescript": "^7.0.2"
-  },
-  "optionalDependencies": {
-    "@opentui/core": "^0.5.10"
   }
 }

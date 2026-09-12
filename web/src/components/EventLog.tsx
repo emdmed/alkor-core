@@ -7,7 +7,7 @@
  */
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { ActivityEvent } from '../../../src/core/activity-types.ts'
-import type { ProjectState } from '../../../src/tui/state.ts'
+import type { ProjectState } from '../../../src/monitor/state.ts'
 import type { GraphNodeData } from '../lib/graph/index.ts'
 import { eventClass, KIND_GROUPS, kindMatches, type KindGroup } from '../lib/format.ts'
 import { ChevronDown, X } from 'lucide-react'

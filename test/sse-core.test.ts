@@ -10,7 +10,7 @@ import {
   parseSseFrame,
   SseFrameAccumulator,
   decideSseFrame,
-} from '../src/tui/sse-core.ts'
+} from '../src/monitor/sse-core.ts'
 
 const event = (seq: number, instanceId = 'bus-a'): Record<string, unknown> => ({
   activitySpec: ACTIVITY_SPEC,

@@ -18,7 +18,7 @@ import {
   COMPACT_W,
   CHIP_W,
 } from '../web/src/lib/graph/index.ts'
-import { emptyState, type ProjectState } from '../src/tui/state.ts'
+import { emptyState, type ProjectState } from '../src/monitor/state.ts'
 
 const compactGateway = () => ({
   profiles: [

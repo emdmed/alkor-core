@@ -37,11 +37,10 @@ error. Always run `npm run check` (test + typecheck) before committing.
   `tsconfig.json` for that reason.
 - `src/index.ts` — the public API. Everything a profile may import is re-exported here;
   nothing that is itself a profile is exported. Deep imports are unsupported.
-- `src/tui/` — dashboards over the activity feed, sharing one pure core. `state.ts` (the
-  reducer) and `sse-core.ts` (frame parsing, dedup, spec refusal) are dependency-free and
-  unit-tested on Node 24; the terminal app and the browser dashboard both import them. The
-  terminal side is `sse.ts` (undici) + `app.ts` (OpenTUI — the only file that may import
-  `@opentui/core`, dynamically, so `node src/tui.ts --help` never fails on Node 24).
+- `src/monitor/` — the dashboard's pure core over the activity feed. `state.ts` (the
+  reducer), `sse-core.ts` (frame parsing, dedup, spec refusal) and `source.ts` (backend
+  connection identity) are dependency-free and unit-tested on Node 24, so the intelligence
+  is provable without a browser. `web/` imports them; nothing here may import React.
 - `web/` — the browser dashboard (React + Vite). It is a separate app with its own
   `package.json`; it imports the shared reducer/SSE core from the repo root by relative
   path and talks to the server over the same `GET /events` + `/health` endpoints. The
@@ -132,11 +131,10 @@ These are taken from `CONTRIBUTING.md` and are enforced by design, not by policy
   pressures, and fabricated quotes because those are the outcomes that matter.
 - The eval loop is testable without a model: `test/eval-loop.test.ts` runs against a
   throwaway `node:http` server that counts requests and serves canned replies.
-- Nothing in `npm test` may need a model, a server, a private pack, **or a native renderer**.
-  `test/tui-state.test.ts` and `test/tui-sse.test.ts` prove the whole TUI intelligence on
-  Node 24 without `@opentui/core` installed; `app.ts` is exercised manually. The same core
-  is what the browser dashboard renders, so nothing in `npm test` needs the web app;
-  `npm run web:typecheck` guards the browser side.
+- Nothing in `npm test` may need a model, a server, a private pack, **or a browser**.
+  `test/monitor-state.test.ts`, `test/sse-core.test.ts` and `test/web-state.test.ts` prove the
+  whole dashboard intelligence on Node 24, because it lives in `src/monitor/` rather than in
+  a component; `npm run web:typecheck` guards the browser side.
 
 ## Files and conventions
 

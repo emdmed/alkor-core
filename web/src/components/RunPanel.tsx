@@ -1,6 +1,6 @@
 /**
  * RunPanel — send a prompt into the alkor pipeline and watch the
- * response stream back in, the same way the terminal CLI or the TUI does.
+ * response stream back in, the same way the CLI does.
  *
  * It is the rail's first tab, not a surface of its own: the rail owns the title,
  * the width, and the closing. The graph is the primary view; this is the command
@@ -11,7 +11,7 @@ import { FolderOpen, LoaderCircle, Send } from 'lucide-react'
 import {
   type WorkflowDefinition,
   type ProjectState,
-} from '../../../src/tui/state.ts'
+} from '../../../src/monitor/state.ts'
 import { Button } from './ui/button'
 import { CopyButton } from './CopyButton'
 import { CorpusPicker } from './CorpusPicker'

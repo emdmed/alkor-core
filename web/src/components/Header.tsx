@@ -8,8 +8,8 @@
  * across every run.
  */
 import { memo, useEffect, useId, useRef, useState } from 'react'
-import type { ProjectState } from '../../../src/tui/state.ts'
-import { cacheHitRatio, failureRate, inFlightCount } from '../../../src/tui/state.ts'
+import type { ProjectState } from '../../../src/monitor/state.ts'
+import { cacheHitRatio, failureRate, inFlightCount } from '../../../src/monitor/state.ts'
 import type { ModelHealth } from '../hooks/useAlkor.ts'
 import { connMeta, modelName } from '../lib/format.ts'
 import { Logotype, StarPair } from './Logotype'

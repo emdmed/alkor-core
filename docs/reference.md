@@ -104,14 +104,11 @@ src/server.ts the interactive HTTP server: POST /pipeline, GET /events (SSE),
 src/core/corpus.ts
               the pack corpus enumerated for a reader, not for a run — reads here
               stay out of the pack's digest so browsing cannot enter a run's record
-src/tui/      state.ts     pure reducer over the activity event stream (tested, Node 24)
-              sse.ts       SSE client (undici): replay, resume, reconnect, refusal (tested, Node 24)
-              sse-core.ts  transport-agnostic SSE core — frames, dedup, refusal; shared with the web dashboard
+src/monitor/  state.ts     pure reducer over the activity event stream (tested, Node 24)
+              sse-core.ts  transport-agnostic SSE core — frames, dedup, refusal (tested, Node 24)
               source.ts    pure transitions for which backend owns the dashboard;
                            a source change resets state so no payload crosses origins
-              app.ts       OpenTUI renderer — the only file that imports it; dynamic import
-src/tui.ts    entry guard: Node 26.4 + --experimental-ffi or Bun ≥ 1.3
-web/          the browser dashboard (own Vite + React app): same reducer, same SSE core
+web/          the browser dashboard (own Vite + React app) over that core
 src/cli.ts    extract, eval, agent, route, workflow, profiles
 profiles.toml the only file that may name a project outside this repository
 ```

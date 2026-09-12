@@ -1,10 +1,10 @@
 /**
  * Dashboard state wired to the activity feed. The intelligence is the shared harness
- * reducer in `src/tui/state.ts` (the same one the terminal TUI runs); this hook only
+ * reducer in `src/monitor/state.ts`; this hook only
  * transports frames and batches them into renders, so a busy feed re-paints once per
  * tick rather than once per event.
  *
- * Source-safe: the pure controller in `src/tui/source.ts` owns connection identity and
+ * Source-safe: the pure controller in `src/monitor/source.ts` owns connection identity and
  * generation, so stale async responses from a previous backend cannot overwrite the
  * current topology or connection state. `draftUrl` is purely editorial; only `connect()`
  * commits the draft, and a changed origin resets all source-owned state.
@@ -19,13 +19,13 @@ import {
   type ConnectionStatus,
   type ProjectState,
   type TopologySnapshot,
-} from '../../../src/tui/state.ts'
+} from '../../../src/monitor/state.ts'
 import {
   isCurrentGeneration,
   normalizeUrl,
   sourceReducer,
   initialSource,
-} from '../../../src/tui/source.ts'
+} from '../../../src/monitor/source.ts'
 import type { ActivityEvent } from '../../../src/core/activity-types.ts'
 import { createSseClient } from '../lib/sse.ts'
 

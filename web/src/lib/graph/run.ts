@@ -8,8 +8,8 @@
  * thing users found confusing. What is left here is what `compact.ts` actually consumes —
  * topology matching, input references, route groups, and the run's routing decision.
  */
-import { stageTreeForRun } from '../../../../src/tui/state.ts'
-import type { WorkflowDefinition, WorkflowStepEntry, ProjectState, RunEntry, StageEntry } from '../../../../src/tui/state.ts'
+import { stageTreeForRun } from '../../../../src/monitor/state.ts'
+import type { WorkflowDefinition, WorkflowStepEntry, ProjectState, RunEntry, StageEntry } from '../../../../src/monitor/state.ts'
 import type { ProfileTopologyRoute, ProfileTopologyStage } from '../../../../src/core/topology.ts'
 import type { NodeState } from '../format.ts'
 import {

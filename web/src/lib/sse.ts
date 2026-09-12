@@ -1,7 +1,7 @@
 /**
  * SSE client for the browser, on `fetch` + ReadableStream. The intelligence — frame
- * parsing, seq dedup, spec refusal — is shared with the terminal client via `sse-core.ts`;
- * this file is only the transport and the reconnect/backoff loop, mirroring `src/tui/sse.ts`.
+ * parsing, seq dedup, spec refusal — lives in the transport-agnostic `sse-core.ts`; this
+ * file is only the transport and the reconnect/backoff loop.
  */
 import type { ActivityEvent } from '../../../src/core/activity-types.ts'
 import {
@@ -10,7 +10,7 @@ import {
   decideSseFrame,
   type SseConnectionStatus,
   type SseWatermark,
-} from '../../../src/tui/sse-core.ts'
+} from '../../../src/monitor/sse-core.ts'
 
 export interface SseClient {
   /** Close the connection and stop reconnecting. */

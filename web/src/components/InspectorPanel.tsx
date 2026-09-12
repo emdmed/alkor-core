@@ -1,6 +1,6 @@
 import { memo } from 'react'
-import type { ProjectState, StageEntry } from '../../../src/tui/state.ts'
-import { stageTreeForRun } from '../../../src/tui/state.ts'
+import type { ProjectState, StageEntry } from '../../../src/monitor/state.ts'
+import { stageTreeForRun } from '../../../src/monitor/state.ts'
 import { fmtSec, type NodeState } from '../lib/format.ts'
 import { Badge } from './ui/badge'
 import { Check, Circle, LoaderCircle, X } from 'lucide-react'

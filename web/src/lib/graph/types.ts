@@ -8,7 +8,7 @@
  * only says which nodes and edges a run paints.
  */
 import type { Edge, Node } from '@xyflow/react'
-import type { LlmRequestEntry, ProjectState, RunEntry } from '../../../../src/tui/state.ts'
+import type { LlmRequestEntry, ProjectState, RunEntry } from '../../../../src/monitor/state.ts'
 import type { NodeState } from '../format.ts'
 
 export type GraphNodeKind = 'input' | 'route' | 'step' | 'stage' | 'branch' | 'profile' | 'output' | 'group' | 'compact-workflow' | 'gateway'

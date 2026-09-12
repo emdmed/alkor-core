@@ -1,7 +1,7 @@
 /**
  * Source-lifecycle tests: the pure controller behind the dashboard connection logic.
  *
- * The identical transitions the React hook executes (`src/tui/source.ts`) are driven
+ * The identical transitions the React hook executes (`src/monitor/source.ts`) are driven
  * directly here, plus the reducer helpers they compose. No React, no renderer, no server.
  */
 import { test } from 'node:test'
@@ -11,14 +11,14 @@ import {
   isCurrentGeneration,
   normalizeUrl,
   sourceReducer,
-} from '../src/tui/source.ts'
+} from '../src/monitor/source.ts'
 import {
   applyEvent,
   clearExecutionHistory,
   emptyState,
   setTopology,
   type TopologySnapshot,
-} from '../src/tui/state.ts'
+} from '../src/monitor/state.ts'
 import { ACTIVITY_SPEC } from '../src/core/activity.ts'
 import type { ActivityEvent } from '../src/core/activity.ts'
 

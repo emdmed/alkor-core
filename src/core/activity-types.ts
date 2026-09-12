@@ -3,7 +3,7 @@
  *
  * `activity.ts` owns the bus and the banned-key walk; this module exists so a browser
  * dashboard can import the event contract without pulling in `node:async_hooks`. Nothing
- * here may import Node — the web TUI and the terminal TUI must agree on one schema.
+ * here may import Node — server and dashboard must agree on one schema.
  *
  * The shape rules live in `spec/activity.md` and are stamped by `createActivity`: a view
  * must trust `seq` monotonicity, ignore duplicates, and refuse a stream whose

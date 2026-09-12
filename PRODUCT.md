@@ -11,19 +11,16 @@ web
 The harness is TypeScript on Node >= 24, run directly — no bundler, no framework, no build
 step. `node src/cli.ts` is the front door for every verb (`extract`, `eval`, `agent`, `route`,
 `workflow`, `profiles`); `node src/server.ts` is a local HTTP server over the same code, whose
-`GET /events` SSE stream is what the live surfaces read. Three UI surfaces sit on top, and they
+`GET /events` SSE stream is what the live surfaces read. Two UI surfaces sit on top, and they
 share the harness rather than reimplementing it:
 
 - **`report.html`** — one standalone document at the repository root. No build step, no
   external network requests, every face and asset embedded.
 - **`web/`** — the browser dashboard: React 19 + Vite 8 + Tailwind 4, Radix primitives,
   `@xyflow/react` for the execution graph, lucide icons. Dev on `npm run web`, static build to
-  `web/dist/`. It is a browser over the same three layers as the terminal dashboard: the pure
-  reducer in `src/tui/state.ts` and the SSE core in `src/tui/sse-core.ts` are shared verbatim
-  and only the transport differs.
-- **`src/tui.ts`** — the terminal dashboard, an opt-in entry that needs a runtime with native
-  FFI (Node >= 26.4 with `--experimental-ffi`, or Bun >= 1.3). The rest of the harness runs
-  unchanged on Node >= 24.
+  `web/dist/`. The intelligence is not in the app: the pure reducer in `src/monitor/state.ts`
+  and the SSE core in `src/monitor/sse-core.ts` are dependency-free and unit-tested on Node,
+  and the app supplies only the transport and the paint.
 
 ## Users
 
@@ -35,7 +32,7 @@ Three audiences. Which one leads depends on the surface, and all three are real:
    docs under `docs/` read the way they do.
 2. **The maintainer and collaborators** — writing and revising contract packs, reading eval
    traces, deciding whether a prompt change earned its keep. This is the audience for the
-   terminal dashboard, and their situation is specific: a run is in flight on the machine in
+   inspector, and their situation is specific: a run is in flight on the machine in
    front of them, one case at a time, slow enough that watching is a real activity, and they
    need to see where it has got to and what a given node actually sent and received.
 3. **A curious technical-adjacent user** — a researcher, a self-hoster, a small clinic's
