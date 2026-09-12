@@ -11,14 +11,53 @@ application's runtime reads the same files: the number describes the product rat
 rehearsal of it.
 
 ```bash
-node src/cli.ts extract --profile clinical --note ward-round.txt --constrain   # the job
-node src/cli.ts eval    --profile clinical --constrain                         # what it is worth
+node src/cli.ts extract --profile clinical --note your-note.txt --constrain   # the job
+node src/cli.ts eval    --profile clinical --constrain                        # what it is worth
 ```
 
 > **Status: pre-release.** The harness, the pack format, the reference clinical pack and
 > its corpus are here and tested. Every number below was measured on the corpus that ships
 > in this repository, against weights named by sha256. See [Measured](#measured) — including
 > what the result does *not* show.
+
+## Quickstart
+
+You need **Node ≥ 24** and **`llama-server`** from
+[llama.cpp](https://github.com/ggml-org/llama.cpp) on your `PATH`. This harness does not
+bundle an inference engine and does not download weights — it talks to a server you start.
+
+```bash
+npm install
+npm test          # passes with no server and no model: pack-dependent tests SKIP
+```
+
+Start a server. `LLAMA_HF` names a Hugging Face repo that `llama-server` downloads and
+caches itself, so a fresh machine needs no separate download step — this is the reference
+pack's declared default model (~4.6 GB, see `packs/clinical/models.default.toml`):
+
+```bash
+LLAMA_PORT=8081 LLAMA_HF=ggml-org/gemma-4-E4B-it-GGUF \
+  scripts/llama-server.sh -ngl 99 --no-webui --parallel 1
+```
+
+In another shell, extract from a note that ships in this repository — no file of your own
+needed, and the same note the eval grades:
+
+```bash
+node src/cli.ts extract --profile clinical --case vs-en-03-prose --constrain
+```
+
+Then run the gate over the whole corpus, which is the part that says what the extraction is
+worth:
+
+```bash
+node src/cli.ts eval --profile clinical --constrain
+```
+
+From here: [Extracting from one note](#extracting-from-one-note) for the verb and its
+output, [Contract packs](#contract-packs) to point it at your own prompts and schemas, and
+[Eight tasks over four corpora](#eight-tasks-over-four-corpora) for what else the reference
+pack grades. `npm run profiles` lists what is configured.
 
 ## What this is, and what it is not
 
@@ -133,7 +172,7 @@ src/modes/    extract.ts   single-shot constrained extraction; one retry, transp
               session.ts   the same loop, multi-turn, with a consent gate
               router.ts    rule-based intent routing (clinical / transcriptor / verifier)
               workflow.ts  generic multi-profile orchestration
-src/profiles/ clinical/    the reference profile: four tasks, names no vital sign
+src/profiles/ clinical/    the reference profile: nine tasks, names no vital sign
                            settings.ts  what the pack declares, and the refusals that make
                                         a declaration worth trusting
                            contracts.ts what one pass SENDS: prompt, schema, cap, routing
@@ -144,7 +183,7 @@ src/profiles/ clinical/    the reference profile: four tasks, names no vital sig
                            clinical-router.ts  shape-based routing inside clinical (exam-json, qsofa-json, shock/sepsis suspicion, vitals-note, note)
                            vitals-first.ts  the front door: read the vitals, run the CLI, then route
                            shock.ts     shock-category classification with rule-based reference arm
-                           router-eval.ts   60-case confusion-matrix eval for the clinical router
+                           router-eval.ts   90-case confusion-matrix eval for the clinical router
                            syndrome-routing-eval.ts  does a note reach shock, sepsis, or both arms
                            shock-eval.ts    20-case eval for shock category
                            review-note-format.ts   post-processing for note-format
@@ -152,15 +191,22 @@ src/profiles/ clinical/    the reference profile: four tasks, names no vital sig
               router/      the top-level router profile: rule-based + model fallback
               verifier/    the verification specialist: checks extraction for hallucinations
               clinical-verified/   the verified workflow: extract → verify
-packs/        clinical/    the reference pack — 4 prompts, 4 schemas + goldens, 59 notes
-              verifier/    the verifier contract pack (prompt + schema + cases)
+packs/        clinical/    the reference pack — 16 prompts, 10 schemas + goldens,
+                           62 notes, 20 transcripts, 34 exam payloads
+              verifier/    the verifier contract pack (prompt + system + schema; its
+                           cases live in src/profiles/verifier/eval.ts)
 scripts/      model-manager.ts   start/stop/status llama-server per profile
+              llama-server.sh    start one server with the flags that are easy to get wrong
 src/index.ts  the public API — what a profile is written against
+src/server.ts the interactive HTTP server: POST /pipeline, GET /events (SSE),
+              on-demand model lifecycle via LlamaManager
 src/tui/      state.ts     pure reducer over the activity event stream (tested, Node 24)
-               sse.ts       SSE client (undici): replay, resume, reconnect, refusal (tested, Node 24)
-               sse-core.ts  transport-agnostic SSE core — frames, dedup, refusal; shared with the web dashboard
-               app.ts       OpenTUI renderer — the only file that imports it; dynamic import
-               tui.ts       entry guard: Node 26.4 + --experimental-ffi or Bun ≥ 1.3
+              sse.ts       SSE client (undici): replay, resume, reconnect, refusal (tested, Node 24)
+              sse-core.ts  transport-agnostic SSE core — frames, dedup, refusal; shared with the web dashboard
+              source.ts    pure transitions for which backend owns the dashboard;
+                           a source change resets state so no payload crosses origins
+              app.ts       OpenTUI renderer — the only file that imports it; dynamic import
+src/tui.ts    entry guard: Node 26.4 + --experimental-ffi or Bun ≥ 1.3
 web/          the browser dashboard (own Vite + React app): same reducer, same SSE core
 src/cli.ts    extract, eval, agent, route, workflow, profiles
 profiles.toml the only file that may name a project outside this repository
@@ -376,7 +422,7 @@ cat note.txt | node src/cli.ts extract --profile clinical --note - --json | jq .
 
 ```
 === vital signs · ward-round.txt ===
-model 'Qwen3-4B-Q4_K_M' · pack 'clinical' spec 1 · constrained · temp 0 · max_tokens 1024
+model 'Qwen3-4B-Q4_K_M' · pack 'clinical' spec 3 · constrained · temp 0 · max_tokens 1024
 
 blood_pressure       148/92 mmHg          quoted "BP 148/92 mmHg"
 heart_rate           78 bpm               quoted "HR 78"
@@ -448,14 +494,18 @@ the full statement.
 
 The generic **router mode** (`src/modes/router.ts`) is a rule-based classifier with an
 optional model fallback. The deployed `workflow-router` uses it to choose a workflow. The
-older `router` worked example still measures specialist classification at 98.1% accuracy on
-a 54-case adversarial corpus (see `next_steps.md`); it is no longer the product front door.
+older `router` worked example still measures specialist classification, at 100% on the 32
+adversarial cases it now carries, every one of them decided by a rule with no model call.
+It is no longer the product front door. The 98.1% (53/54) in `next_steps.md` is the
+historical figure for that arm, measured on a larger corpus that has since changed — read it
+as the evidence the rules were built from, not as a current result.
 
 The **clinical internal router** (`src/profiles/clinical/clinical-router.ts`) runs *before*
 any GPU call, selecting the right sub-task (`vital-signs`, `shock`, `sepsis`, and the two
 prose extractions that feed them) from what the document says: an exam or qSOFA payload,
 shock or sepsis criteria in prose, vitals prose, or plain note. It is purely rule-based,
-zero GPU cost, and measured at 100% on 60 cases.
+zero GPU cost, and measured at 100% on 90 cases — every shape at 100% precision and recall,
+against a 95% accuracy floor.
 
 It routes **clinical questions only**. `transcript`, `note-format` and `summary` are document
 tooling — transcribing, laying out, summarising — and none of them names a syndrome or decides
@@ -583,6 +633,13 @@ node src/cli.ts eval --profile clinical --constrain --task sepsis       # a qSOF
 node src/cli.ts eval --profile clinical --constrain --task all          # the eight, each gated on its own floor
 ```
 
+Two tasks are not in that list and are still `--task` values. `shock-extraction` and
+`shock-pipeline` are the prose halves of the shock arm — the first graded on its own,
+the second end to end — and `sepsis-extraction` is **reviewable but ungraded**: the profile
+will run it over a document, and this pack declares no answer key for it, so `--task all`
+leaves it out rather than reporting a made-up number. That is why eight tasks are graded
+out of nine that exist.
+
 | task | input | what it returns | gate |
 |---|---|---|---|
 | `vital-signs` | one note | nine nullable readings, each with the fragment it came from | detection recall ≥ 90% |
@@ -590,6 +647,7 @@ node src/cli.ts eval --profile clinical --constrain --task all          # the ei
 | `note-format` | one note | four sections; every item carries a `quote` and a derived `text` | item recall ≥ 75%, **plus** provenance ≥ 90%, derivation ≥ 90% and *nothing invented* (100%) |
 | `transcript` | one **dictated transcript** — speech, out of order, correcting itself | the same four sections, same `quote` and `text` | item recall ≥ 65%, same three sub-gates at 85 / 85 / 100% — **provisional, unmeasured** |
 | `shock` | one **JSON exam payload** — vital signs, capillary refill, mental status | category + `indeterminate_reason` + agreement with rule-based reference | agreement ≥ 70%, concordance ≥ 80%, coverage ≥ 90%, format valid 100%, schema valid 100% |
+| `shock-extraction` | one **prose shock case** | the `ShockExam` payload the `shock` contract consumes, graded field by field against the same `exam.json` | exact match ≥ 67% — **provisional, 3 cases** |
 | `shock-pipeline` | one **prose shock case** — notes describing vitals, exam, history | category, chaining extraction → classification | category agreement ≥ 67%, **plus** pipeline completion 100%, extraction exact ≥ 67%, echo fidelity 100%, not invented 100% — **provisional, unmeasured** |
 | `sepsis` | one **qSOFA payload** — respiratory rate, systolic BP, GCS | positive/negative screen + `criteria_met` + agreement with the medprotocol CLI | screen agreement ≥ 84%, echo 100%, criteria fidelity 100%, score fidelity 100% — **provisional, unmeasured** |
 
@@ -652,15 +710,16 @@ slots it grades and not how badly some model does on it. The rating is a propert
 corpus, so it does not move when the weights do, and a per-tier score from two models is
 comparing the same texts.
 
-| | the text | notes |
-|---|---|---|
-| **1** | labelled and canonical: the sign is named, the figure follows it, one reading per sign | 2 |
-| **2** | one systematic transformation — foreign abbreviations, imperial units, a decimal comma, an implausible value | 4 |
-| **3** | a rule of the contract must be applied: prose, or two candidates for one sign (last, this encounter, stated not derived) | 5 |
-| **4** | rejection before transcription: targets, plans, lab panels, another person's readings, an infant's normals | 5 |
-| **5** | the text fights the reader: a chart instead of sentences, a figure retracted further down, a range around one true reading, a discharge summary made mostly of other numbers | 5 |
+| | the text | notes | slots |
+|---|---|---|---|
+| **1** | labelled and canonical: the sign is named, the figure follows it, one reading per sign | 2 | 6 |
+| **2** | one systematic transformation — foreign abbreviations, imperial units, a decimal comma, an implausible value | 4 | 22 |
+| **3** | a rule of the contract must be applied: prose, or two candidates for one sign (last, this encounter, stated not derived) | 6 | 27 |
+| **4** | rejection before transcription: targets, plans, lab panels, another person's readings, an infant's normals | 10 | 55 |
+| **5** | the text fights the reader: a chart instead of sentences, a figure retracted further down, a range around one true reading, a discharge summary made mostly of other numbers | 8 | 45 |
 
-Half the graded slots sit at 4 and 5. `eval` prints detection per tier beside the gate, and
+Two thirds of the graded slots — 100 of 155 — sit at 4 and 5. `eval` prints detection per
+tier beside the gate, and
 `--difficulty 4-5` grades only the hard end while iterating:
 
 ```bash
@@ -706,11 +765,23 @@ a grade, because averaging N identical replies at temperature 0 is arithmetic on
 
 ## Measured
 
-**These numbers are from a corpus that no longer exists.** They were measured on 21 notes / 88
-graded slots; the corpus is now 59 / 132 + 103 required items, the summary task 10 records / 56
-items, note formatting 15 notes / 47 items, transcript 15 / 47, shock 20 / 20, and `value` and
-`unit` have become sub-gates at 95% — a floor the 81/88 unit row below fails. The table is kept
-because it is the evidence those changes were made from, not as a current result; `packs/clinical/RESULTS.md` says so at the top and a re-run on the current corpus has not been made. What follows describes the run as it was.
+**These numbers are from a corpus that no longer exists.** They were measured on 21 notes /
+88 graded slots. The corpus is now:
+
+| task | cases | graded expectations |
+|---|---|---|
+| `vital-signs` | 30 notes | 155 slots |
+| `summary` | 10 records | 80 items |
+| `note-format` | 15 notes | 65 items |
+| `transcript` | 20 dictations | 178 items |
+| `shock` | 20 exam payloads | category + residue |
+| `sepsis` | 14 qSOFA payloads | screen + criteria |
+| `shock-extraction` | 3 prose notes | payload, field by field |
+
+`value` and `unit` have also become sub-gates at 95% — a floor the 81/88 unit row below
+fails. The table is kept because it is the evidence those changes were made from, not as a
+current result; `packs/clinical/RESULTS.md` says so at the top, and a re-run on the current
+corpus has not been made. What follows describes the run as it was.
 
 21 notes / 88 graded slots for `vital-signs`, 3 records / 13 items for `summary`, 6 notes /
 18 items for `note-format`. Temperature 0, `seed` 0, caps from the pack, one run per case, on
@@ -835,7 +906,7 @@ longer exists, so an entry there gets a new date rather than an edit.
 | pack format (`spec = 3`) | done — with a changelog the loader quotes when a pack is older |
 | out-of-tree profiles and packs | done |
 | public API (`medextract` entry point) | done |
-| reference clinical pack + corpus | done — 59 notes, 132 graded slots + 103 required items, rated 1-5 |
+| reference clinical pack + corpus | done — 62 notes, 20 transcripts, 34 exam payloads; vital signs 30 notes / 155 slots, rated 1-5 |
 | multi-task packs (`--task`, per-task floors, sub-gates) | done, tested |
 | provenance: quote verification + deletion-only derivation | done, tested |
 | harder cases for that corpus | done — nine more, written against the measured failure modes |
@@ -843,12 +914,12 @@ longer exists, so an entry there gets a new date rather than an edit.
 | two models re-measured on the extended corpus | done — see `RESULTS.md` |
 | offline re-scoring (`eval --from-trace`) | done, tested — a claim about a past run is checkable |
 | typecheck and CI | done — `npm test && npm run typecheck` on every push |
-| router (intent classification, 98.1% on 54 cases) | done, tested |
-| clinical internal router (shape-based, 100% on 70 cases) | done, tested |
+| router (intent classification, 100% on 32 cases) | done, tested |
+| clinical internal router (shape-based, 100% on 90 cases) | done, tested |
 | shock category contract (20 cases, rule-based reference arm) | done, tested |
 | sepsis screen contract (14 cases, medprotocol reference arm) | done — 100% on three gates (pre–score-fidelity, 2026-09-10); four-gate re-measurement pending, `RESULTS.md` |
 | shock-pipeline prose→classification (3 extraction cases, chained) | done, tested — **provisional, unmeasured** |
-| verifier (30 cases, 100% catch, 0% FP on 4B model) | done, tested |
+| verifier (34 cases — 23 clean, 11 injected) | done, tested — the 100% catch / 0% FP figures were measured when the corpus was 30 |
 | workflow mode (multi-profile orchestration, context passing, resume) | done, tested |
 | clinical-verified workflow (extract → verify, fidelity eval) | done, tested |
 | interactive server (on-demand model lifecycle, idle sweep, in-flight protection) | done, tested |
@@ -863,8 +934,23 @@ patient data to enter a repository, and there the mistake is unrecoverable.
 
 ## Requirements
 
-Node ≥ 24. The CLI is plain TypeScript run natively by Node — no bundler, no transpile,
+**Node ≥ 24.** The CLI is plain TypeScript run natively by Node — no bundler, no transpile,
 no build step. What you read is what runs.
+
+**`llama-server` from [llama.cpp](https://github.com/ggml-org/llama.cpp), on your `PATH`.**
+Not bundled and not started for you: a server's flags are part of a measurement, so the
+harness talks to one you control. Only the interactive server (`src/server.ts`) spawns
+backends, and only on demand.
+
+**A GGUF model.** Nothing here downloads weights, but `llama-server` does: pass
+`LLAMA_HF=<repo>` to `scripts/llama-server.sh` and it fetches and caches them. The
+reference pack declares its default in `packs/clinical/models.default.toml` — repo, file,
+sha256, size and context size — so the number a run reports stays attributable to exact
+bytes. Budget ~4.6 GB for the weights plus KV cache for `ctx_size`.
+
+Two things are opt-in and need more: the **TUI** wants Node ≥ 26.4 with
+`--experimental-ffi` or Bun ≥ 1.3, and the **web dashboard** has its own `npm install
+--prefix web`. Neither is needed to extract or to eval.
 
 ## Contributing
 
