@@ -419,10 +419,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
   min-width: 0;
 }
 
-/* Mark and star pair are one lockup.
-   The pair rides at the wordmark's optical centre rather than on its baseline: sitting on
-   the baseline it read as trailing punctuation — a full stop and a faint one — instead of
-   as two stars beside the word, which is the whole point of it. */
+/* Star pair and wordmark are one lockup, and it leads with the mark. */
 .brand-lockup {
   display: inline-flex;
   align-items: center;
@@ -430,26 +427,37 @@ button, input, textarea, select { font: inherit; color: inherit; }
   flex: none;
 }
 
-.brand-mark {
-  height: 13px;
-  width: auto;
-  color: var(--foreground);
-  flex: none;
-}
-
-/* Cap height, not x-height: the mark leads the lockup now and is a single object with
-   real geometry rather than two dots riding beside the word, so it matches the wordmark's
-   height exactly.
-
-   The mark carries the accent, which is the one place in the product the One Accent Rule
-   is deliberately spent on something that is not an action. It is a standing decision, not
-   an oversight: identity gets the colour, the word beside it stays ink so the lockup does
-   not turn into a control. Nothing else on this surface may follow it. */
+/* The whole lockup carries the accent. This is the one place in the product where the One
+   Accent Rule is deliberately spent on something that is not an action, and it is a
+   standing decision rather than an oversight: identity is allowed the colour, nothing else
+   on this surface is. The descriptor beside it stays muted ink, which is what keeps the bar
+   from reading as a row of controls. */
+.brand-mark,
 .brand-stars {
-  height: 13px;
   width: auto;
   color: var(--primary);
   flex: none;
+}
+
+.brand-mark {
+  height: 13px;
+}
+
+/* The mark is optically aligned, not box-aligned, and the two disagree here.
+   `alkor` is four x-height letters and two ascenders, so its ink pools low in a box that
+   runs from ascender to baseline; the disc's mass sits dead centre in its own box. Centring
+   the boxes — which is what the flex row does on its own — therefore lands the disc 1.5px
+   high against the word at this size, and a full-height disc beside lowercase also reads
+   heavier than the letters it stands next to.
+
+   Two corrections, both measured rather than guessed: 12px instead of 13 takes the weight
+   down, and a 1px translate takes back about two thirds of the centroid gap. Matching the
+   centroids exactly (1.5px) overshoots — the disc then hangs below the baseline and reads
+   as sinking, which is worse than the error it fixes. The translate is deliberate: it must
+   not disturb the flex row's own centring, which is correct and should stay untouched. */
+.brand-stars {
+  height: 12px;
+  transform: translateY(1px);
 }
 
 /* The mark is a word nobody can read the product out of, so the descriptor rides beside
