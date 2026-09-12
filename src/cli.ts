@@ -29,65 +29,100 @@ import { loadProfileModule, redactor, requireDocumentName, resolveProfileModule,
 import { runAgent } from './modes/agentic.ts'
 import { runWorkflow, buildWorkflow } from './modes/workflow.ts'
 import { nullTrace, openTrace } from './core/trace.ts'
+import { blocker, declaredWeights, preflight, report } from './core/preflight.ts'
 
-const { values } = parseArgs({
-  allowPositionals: true,
-  options: {
-    profile: { type: 'string' },
-    runs: { type: 'string' },
-    constrain: { type: 'boolean', default: false },
-    url: { type: 'string' },
-    pack: { type: 'string' },
-    task: { type: 'string' },
-    workspace: { type: 'string' },
-    iterations: { type: 'string' },
-    note: { type: 'string' },
-    case: { type: 'string' },
-    difficulty: { type: 'string' },
-    input: { type: 'string' },
-    // Spelled as the negative because ON is the default and the reason to type it is to give
-    // the reuse up. `parseArgs` has no negation convention, so this is a plain flag.
-    'no-cache-prompt': { type: 'boolean', default: false },
-    // The medication pass over a dictation, ON by default — unlike the repair, because it is
-    // part of what this pack says reading a dictation means, and an eval that ran it only when
-    // asked would measure a reading the application does not ship.
-    //
-    // It was opt-in for exactly one measured run, and the history is the point: at a 512-token
-    // cap and without a worked example of a discontinued drug it failed `not invented` and put
-    // a STOPPED drug on a medication list. Both are fixed and re-measured. This flag reproduces
-    // a figure pinned before the pass existed. See src/profiles/clinical/medication.ts.
-    'no-medication-pass': { type: 'boolean', default: false },
-    // Re-score a recorded run instead of producing a new one. No server is contacted.
-    'from-trace': { type: 'string' },
-    'strip-fences': { type: 'boolean', default: false },
-    'context-dir': { type: 'string' },
-    step: { type: 'string' },
-    // The second pass over the items whose citation failed. Opt-in on both verbs, because
-    // every number this harness has pinned describes one pass: a repair that ran by default
-    // would make the old results incomparable with the new ones without anyone typing
-    // anything. See src/profiles/clinical/repair.ts.
-    repair: { type: 'boolean', default: false },
-    json: { type: 'boolean', default: false },
-    calculate: { type: 'boolean', default: false },
-    // Workflow fidelity eval: run three arms (monolith, specialist, verified) against
-    // the clinical corpus and compare. See src/profiles/clinical-verified/eval.ts.
-    fidelity: { type: 'boolean', default: false },
-    // Limit the fidelity eval to N cases (for quick iteration).
-    'case-limit': { type: 'string' },
-  },
-})
+const USAGE = [
+  'usage:',
+  '  node src/cli.ts extract --profile NAME (--note FILE | --case NAME | --note -) [--task NAME] [--constrain] [--repair] [--no-medication-pass] [--calculate] [--json] [--url URL] [--pack DIR]',
+  '  node src/cli.ts eval    --profile NAME [--input "..."] [--runs N] [--constrain] [--task NAME] [--repair] [--difficulty N|N-M] [--no-cache-prompt] [--no-medication-pass] [--url URL] [--pack DIR]',
+  '  node src/cli.ts eval    --profile NAME --from-trace FILE [--strip-fences] [--pack DIR]   (re-score a recorded run, no server)',
+  '  node src/cli.ts agent   --profile NAME --task "..." --workspace DIR [--url URL] [--iterations N]',
+  '  node src/cli.ts route   --profile NAME --input "..." [--json] [--url URL]',
+  '  node src/cli.ts workflow --profile NAME --input "..." [--json] [--url URL] [--pack DIR] [--context-dir DIR] [--step N]',
+  '  node src/cli.ts profiles',
+  '  node src/cli.ts doctor  [--profile NAME] [--url URL]   (engine, weights, server — before a run)',
+  '',
+  '  --help, -h   this text.  `profiles` lists what is configured; extract and eval need a',
+  '               running llama-server (README, Quickstart).',
+]
 
+// Wrapped, because `parseArgs` throws on an unknown flag and an unhandled throw here is a
+// nine-line Node stack trace before the program has done anything. A typo'd flag is the most
+// ordinary mistake there is, so it gets the same plain sentence every other setup mistake gets.
+const { values } = (() => {
+  try {
+    return parseArgs({
+      allowPositionals: true,
+      options: {
+        // Asked for explicitly, so it prints to stdout and exits 0 — `--help | less` is a
+        // thing people do, and a usage text on stderr behind exit 2 is not help, it is a refusal.
+        help: { type: 'boolean', short: 'h', default: false },
+        // `doctor` only. The caller spawns backends on demand, so a dark port is the normal
+        // state rather than a fault — see BlockerOptions.managed.
+        managed: { type: 'boolean', default: false },
+        profile: { type: 'string' },
+        runs: { type: 'string' },
+        constrain: { type: 'boolean', default: false },
+        url: { type: 'string' },
+        pack: { type: 'string' },
+        task: { type: 'string' },
+        workspace: { type: 'string' },
+        iterations: { type: 'string' },
+        note: { type: 'string' },
+        case: { type: 'string' },
+        difficulty: { type: 'string' },
+        input: { type: 'string' },
+        // Spelled as the negative because ON is the default and the reason to type it is to give
+        // the reuse up. `parseArgs` has no negation convention, so this is a plain flag.
+        'no-cache-prompt': { type: 'boolean', default: false },
+        // The medication pass over a dictation, ON by default — unlike the repair, because it is
+        // part of what this pack says reading a dictation means, and an eval that ran it only when
+        // asked would measure a reading the application does not ship.
+        //
+        // It was opt-in for exactly one measured run, and the history is the point: at a 512-token
+        // cap and without a worked example of a discontinued drug it failed `not invented` and put
+        // a STOPPED drug on a medication list. Both are fixed and re-measured. This flag reproduces
+        // a figure pinned before the pass existed. See src/profiles/clinical/medication.ts.
+        'no-medication-pass': { type: 'boolean', default: false },
+        // Re-score a recorded run instead of producing a new one. No server is contacted.
+        'from-trace': { type: 'string' },
+        'strip-fences': { type: 'boolean', default: false },
+        'context-dir': { type: 'string' },
+        step: { type: 'string' },
+        // The second pass over the items whose citation failed. Opt-in on both verbs, because
+        // every number this harness has pinned describes one pass: a repair that ran by default
+        // would make the old results incomparable with the new ones without anyone typing
+        // anything. See src/profiles/clinical/repair.ts.
+        repair: { type: 'boolean', default: false },
+        json: { type: 'boolean', default: false },
+        calculate: { type: 'boolean', default: false },
+        // Workflow fidelity eval: run three arms (monolith, specialist, verified) against
+        // the clinical corpus and compare. See src/profiles/clinical-verified/eval.ts.
+        fidelity: { type: 'boolean', default: false },
+        // Limit the fidelity eval to N cases (for quick iteration).
+        'case-limit': { type: 'string' },
+      },
+    })
+  } catch (e) {
+    // parseArgs appends a paragraph about `--` and positionals, which is not the reader's
+    // problem when they have simply mistyped a flag. Keep the first sentence, which names it.
+    console.error(`${(e as Error).message.split('. ')[0]}\n`)
+    for (const line of USAGE) console.error(line)
+    process.exit(2)
+  }
+})()
+
+/** A mistake: the usage text on stderr, behind a non-zero exit. */
 const usage = (msg?: string) => {
   if (msg) console.error(`${msg}\n`)
-  console.error('usage:')
-  console.error('  node src/cli.ts extract --profile NAME (--note FILE | --case NAME | --note -) [--task NAME] [--constrain] [--repair] [--no-medication-pass] [--calculate] [--json] [--url URL] [--pack DIR]')
-  console.error('  node src/cli.ts eval    --profile NAME [--input "..."] [--runs N] [--constrain] [--task NAME] [--repair] [--difficulty N|N-M] [--no-cache-prompt] [--no-medication-pass] [--url URL] [--pack DIR]')
-  console.error('  node src/cli.ts eval    --profile NAME --from-trace FILE [--strip-fences] [--pack DIR]   (re-score a recorded run, no server)')
-  console.error('  node src/cli.ts agent   --profile NAME --task "..." --workspace DIR [--url URL] [--iterations N]')
-  console.error('  node src/cli.ts route   --profile NAME --input "..." [--json] [--url URL]')
-  console.error('  node src/cli.ts workflow --profile NAME --input "..." [--json] [--url URL] [--pack DIR] [--context-dir DIR] [--step N]')
-  console.error('  node src/cli.ts profiles')
+  for (const line of USAGE) console.error(line)
   process.exit(2)
+}
+
+/** Asked for: the same text on stdout, exit 0. */
+const help = (): never => {
+  for (const line of USAGE) console.log(line)
+  process.exit(0)
 }
 
 /** Config, pack and profile problems are setup mistakes, not crashes — report them plainly. */
@@ -100,6 +135,9 @@ const die = (e: unknown): never => {
 }
 
 const [typed] = process.argv.slice(2).filter((a) => !a.startsWith('-'))
+// Before anything is loaded: help is answerable without a config file, and `--help` on a
+// machine whose profiles.toml is broken should still print rather than report the config.
+if (values.help || typed === 'help') help()
 if (!typed) usage()
 // `pipeline` is the retired spelling of `workflow`, still accepted so existing scripts run.
 // See spec/nomenclature.md: the PIPELINE is the deployment's front door, and this command
@@ -123,6 +161,49 @@ if (command === 'profiles') {
     )
   }
   process.exit(0)
+}
+
+if (command === 'doctor') {
+  // `--profile` is OPTIONAL here, unlike everywhere else. The verb exists for the machine
+  // where nothing works yet, and requiring the configuration to resolve before reporting that
+  // the engine is missing would make it useless exactly when it is wanted. With a profile it
+  // checks that profile's port and its pack's declared weights; without one, the defaults.
+  let declared
+  let url = values.url
+  let modelPath
+  if (values.profile) {
+    try {
+      const pc = requireProfile(cfg!, values.profile)
+      url ??= pc.url as string | undefined
+      // Where this repository says its weights are. Checked before any cache is guessed at.
+      modelPath = pc.model as string | undefined
+      // The CONFIGURED pack is enough to read a declaration, so the profile module is never
+      // imported: a profile whose code does not load is still a profile whose model is worth
+      // checking, and importing it here would turn an unrelated failure into this verb's.
+      if (values.pack || pc.pack) {
+        declared = declaredWeights(
+          loadPack(
+            resolvePackRoot(values.profile, {
+              explicit: values.pack,
+              configured: pc.pack as string | undefined,
+              base: cfg!.base,
+            }),
+          ),
+        )
+      }
+    } catch (e) {
+      die(e)
+    }
+  }
+  // `devices` only here: a human is reading this output, so the extra subprocess buys something.
+  const checks = await preflight({ url, declared, modelPath, devices: true })
+  for (const line of report(checks)) console.log(line)
+  const blocking = blocker(checks, { managed: values.managed })
+  const ready = values.managed
+    ? '\nReady — the engine is here; backends start on first request.'
+    : '\nReady — a run can reach a server.'
+  console.log(blocking ? `\n${blocking}` : ready)
+  process.exit(blocking ? 1 : 0)
 }
 
 if (command !== 'eval' && command !== 'agent' && command !== 'extract' && command !== 'route' && command !== 'workflow') usage(`unknown command '${command}'`)
@@ -156,6 +237,32 @@ if (profile!.needsPack || values.pack || profileConfig!.pack) {
     )
   } catch (e) {
     die(e)
+  }
+}
+
+// Same reasoning as the pack load above, one layer out: a run that cannot reach a server
+// should say so in milliseconds, and say WHICH piece is missing. `fetch failed` reads
+// identically whether llama.cpp was never installed, the weights were never fetched or the
+// server is merely not running, and those are three different next commands.
+//
+// It refuses only on things it is certain about — see `blocker`. A reachable server passes
+// the check outright, so a run pointed elsewhere with `--url` is never refused over a local
+// cache it was not going to read.
+//
+// `workflow` is exempt: its steps each resolve their own backend, so the single URL resolved
+// here is not the one a step would fail against, and refusing over it could block a run whose
+// servers are all up. ALKOR_NO_PREFLIGHT=1 turns the check off everywhere.
+const skipsServer = command === 'eval' && values['from-trace'] !== undefined
+if (!skipsServer && command !== 'workflow' && process.env.ALKOR_NO_PREFLIGHT !== '1') {
+  const checks = await preflight({
+    url: baseUrl,
+    declared: pack ? declaredWeights(pack) : undefined,
+    modelPath: profileConfig!.model as string | undefined,
+  })
+  const blocking = blocker(checks)
+  if (blocking) {
+    console.error(blocking)
+    process.exit(2)
   }
 }
 

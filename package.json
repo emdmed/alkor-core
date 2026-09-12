@@ -16,6 +16,8 @@
     "node": ">=24"
   },
   "scripts": {
+    "start": "./start",
+    "doctor": "node src/cli.ts doctor",
     "test": "node --test 'test/*.test.ts'",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.vendor.json",
     "check": "npm test && npm run typecheck",

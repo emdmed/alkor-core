@@ -26,10 +26,28 @@ You need **Node ≥ 24** and **`llama-server`** from
 [llama.cpp](https://github.com/ggml-org/llama.cpp) on your `PATH`. This harness does not
 bundle an inference engine and does not download weights — it talks to a server you start.
 
+If you want the dashboard, one command does all of it — checks the Node version, installs
+both dependency trees, verifies the engine and the declared weights are present, then starts
+the interactive server and the dashboard together and stops them together:
+
+```bash
+./start           # or: npm start
+./start --check   # run the checks and change nothing
+```
+
+For the CLI path, the same checks are a verb. `doctor` looks for the engine, for the weights
+the pack declares, and for a server on the port the profile names — it installs nothing and
+starts nothing, it just says which of the three is absent and prints the command that
+supplies it:
+
 ```bash
 npm install
-npm test          # passes with no server and no model: pack-dependent tests SKIP
+npm test          # passes with no server and no model
+node src/cli.ts doctor --profile clinical
 ```
+
+The same check runs ahead of `extract`, `eval`, `route` and `agent`, so a missing piece is
+one sentence in milliseconds rather than a transport failure per case.
 
 Start a server. `LLAMA_HF` names a Hugging Face repo that `llama-server` downloads and
 caches itself, so a fresh machine needs no separate download step — this is the reference

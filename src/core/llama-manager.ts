@@ -161,7 +161,8 @@ const realSpawn: SpawnFn = (command, args) => {
  */
 export const normalizeBaseUrl = (baseUrl: string): string => baseUrl.replace(/\/+$/, '')
 
-const expandTilde = (p: string): string =>
+/** Exported so the preflight check resolves a configured model path exactly as the spawn does. */
+export const expandTilde = (p: string): string =>
   p === '~' ? homedir() : p.startsWith('~/') || p.startsWith('~\\') ? join(homedir(), p.slice(2)) : p
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))

@@ -154,11 +154,16 @@ export const createServer = async (configPath?: string, options: ServerOptions =
     .split(/\s+/)
     .filter(Boolean)
   const budgetBytes = options.budgetBytes ?? modelBudgetBytes(process.env.ALKOR_MODEL_BUDGET)
+  // ALKOR_LLAMA_BIN names the engine for a machine that has it off PATH — a source build,
+  // most often. `doctor` reports the same variable, so the check and the spawn agree about
+  // which binary they are talking about instead of the check passing on one the spawn cannot find.
+  const binary = process.env.ALKOR_LLAMA_BIN?.trim() || undefined
   const manager = new LlamaManager({
     idleMs,
     spawnArgs,
     enabled: manageModels,
     budgetBytes,
+    ...(binary ? { binary } : {}),
     ...options.llamaManager,
     emit: (e) => {
       activity.emit({

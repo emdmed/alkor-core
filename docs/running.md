@@ -6,6 +6,9 @@ npm run typecheck       # tsc --noEmit; Node strips types, so this is the real c
 npm run check           # npm test && npm run typecheck — what CI runs
 npm run profiles        # what is configured
 
+# what this machine is still missing: engine, weights, server
+node src/cli.ts doctor --profile clinical
+
 # start a server yourself — its flags are part of the measurement
 LLAMA_PORT=8081 LLAMA_MODEL=~/models/gemma-4-E4B-it-Q4_0.gguf scripts/llama-server.sh -ngl 99
 
@@ -19,6 +22,98 @@ node src/cli.ts workflow --profile clinical-verified --input "ward-round.txt"
 # model manager — start/stop/status per profile
 node scripts/model-manager.ts status
 ```
+
+### One command: `./start`
+
+```bash
+./start           # checks, then the server and the dashboard
+./start --check   # the checks alone, nothing started
+```
+
+In order: Node ≥ 24, both dependency trees (`npm ci` when a lockfile is there, so a first run
+does not rewrite it), `doctor --managed`, then the two ports, then the two processes. Each
+step's failure is a sentence naming the next command, and nothing is started until every
+check has passed — a half-started stack is the state this exists to prevent.
+
+`PORT` moves the server off 3000, `WEB_PORT` moves the dashboard off 5173. The dashboard is
+started with `--strictPort`, so it never drifts to another port and gets reported at an
+address it is not on.
+
+It starts the **interactive** server, which manages model lifecycles on demand: no model is
+loaded when it comes up, and the first request through the dashboard spawns a backend —
+including, on a cold machine, the ~4.6 GB download. `extract` and `eval` are unaffected and
+still talk to a `llama-server` you started yourself, because a server's flags are part of a
+measurement.
+
+### Before the first run
+
+`extract`, `eval`, `route` and `agent` all need a `llama-server` that this harness does not
+start. On a fresh clone none of the three things they need is present, and the failure used
+to arrive from the bottom of the transport as `fetch failed` — which reads the same whether
+llama.cpp was never installed, the weights were never fetched, or the server is simply not
+running. Those are three different next commands.
+
+```bash
+node src/cli.ts doctor                      # the defaults
+node src/cli.ts doctor --profile clinical   # that profile's port, and its pack's declared model
+```
+
+```
+llama-server  /usr/bin/llama-server
+weights       not cached — gemma-4-E4B-it-Q4_0.gguf, ~4.6 GB, downloaded on first start
+              looked in ~/.cache/llama.cpp
+server        nothing listening at http://127.0.0.1:8081
+```
+
+It exits 0 when a run could reach a server and 1 when it could not. It installs nothing,
+downloads nothing and starts nothing — a server's flags are part of a measurement, so it
+prints the command rather than running it.
+
+**Where it looks for the engine**, in order: `ALKOR_LLAMA_BIN`, then `PATH`, then the usual
+build and install locations (`~/llama.cpp/build/bin/`, `/opt/homebrew/bin`, `/usr/local/bin`,
+`/usr/bin`). A binary found off `PATH` is reported as found *and* flagged, because
+`scripts/llama-server.sh` execs the bare name — "installed" and "the documented commands
+work" are different claims. `ALKOR_LLAMA_BIN` is also what the interactive server spawns, so
+the check and the run agree on which binary they mean.
+
+**Where it looks for the weights**, most authoritative first:
+
+1. `LLAMA_MODEL` — what someone launching by hand would pass.
+2. The profile's `model` in `profiles.toml`, tilde-expanded exactly as the spawn expands it.
+3. The llama.cpp cache directories — `LLAMA_CACHE`, then `$XDG_CACHE_HOME/llama.cpp`,
+   `~/Library/Caches/llama.cpp`, `%LOCALAPPDATA%\llama.cpp` — matched by filename suffix,
+   since llama.cpp decorates a cached download with the repo it came from.
+4. `llama-server --cache-list`, asking the engine what it actually has. Last, because it
+   costs a subprocess, and it is the only answer here rather than a guess about where an
+   answer might be written. Matched on **repo *and* quantisation** — one repository publishes
+   every quant, so `…-GGUF:Q8_0` does not satisfy a pack that pinned `Q4_0`. This is the same
+   flag on `llama-cli` and `llama-server`; they share llama.cpp's argument parser, and the
+   output is byte-identical, so neither binary is preferable.
+
+`doctor` also asks `--list-devices`. When the engine reports none, it says so and drops
+`-ngl 99` from the command it prints — on a CPU-only box that flag offloads nothing, and
+suggesting it implies a run that is about to be fast. The pack's own
+`[sampling.shock]` note records what that costs: a cold case measured 324 s, and every case
+came back reading `cannot reach llama-server` — a deadline expiring, dressed as a server that
+was down. Someone who has just cloned this cannot tell "slow" from "broken" without being
+told. The `extract`/`eval` gate does not ask, because it would not print the answer.
+
+When the file is found at a path but not at the declared `size_bytes`, that is reported as a
+**size mismatch** rather than as absent: a half-finished download has a specific fix, and
+calling it "missing" hides that the path was right. Weights found locally are started with
+`LLAMA_MODEL=<path>`; `LLAMA_HF` is only ever suggested when nothing was found, because `-hf`
+re-fetches into the engine's own cache.
+
+The same check runs ahead of the verbs that need a server, so a run refuses in milliseconds
+instead of reporting a transport failure per case. It refuses only on what it is certain of:
+
+- **A reachable server passes outright.** Whatever is or is not on the local disk, a run
+  pointed elsewhere with `--url` is never refused over a cache it was not going to read.
+- **Uncached weights never refuse.** llama.cpp names a cached download its own way and `-hf`
+  fetches on first use, so a miss changes the advice — expect a download, not a hang — rather
+  than the outcome.
+- `workflow` is exempt, because its steps each resolve their own backend. `eval --from-trace`
+  is exempt because it contacts no server at all. `ALKOR_NO_PREFLIGHT=1` turns it off.
 
 ### Web dashboard (browser)
 

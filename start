@@ -1,0 +1,380 @@
+#!/usr/bin/env bash
+# One command between a fresh clone and a working dashboard.
+#
+# Everything this does, a reader could do by hand from the README; the point is that nobody
+# should have to, and that the failures arrive in the order they can be fixed. It checks the
+# Node version, installs both dependency trees, asks `doctor` whether the engine and the
+# declared weights are here, then starts the interactive server and the dashboard together
+# and stops them together.
+#
+# What it does NOT do is start a llama-server for an eval. The harness never does that — a
+# server's flags are part of a measurement, so `extract` and `eval` still talk to one you
+# started (README, Quickstart). What starts here is the INTERACTIVE server, whose whole job
+# is managing model lifecycles on demand, and that is a different thing wearing a similar name.
+#
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")"
+
+usage() {
+  cat <<'EOF'
+alkor — structured extraction from clinical notes
+
+  ./start          check, then run the server and the dashboard
+  ./start --check  run the checks and change nothing
+
+Environment
+  PORT       port for the alkor server   (default 3000)
+  WEB_PORT   port for the dashboard      (default 5173)
+  NO_COLOR   set to anything for plain, unstyled output
+EOF
+}
+
+CHECK_ONLY=0
+for arg in "$@"; do
+  case "$arg" in
+    --check) CHECK_ONLY=1 ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "start: unknown option '$arg' (try --check, --help)" >&2
+      exit 2
+      ;;
+  esac
+done
+
+# --- Presentation ------------------------------------------------------------------------
+# The script is the product's first surface, so it wears the product's own identity rather
+# than a generic shell palette: indigo is --primary from web/src/styles.css, and the One
+# Accent Rule holds here too — the lockup and the address you are meant to open carry the
+# colour, and nothing else does. State is carried by glyph and by green/red, which are not
+# decoration but the two answers a check can give.
+#
+# Colour only when a human is watching. A log file full of escape codes helps nobody, and
+# NO_COLOR is honoured because someone setting it has already told us what they want.
+STYLE=1
+if [[ ! -t 1 || -n "${NO_COLOR:-}" || "${TERM:-}" == dumb ]]; then STYLE=0; fi
+
+if ((STYLE)); then
+  DIM=$'\033[2m' BOLD=$'\033[1m' RED=$'\033[31m' GREEN=$'\033[32m' OFF=$'\033[0m'
+  # Truecolor where it exists, so the accent is the same #4f46e5 the dashboard uses; the
+  # 256-colour cube has no cell that close, and 62 is the nearest indigo that does not read
+  # as either blue or violet. Both are legible on light and dark backgrounds, which the
+  # brighter members of the cube are not.
+  case "${COLORTERM:-}" in
+    truecolor | 24bit) ACCENT=$'\033[38;2;79;70;229m' ;;
+    *) ACCENT=$'\033[38;5;62m' ;;
+  esac
+  UL=$'\033[4m' NOUL=$'\033[24m'
+else
+  DIM='' BOLD='' RED='' GREEN='' OFF='' ACCENT='' UL='' NOUL=''
+fi
+
+# Box drawing and the star pair need a UTF-8 locale to land as glyphs rather than as mojibake,
+# and a start script is exactly the place that gets run over an old ssh session with LANG=C.
+case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+  *[Uu][Tt][Ff]*)
+    G_OK='✓' G_BAD='✗' G_DOT='·' G_STAR='✦'
+    B_H='─' B_V='│' B_TL='╭' B_TR='╮' B_BL='╰' B_BR='╯'
+    SPIN='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    ;;
+  *)
+    G_OK='+' G_BAD='x' G_DOT='-' G_STAR='*'
+    B_H='-' B_V='|' B_TL='+' B_TR='+' B_BL='+' B_BR='+'
+    SPIN='|/-\'
+    ;;
+esac
+
+# 14 columns before the value, which is what `doctor` uses (the longest label it prints is
+# `llama-server`, padded by two). Its output is indented to match below, so a run reads as
+# one document with one column rather than as two programs taking turns.
+LABEL_W=12
+row() { printf '  %s %s%s\n' "$1" "$(pad "$2")" "$3"; }
+pad() { printf "%-${LABEL_W}s" "$1"; }
+
+ok() { row "${GREEN}${G_OK}${OFF}" "$1" "$2"; }
+info() { row "${DIM}${G_DOT}${OFF}" "$1" "${DIM}$2${OFF}"; }
+fail() {
+  printf '\n  %s%s%s %s%s\n' "$RED" "$G_BAD" "$OFF" "$BOLD" "$1$OFF" >&2
+  shift
+  # Empty arguments are skipped so a conditional hint that did not apply leaves no blank line.
+  for line in "$@"; do [[ -n "$line" ]] && printf '    %s\n' "$line" >&2; done
+  echo >&2
+  exit 1
+}
+
+# Terminals that support OSC 8 make the address clickable; the rest ignore the sequence and
+# print the text, so there is no fallback to maintain. Underlined either way, because a URL
+# that is clickable should look like one.
+link() {
+  if ((STYLE)); then
+    printf '\033]8;;%s\033\\%s%s%s\033]8;;\033\\' "$1" "$UL" "$1" "$NOUL"
+  else
+    printf '%s' "$1"
+  fi
+}
+
+SERVER_PORT="${PORT:-3000}"
+# 5173 is vite's default and what web/vite.config.ts pins. Overridable because a machine
+# already running another vite is the ordinary case, not the exotic one.
+WEB_PORT="${WEB_PORT:-5173}"
+
+# The star pair and the wordmark are one lockup here exactly as they are in the topbar, and
+# it leads with the mark. `alkor` is a star nobody can read the product out of, so the
+# descriptor rides beside it — the same job it does on the web surface.
+banner() {
+  ((STYLE)) || return 0
+  printf '\n  %s%s%s %s%salkor%s  %s%s%s\n\n' \
+    "$ACCENT" "$G_STAR$G_STAR" "$OFF" \
+    "$ACCENT" "$BOLD" "$OFF" \
+    "$DIM" "structured extraction from clinical notes" "$OFF"
+  printf '\033]0;alkor\a'
+}
+banner
+
+# --- 1. Node -----------------------------------------------------------------------------
+# Checked first and by hand, because everything below this line is `node` or `npm`: a version
+# error from deep inside a dependency tree is the same problem reported four steps later.
+command -v node >/dev/null 2>&1 || fail "node is not installed" \
+  "alkor needs Node >= 24. Install it, or run 'mise install' — this repo pins it in mise.toml."
+NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
+if ((NODE_MAJOR < 24)); then
+  fail "node $(node -p 'process.versions.node') is too old" \
+    "alkor needs Node >= 24: the CLI is TypeScript run natively, with no build step." \
+    "Run 'mise install' (the version is pinned in mise.toml), or upgrade Node."
+fi
+ok "node" "$(node -p 'process.versions.node')"
+
+# --- 2. Dependencies ---------------------------------------------------------------------
+# `npm ci` rather than `install` when there is nothing yet: it is the lockfile's own verb and
+# it will not quietly rewrite the lockfile on someone's first run. Both trees are checked
+# separately because the dashboard has its own, and a present root tree says nothing about it.
+#
+# The install is the one step here that can take a minute, and a minute of nothing is what a
+# first run reads as a hang. It gets a spinner and, when it lands, the time it took — which
+# is also the answer to "is this normal?" the second time someone runs it.
+SPIN_PID=''
+spin_stop() {
+  [[ -n "$SPIN_PID" ]] || return 0
+  kill "$SPIN_PID" 2>/dev/null || true
+  wait "$SPIN_PID" 2>/dev/null || true
+  SPIN_PID=''
+  printf '\r\033[2K\033[?25h'
+}
+spin_start() {
+  ((STYLE)) || return 0
+  printf '\033[?25l'
+  (
+    i=0
+    while :; do
+      i=$(((i + 1) % ${#SPIN}))
+      printf '\r  %s%s%s %s%s%s' "$ACCENT" "${SPIN:i:1}" "$OFF" "$DIM" "$1" "$OFF"
+      sleep 0.08
+    done
+  ) &
+  SPIN_PID=$!
+}
+
+install_deps() {
+  local where="$1" label="$2" log started
+  if [[ -d "$where/node_modules" ]]; then
+    info "$label" "dependencies present"
+    return
+  fi
+  log="$(mktemp)"
+  started=$SECONDS
+  spin_start "installing $label dependencies (first run — this takes a minute)"
+  if [[ -f "$where/package-lock.json" ]]; then
+    npm --prefix "$where" ci --silent >"$log" 2>&1 || { spin_stop; cat "$log" >&2; rm -f "$log"; fail "installing $label dependencies failed" "npm's output is above."; }
+  else
+    npm --prefix "$where" install --silent >"$log" 2>&1 || { spin_stop; cat "$log" >&2; rm -f "$log"; fail "installing $label dependencies failed" "npm's output is above."; }
+  fi
+  spin_stop
+  rm -f "$log"
+  ok "$label" "dependencies installed ${DIM}$((SECONDS - started))s${OFF}"
+}
+install_deps . "root"
+install_deps web "dashboard"
+
+# --- 3. Engine and weights ---------------------------------------------------------------
+# Delegated to `doctor` so there is ONE implementation of this check and the script cannot
+# drift from the verb. --managed because the server below spawns backends on demand: a port
+# with nothing on it yet is what this script is about to fix, not a reason to refuse.
+#
+# Indented by two so doctor's own 14-column grid lands on the same column as the rows above,
+# and piped through `cat` rather than captured so its lines still arrive as they are produced.
+echo
+if ! node src/cli.ts doctor --profile clinical --managed 2>&1 | sed 's/^./  &/'; then
+  fail "the checks above did not pass" \
+    "Nothing was started. Fix what doctor named and run ./start again."
+fi
+echo
+
+if ((CHECK_ONLY)); then
+  ok "checks" "passed — nothing started (--check)"
+  echo
+  exit 0
+fi
+
+# --- 4. Ports ----------------------------------------------------------------------------
+# Checked before anything is spawned, so a busy port is one clear sentence rather than a
+# half-started stack and a stack trace from whichever process lost the race.
+# Both address families, because "localhost" is not one address. Vite binds ::1 and bash's
+# /dev/tcp/127.0.0.1 cannot see it — which is not a hypothetical: the first run of this script
+# reported the dashboard as failed to start while it was up and well on the next port along.
+# Node is already required above, and unlike /dev/tcp it resolves a host the way the OS does.
+port_busy() {
+  node -e '
+    const net = require("node:net")
+    const port = Number(process.argv[1])
+    const hosts = ["127.0.0.1", "::1"]
+    let left = hosts.length
+    let busy = false
+    const finish = () => {
+      if (--left === 0) process.exit(busy ? 0 : 1)
+    }
+    for (const host of hosts) {
+      let settled = false
+      const socket = net.connect({ host, port })
+      const end = (hit) => {
+        if (settled) return
+        settled = true
+        if (hit) busy = true
+        socket.destroy()
+        finish()
+      }
+      socket.setTimeout(1000, () => end(false))
+      socket.on("connect", () => end(true))
+      socket.on("error", () => end(false))
+    }
+  ' "$1" 2>/dev/null
+}
+for p in "$SERVER_PORT:the alkor server:PORT=$((SERVER_PORT + 1)) ./start" \
+  "$WEB_PORT:the dashboard:WEB_PORT=$((WEB_PORT + 1)) ./start"; do
+  IFS=: read -r port what hint <<<"$p"
+  if port_busy "$port"; then
+    fail "port $port is already in use, and $what needs it" \
+      "Something is listening there — an earlier ./start that is still running, most likely." \
+      "${hint:+Stop it, or start elsewhere: $hint}"
+  fi
+done
+
+# --- 5. Run ------------------------------------------------------------------------------
+# Both children die with this script, including on a failed startup: a dashboard left running
+# against a server that never came up is the confusing state this whole script exists to avoid.
+#
+# Each child writes to a log rather than straight to the terminal, for two reasons. While the
+# spinner is up the script owns the last line, and a server announcing its backends into the
+# middle of it is the mess this was meant to replace. And once both are up, their output is
+# two streams arriving on one screen, so each line gets its source in the label column — the
+# same column every other line here uses. Nothing is lost: a child that dies during startup
+# has its whole log printed, which is the moment the log was for.
+SERVER_PID=''
+WEB_PID=''
+TAIL_PIDS=''
+SERVER_LOG="$(mktemp)"
+WEB_LOG="$(mktemp)"
+
+# `-n 0` because the startup lines have already been answered by the ✓ above; what is worth
+# showing from here is what happens next.
+stream() {
+  local log="$1" prefix
+  prefix="$(printf '  %s%-12s%s' "$DIM" "$2" "$OFF")"
+  tail -f -n 0 "$log" 2>/dev/null | sed "s/^/$prefix/" &
+  TAIL_PIDS="$TAIL_PIDS $!"
+}
+
+cleanup() {
+  trap - INT TERM EXIT
+  spin_stop
+  for pid in $TAIL_PIDS; do kill "$pid" 2>/dev/null || true; done
+  rm -f "$SERVER_LOG" "$WEB_LOG"
+  # The cursor and the terminal title are ours only for the length of the run, and a Ctrl-C
+  # that leaves a shell with no cursor is a worse bug than anything above it.
+  if ((STYLE)); then printf '\033[?25h\033]0;\a'; fi
+  [[ -n "$WEB_PID" ]] && kill "$WEB_PID" 2>/dev/null || true
+  [[ -n "$SERVER_PID" ]] && kill "$SERVER_PID" 2>/dev/null || true
+  wait 2>/dev/null || true
+}
+trap cleanup INT TERM EXIT
+
+# Wait for a port to ANSWER rather than sleeping a guessed interval: the dashboard opened
+# against a port that is not up yet shows a disconnected board, which reads as a broken build.
+await_port() {
+  local port="$1" pid="$2" what="$3" log="$4"
+  for _ in $(seq 1 60); do
+    port_busy "$port" && return 0
+    if ! kill -0 "$pid" 2>/dev/null; then
+      spin_stop
+      cat "$log" >&2
+      fail "$what exited during startup" "Its output is above."
+    fi
+    sleep 0.5
+  done
+  spin_stop
+  cat "$log" >&2
+  fail "$what did not come up within 30s" "Its output is above."
+}
+
+spin_start "starting the alkor server on :$SERVER_PORT"
+PORT="$SERVER_PORT" node src/server.ts >"$SERVER_LOG" 2>&1 &
+SERVER_PID=$!
+await_port "$SERVER_PORT" "$SERVER_PID" "the alkor server" "$SERVER_LOG"
+spin_stop
+ok "server" "http://127.0.0.1:$SERVER_PORT"
+
+# --strictPort so vite fails instead of quietly moving to the next free port. A dashboard that
+# drifts to 5174 is a dashboard this script reports at the wrong address, and the port check
+# above has already established that 5173 is free — if it is not, that is worth stopping for.
+spin_start "starting the dashboard on :$WEB_PORT"
+npm --prefix web run dev --silent -- --strictPort --port "$WEB_PORT" >"$WEB_LOG" 2>&1 &
+WEB_PID=$!
+await_port "$WEB_PORT" "$WEB_PID" "the dashboard" "$WEB_LOG"
+spin_stop
+ok "dashboard" "http://localhost:$WEB_PORT"
+
+# --- 6. The address ----------------------------------------------------------------------
+# One framed block, holding the one thing the reader came for. The frame is drawn from the
+# plain text's own length rather than a constant, because everything inside it is wrapped in
+# escapes that occupy no columns — measuring the styled string would size the box to the
+# escape codes and tear the right edge off.
+rule() {
+  local n="$1" out=''
+  while ((n-- > 0)); do out+="$B_H"; done
+  printf '%s' "$out"
+}
+URL="http://localhost:$WEB_PORT"
+OPEN="Open $URL"
+W=$((${#OPEN} + 4))
+
+EDGE="$DIM$B_V$OFF"
+CONTENT="${BOLD}Open${OFF} ${ACCENT}${BOLD}$(link "$URL")${OFF}"
+
+printf '\n  %s%s%s%s%s\n' "$DIM" "$B_TL" "$(rule "$W")" "$B_TR" "$OFF"
+printf '  %s  %s  %s\n' "$EDGE" "$CONTENT" "$EDGE"
+printf '  %s%s%s%s%s\n\n' "$DIM" "$B_BL" "$(rule "$W")" "$B_BR" "$OFF"
+
+cat <<EOF
+  Models load on the first request, not now — if the weights are not cached yet, that first
+  request is also a ~4.6 GB download and will sit there a while. The server sweeps a backend
+  after 120s idle (ALKOR_IDLE_MS).
+
+  ${DIM}Ctrl-C stops both.${OFF}
+
+EOF
+
+if ((STYLE)); then printf '\033]0;alkor — running\a'; fi
+
+# Started only now, so neither child can write across the panel above — which is the one
+# thing on this screen the reader is meant to read.
+stream "$SERVER_LOG" "server"
+stream "$WEB_LOG" "web"
+
+# Either child exiting on its own is the end of the session; the trap stops the other one.
+# Polled rather than `wait -n`, which needs bash >= 4.3 and would fail on the 3.2 that macOS
+# still ships — a start script is the last place that should need a newer shell than the box has.
+while kill -0 "$SERVER_PID" 2>/dev/null && kill -0 "$WEB_PID" 2>/dev/null; do
+  sleep 1
+done

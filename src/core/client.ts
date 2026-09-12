@@ -286,7 +286,8 @@ export const toolChat = async (
   } catch (e) {
     throw new ChatError(
       `cannot reach server at ${baseUrl} for ${o.label}: ${(e as Error).message} — ` +
-        'check the server is running and reachable, and --jinja is enabled for tool calls',
+        'check the server is running and reachable' +
+        (o.tools?.length ? ', and that it was started with --jinja, which tool calls need' : ''),
     )
   }
   if (!res.ok) {
@@ -384,7 +385,8 @@ export const streamChat = async (o: StreamChatOptions): Promise<StreamResult> =>
     if (o.signal?.aborted) return { content: null, toolCalls: [], chunks: 0, aborted: true }
     throw new ChatError(
       `cannot reach server at ${baseUrl} for ${o.label}: ${(e as Error).message} — ` +
-        'check the server is running and reachable, and --jinja is enabled for tool calls',
+        'check the server is running and reachable' +
+        (o.tools?.length ? ', and that it was started with --jinja, which tool calls need' : ''),
     )
   }
   if (!res.ok) {
@@ -723,9 +725,13 @@ export const chat = async (o: ChatOptions): Promise<string> => {
     })
   } catch (e) {
     // REQ-LOCAL-4: name the endpoint and how to fix it, never a bare transport error.
+    // This path never sends tools, so it does not mention --jinja: the first thing a reader
+    // hits on a fresh clone is this message, and a hint about tool calls sends them to debug
+    // a template when what they actually have is no server.
     throw new ChatError(
       `cannot reach server at ${baseUrl} for ${o.label}: ${(e as Error).message} — ` +
-        'check the server is running and reachable, and --jinja is enabled for tool calls',
+        'start one with scripts/llama-server.sh (see README, Quickstart), or point this run ' +
+        'at a server that is already up with --url',
     )
   }
 
@@ -763,11 +769,18 @@ export const chat = async (o: ChatOptions): Promise<string> => {
 export const llamaChat = chat
 
 /**
- * Provider interface: a backend-agnostic contract for the LLM transport.
+ * Provider interface: the seam the LLM transport is reached through.
  *
- * Out-of-tree profiles may bring their own adapter that satisfies this interface,
- * allowing the harness to talk to Ollama, vLLM, or any other OpenAI-compatible
- * endpoint without changes to core.
+ * **llama.cpp is the only supported backend.** It is what the functions above speak to, what
+ * every number in this repository was measured against, and what the preflight check looks
+ * for. Nothing else is tested, and a result from another runtime is not comparable with one
+ * here until someone has shown that it is — see the parity tests, which compare serialized
+ * bytes rather than deep-equality for exactly that reason.
+ *
+ * The interface exists so the modes can be unit-tested without a server, and so an
+ * out-of-tree profile can supply its own adapter at its own risk. That is a seam, not a
+ * promise of portability: satisfying these four methods is the easy part, and reproducing a
+ * grammar-constrained decode is not.
  */
 export interface Provider {
   chat(o: ChatOptions): Promise<string>
