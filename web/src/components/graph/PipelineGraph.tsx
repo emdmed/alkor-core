@@ -6,7 +6,7 @@
  * hiding any pipeline or route.
  */
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, ChevronsDownUp, ChevronsUpDown, Circle, LoaderCircle, Maximize2, Minimize2, SlidersHorizontal, X } from 'lucide-react'
+import { BookOpen, Check, ChevronsDownUp, ChevronsUpDown, Circle, LoaderCircle, Maximize2, Minimize2, X } from 'lucide-react'
 import { Background, BackgroundVariant, Controls, ReactFlow, ReactFlowProvider, useReactFlow, useStore } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import type { GraphNode, GraphNodeData, CompactStepData } from '../../lib/graph/index.ts'
@@ -14,12 +14,6 @@ import { buildCompactGraph, layoutHeightOf } from '../../lib/graph/index.ts'
 import { fmtSec } from '../../lib/format.ts'
 import { NODE_TYPES } from './nodes.tsx'
 import { Button } from '../ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuCheckboxItem,
-} from '../ui/dropdown-menu'
 import type { ProjectState } from '../../../../src/monitor/state.ts'
 
 export interface PipelineGraphProps {
@@ -64,7 +58,7 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
   const [compactCollapsed, setCompactCollapsed] = useState<Set<string>>(new Set())
   // The legend floats over the canvas now, so it starts out of the way: it is reference
   // material, and a card parked on top of the board costs more than it explains. It is one
-  // click away under View, and the nodes it describes are labelled in plain words anyway.
+  // click away on the stage bar, and the nodes it describes are labelled in plain words anyway.
   const [showLegend, setShowLegend] = useState(false)
 
   // Keep the selected run reachable in the strip. `nearest` makes this a no-op when the
@@ -307,7 +301,7 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
   return (
     <div ref={graphShellRef} className={`graph-wrap${isFullscreen ? ' is-graph-fullscreen' : ''}`}>
       {/* One bar, and it answers one question: which run am I looking at, and where has it
-          got to. Everything that changes how the canvas is *drawn* folds into View. */}
+          got to. The controls that change how the canvas is *drawn* sit at its right end. */}
       <div className="stagebar">
         <div className="stagebar-runs" ref={runStripRef} aria-label="Recent runs">
           {runs.length === 0 && <span className="stagebar-waiting">No runs yet — send one from the Run panel.</span>}
@@ -330,10 +324,9 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
         <RunPosition run={selected} nodes={nodes} />
 
         <div className="stagebar-tools">
-          {/* Disclosure is the one canvas control that does not live under View: on the
-              compact board it is the move an operator makes constantly, and a menu trip per
-              use is a menu trip too many. It names the direction it is about to go, so it is
-              never a control that would do nothing. */}
+          {/* On the compact board disclosure is the move an operator makes constantly, so it
+              stays a single press. It names the direction it is about to go, so it is never a
+              control that would do nothing. */}
           {hasDisclosures && (
             <Button
               variant="ghost"
@@ -346,22 +339,19 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
               {everyStepOpen ? 'Collapse all' : 'Expand all'}
             </Button>
           )}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" title="How the canvas is drawn">
-                <SlidersHorizontal aria-hidden="true" />View<ChevronDown className="text-muted-foreground" aria-hidden="true" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-52">
-              <DropdownMenuCheckboxItem
-                checked={showLegend}
-                onCheckedChange={(next) => setShowLegend(next === true)}
-                onSelect={(e) => e.preventDefault()}
-              >
-                Legend
-              </DropdownMenuCheckboxItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {/* The legend is the only thing View ever held, and a menu holding one switch is a
+              menu that costs a click to say what a button says on its face. Pressed state
+              carries whether the card is up. */}
+          <Button
+            variant={showLegend ? 'secondary' : 'ghost'}
+            size="sm"
+            className="stagebar-disclose"
+            onClick={() => setShowLegend((on) => !on)}
+            aria-pressed={showLegend}
+            title={showLegend ? 'Hide the legend' : 'Show the legend'}
+          >
+            <BookOpen aria-hidden="true" />Legend
+          </Button>
           <Button
             variant="ghost"
             size="sm"
