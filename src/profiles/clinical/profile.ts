@@ -23,7 +23,7 @@ import { runShockEval } from './shock-eval.ts'
 import { runSepsisEval, sepsisDocumentNames } from './sepsis-eval.ts'
 import { gatePasses, runNoteFormatEval, runSummaryEval, runTranscriptEval, type TaskResult } from './set-eval.ts'
 import { loadSettings } from './settings.ts'
-import { GRADED_TASKS, ROUTED_TASKS, TASK_FEEDS, TASKS, UNREVIEWABLE_TASKS, type Task } from './contracts.ts'
+import { GRADED_TASKS, ROUTED_TASKS, TASK_FEEDS, TASK_SPEC, TASKS, UNREVIEWABLE_TASKS, type Task } from './contracts.ts'
 import type { ProfileTopology } from '../../core/topology.ts'
 import { CALCULATIONS_STAGE, ROUTE_STAGE, VITALS_FIRST_STAGE, topologyStagesFor } from './stages.ts'
 import {
@@ -98,6 +98,22 @@ const clinicalTopology = (): ProfileTopology => ({
   }],
 })
 
+/**
+ * Which corpus each task's `--case` names come from.
+ *
+ * A task absent here falls back to the vital-signs corpus, which is the written-note corpus
+ * three tasks share. The fallback is not laziness: the two corpora in this pack are NOT
+ * interchangeable, and a transcript is not reachable by the name list the note tasks expose,
+ * so the tasks that read the other corpus are exactly the ones that have to say so.
+ */
+const DOCUMENT_NAMES: Partial<Record<Task, (pack: Pack) => string[]>> = {
+  transcript: transcriptDocumentNames,
+  shock: shockDocumentNames,
+  'shock-extraction': shockExtractionDocumentNames,
+  'shock-pipeline': shockPipelineDocumentNames,
+  sepsis: sepsisDocumentNames,
+}
+
 export const PROFILE: ProfileModule = {
   name: 'clinical',
   mode: 'extract',
@@ -108,15 +124,8 @@ export const PROFILE: ProfileModule = {
    * below is: this pack holds two corpora that are not interchangeable, and a transcript is
    * not reachable by the name list the note tasks expose.
    */
-  documentNames: (pack: Pack, options?: Record<string, unknown>): string[] => {
-    const task = reviewTask(options?.task)
-    if (task === 'transcript') return transcriptDocumentNames(pack)
-    if (task === 'shock') return shockDocumentNames(pack)
-    if (task === 'shock-extraction') return shockExtractionDocumentNames(pack)
-    if (task === 'shock-pipeline') return shockPipelineDocumentNames(pack)
-    if (task === 'sepsis') return sepsisDocumentNames(pack)
-    return vitalDocumentNames(pack)
-  },
+  documentNames: (pack: Pack, options?: Record<string, unknown>): string[] =>
+    (DOCUMENT_NAMES[reviewTask(options?.task)] ?? vitalDocumentNames)(pack),
   /**
    * Trace redaction, decided by the PACK rather than by this file.
    *
@@ -205,32 +214,41 @@ export const PROFILE: ProfileModule = {
     }
     const results: TaskResult[] = []
 
+    /**
+     * How each graded task measures itself. A task absent here is one the pack declares no
+     * answer key for; the refusal below says so by name.
+     *
+     * Every entry is handed the same `shared`, minus nothing: each honours --constrain,
+     * --runs, --difficulty and --no-cache-prompt, and the ones with no second call to make
+     * ignore --repair and --medication-pass. A task that quietly dropped a flag would report a
+     * number under conditions the header names and the run did not use.
+     */
+    const EVALS: Partial<Record<Task, () => Promise<TaskResult>>> = {
+      'vital-signs': () => vitalSignsResult(shared),
+      summary: () => runSummaryEval(shared),
+      'note-format': () => runNoteFormatEval(shared),
+      shock: () => runShockEval(shared),
+      sepsis: () => runSepsisEval(shared),
+      'shock-extraction': () => runShockExtractionEval(shared),
+      'shock-pipeline': () => runShockPipelineEval(shared),
+      transcript: () => runTranscriptEval(shared),
+    }
+
     for (const task of tasks) {
-      if (task === 'vital-signs') results.push(await vitalSignsResult(shared))
-      else if (task === 'summary') results.push(await runSummaryEval(shared))
-      else if (task === 'note-format') results.push(await runNoteFormatEval(shared))
-      // Handed the same `shared` as the rest, minus nothing: it honours --constrain, --runs,
-      // --difficulty and --no-cache-prompt exactly as the extraction tasks do, and ignores
-      // --repair and --medication-pass because it has no second call to make. A task that
-      // quietly dropped a flag would report a number under conditions the header names and
-      // the run did not use.
-      else if (task === 'shock') results.push(await runShockEval(shared))
-      else if (task === 'sepsis') results.push(await runSepsisEval(shared))
-      else if (task === 'shock-extraction') results.push(await runShockExtractionEval(shared))
-      else if (task === 'shock-pipeline') results.push(await runShockPipelineEval(shared))
-      else if (task === 'transcript') results.push(await runTranscriptEval(shared))
-      // NAMED rather than reached by falling off the end of the chain. This was an unguarded
+      const runTask = EVALS[task]
+      // NAMED rather than reached by falling off the end of a chain. This was once an unguarded
       // `else` that ran the transcript eval for anything it did not recognise, so the day a
       // task joined TASKS without an eval mode — which is the day `sepsis-extraction` did —
       // `--task all` would have graded transcripts and filed the number under the new task's
       // name. A task with no eval corpus has to say so.
-      else {
+      if (!runTask) {
         throw new ProfileError(
           `--task '${task}' has no eval mode in this profile: it is reviewable (\`extract\`) but ` +
             'not yet graded, because the pack declares no answer key for it — add its cases to ' +
             'the pack and its eval to this chain in the same commit',
         )
       }
+      results.push(await runTask())
     }
 
     // EVERY task clears its own floor, and every sub-gate within a task clears its own.
@@ -424,52 +442,95 @@ const executeClinicalTask = async (ctx: ReviewContext, shared: { pack: Pack; bas
     throw new ProfileError(`--repair applies to --task transcript; ${task} has no citation to repair`)
   }
 
-  // The front door already ran this contract over this document. Running it again would be the
-  // same prompt, the same schema and the same note, for a second answer that may differ from
-  // the one the route was decided on — and a report that disagrees with its own routing reason
-  // is worse than a slower one.
-  if (task === 'vital-signs' && front) return front.result
-  if (task === 'vital-signs') return reviewVitalSigns(shared)
-  if (task === 'transcript') return reviewTranscript({ ...shared, repair: Boolean(ctx.options.repair) })
-  if (task === 'shock') return reviewShock({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider, activity: ctx.activity })
-  if (task === 'sepsis') return reviewSepsis({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider, activity: ctx.activity })
-  // Both extraction arms read the ORIGINAL prose with the measured numbers appended as facts.
-  // They still run — the payloads they build need findings the vital-signs contract has no slot
-  // for, a jugular venous pressure and a lung exam and a GCS — but nothing is served by asking
-  // a second model pass to read a blood pressure the CLI has already parsed.
-  if (task === 'shock-extraction') return reviewShockExtraction({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: seededInput(shared.input, front), provider: shared.provider, activity: ctx.activity })
-  if (task === 'sepsis-extraction') return reviewSepsisExtraction({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: seededInput(shared.input, front), provider: shared.provider, activity: ctx.activity })
-  if (task === 'shock-pipeline') {
-    // Chain extraction → classification. The extraction step reads prose; the classification
-    // step reads the extracted exam as JSON text, exactly as the standalone shock review does.
-    const extractionResult = await reviewShockExtraction({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider, activity: ctx.activity })
-    if (!extractionResult.ok || !extractionResult.report) {
-      return { ...extractionResult, text: `shock-pipeline: extraction failed — ${extractionResult.text}` }
-    }
-    const exam = (extractionResult.report as { exam?: ShockExam }).exam
-    if (!exam) {
-      return { ...extractionResult, text: `shock-pipeline: extraction produced no exam payload — ${extractionResult.text}` }
-    }
-    const classificationResult = await reviewShock({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: { kind: 'text', text: JSON.stringify(exam), label: extractionResult.label }, provider: shared.provider, activity: ctx.activity })
-    return {
-      text: `${extractionResult.text}\n${classificationResult.text}`,
-      ok: extractionResult.ok && classificationResult.ok,
-      raw: classificationResult.raw,
-      document: extractionResult.document,
-      label: extractionResult.label,
-      report: { extraction: extractionResult.report, classification: classificationResult.ok },
-    }
-  }
-  if (task === 'note-format') return reviewNoteFormat({ pack: ctx.pack!, baseUrl: ctx.baseUrl, trace: ctx.trace, constrain: Boolean(ctx.options.constrain), input: shared.input, provider: shared.provider, activity: ctx.activity })
+  /**
+   * The arguments every single-contract reviewer takes, built once.
+   *
+   * It was written out at each of six call sites, which is six chances to leave one field
+   * off — and the field most easily left off is `activity`, whose absence costs a task its
+   * telemetry and nothing else, so nothing fails and the dashboard is quietly short one
+   * stream. `input` is the only part that genuinely varies between them.
+   */
+  const on = (input: ReviewContext['input']) => ({
+    pack: ctx.pack!,
+    baseUrl: ctx.baseUrl,
+    trace: ctx.trace,
+    constrain: Boolean(ctx.options.constrain),
+    input,
+    provider: shared.provider,
+    activity: ctx.activity,
+  })
 
-  // Reached only by a task this profile grades but cannot run over one document — the same
-  // fact the topology publishes as `available: false`, so a route is never drawn as runnable
-  // and then refused on arrival.
-  throw new ProfileError(
-    `--task '${task}' is a graded task but not a reviewable one: ` +
-      'its input is a whole record assembled from many notes, not one document — ' +
-      'run `eval --task summary` instead',
+  const reviewers: Partial<Record<Task, () => Promise<ReviewResult>>> = {
+    // The front door already ran this contract over this document. Running it again would be
+    // the same prompt, the same schema and the same note, for a second answer that may differ
+    // from the one the route was decided on — and a report that disagrees with its own routing
+    // reason is worse than a slower one.
+    'vital-signs': async () => (front ? front.result : reviewVitalSigns(shared)),
+    transcript: async () => reviewTranscript({ ...shared, repair: Boolean(ctx.options.repair) }),
+    shock: async () => reviewShock(on(shared.input)),
+    sepsis: async () => reviewSepsis(on(shared.input)),
+    // Both extraction arms read the ORIGINAL prose with the measured numbers appended as facts.
+    // They still run — the payloads they build need findings the vital-signs contract has no
+    // slot for, a jugular venous pressure and a lung exam and a GCS — but nothing is served by
+    // asking a second model pass to read a blood pressure the CLI has already parsed.
+    'shock-extraction': async () => reviewShockExtraction(on(seededInput(shared.input, front))),
+    'sepsis-extraction': async () => reviewSepsisExtraction(on(seededInput(shared.input, front))),
+    'shock-pipeline': () => reviewShockPipeline(on, shared.input),
+    'note-format': async () => reviewNoteFormat(on(shared.input)),
+  }
+
+  // Refused on the PACK'S OWN declaration rather than by falling off the end of a chain — the
+  // same `reviewable: false` the topology publishes as `available: false`, so a route is never
+  // drawn as runnable and then refused on arrival.
+  if (!TASK_SPEC[task].reviewable) {
+    throw new ProfileError(
+      `--task '${task}' is a graded task but not a reviewable one: ` +
+        'its input is a whole record assembled from many notes, not one document — ' +
+        'run `eval --task summary` instead',
+    )
+  }
+  const run = reviewers[task]
+  // A task the registry calls reviewable and this table has no entry for: a gap between the
+  // pack's declaration and this profile's wiring, which is a programming mistake rather than a
+  // user's. Worth its own sentence instead of returning undefined into a caller that expects a
+  // report. `test/clinical.test.ts` asserts the two agree, so this should stay unreachable.
+  if (!run) {
+    throw new ProfileError(`--task '${task}' is declared reviewable but this profile wires no reviewer for it`)
+  }
+  return run()
+}
+
+/**
+ * Extraction → classification, the only review that is two contracts deep.
+ *
+ * The extraction step reads prose; the classification step reads the extracted exam as JSON
+ * text, exactly as the standalone shock review does. Lifted out of the dispatch table because
+ * it is the one entry with a control flow of its own, and a twenty-line branch inline among
+ * eight one-liners buries the seven that are simple.
+ */
+const reviewShockPipeline = async (
+  on: (input: ReviewContext['input']) => Parameters<typeof reviewShockExtraction>[0],
+  input: ReviewContext['input'],
+): Promise<ReviewResult> => {
+  const extractionResult = await reviewShockExtraction(on(input))
+  if (!extractionResult.ok || !extractionResult.report) {
+    return { ...extractionResult, text: `shock-pipeline: extraction failed — ${extractionResult.text}` }
+  }
+  const exam = (extractionResult.report as { exam?: ShockExam }).exam
+  if (!exam) {
+    return { ...extractionResult, text: `shock-pipeline: extraction produced no exam payload — ${extractionResult.text}` }
+  }
+  const classificationResult = await reviewShock(
+    on({ kind: 'text', text: JSON.stringify(exam), label: extractionResult.label }),
   )
+  return {
+    text: `${extractionResult.text}\n${classificationResult.text}`,
+    ok: extractionResult.ok && classificationResult.ok,
+    raw: classificationResult.raw,
+    document: extractionResult.document,
+    label: extractionResult.label,
+    report: { extraction: extractionResult.report, classification: classificationResult.ok },
+  }
 }
 
 /**
@@ -530,7 +591,12 @@ const executeClinicalRoute = async (
     const result = await executeClinicalTask(ctx, feed ? { ...shared, input: feed } : shared, task, front)
     results.push({ task, result })
 
-    if (task === 'shock-extraction' || task === 'sepsis-extraction') {
+    // Every task that FEEDS another has its payload kept for the one downstream. Asked of the
+    // registry rather than by naming the two extraction arms, which is the same question with a
+    // shelf life: a third arm added to `TASK_SPECS` with a `feeds` would have been silently
+    // dropped here, and the task it fed would have reported "no usable payload" for a step that
+    // ran and succeeded.
+    if (TASK_FEEDS[task]) {
       attempted.add(task)
       const exam = (result.report as { exam?: unknown } | undefined)?.exam
       if (result.ok && exam) extracted.set(task, { kind: 'text', text: JSON.stringify(exam), label: result.label })

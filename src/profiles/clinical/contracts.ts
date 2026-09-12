@@ -283,58 +283,126 @@ export const CONTRACTS = {
 // --- The tasks, as a view of the table ----------------------------------------------------
 
 /**
- * The graded tasks, in the order a pack author meets them.
+ * What this profile knows about each of its tasks, in the order a pack author meets them.
  *
- * `shock` is last and is the only one that is not an extraction. It is in this list rather
- * than beside it because `--task all` has to reach it: a graded task nobody can run is a
- * contract that sits looking complete and reports nothing, which is the state it was in for
- * exactly as long as it took to write an eval mode for it.
+ * ONE ENTRY PER TASK, and every task-keyed list below is derived from it. It used to be six
+ * hand-maintained lists — the union, `TASKS`, `UNGRADED_TASKS`, `TOOLING_TASKS`,
+ * `TASK_FEEDS`, `TASK_ORDER` and `UNREVIEWABLE_TASKS` — which meant one fact about one task
+ * was spread across six places that had to be edited together and could not be checked
+ * against each other. A task absent from `TASKS` but present in `TOOLING_TASKS` is not a
+ * state this table can express, and that is the point of it.
+ *
+ * `shock` is not an extraction and is here anyway, because `--task all` has to reach it: a
+ * graded task nobody can run is a contract that sits looking complete and reports nothing,
+ * which is the state it was in for exactly as long as it took to write an eval mode for it.
  */
-export type Task = 'vital-signs' | 'summary' | 'note-format' | 'transcript' | 'shock' | 'shock-extraction' | 'shock-pipeline' | 'sepsis' | 'sepsis-extraction'
-export const TASKS: Task[] = ['vital-signs', 'summary', 'note-format', 'transcript', 'shock', 'shock-extraction', 'shock-pipeline', 'sepsis', 'sepsis-extraction']
+export interface TaskSpec {
+  /**
+   * Whether an eval mode scores this task. False means REVIEWABLE BUT NOT GRADED: the profile
+   * runs it over a document and reports no percentage, because the pack declares no answer key.
+   *
+   * Two things read this and they must not disagree: `--task all` skips an ungraded task
+   * rather than dying on it, and the eval dispatch refuses it BY NAME rather than by falling
+   * off the end of a chain into whatever branch happens to be last.
+   *
+   * `sepsis-extraction` is currently the only one. It ships a prompt, a schema and a parser,
+   * and the routed task runs it — but nobody has measured whether a small model reads three
+   * qSOFA numbers off prose correctly. The day a corpus arrives, this flips in the same commit
+   * as its eval.
+   */
+  graded: boolean
+  /**
+   * Whether this is DOCUMENT TOOLING rather than a clinical question.
+   *
+   * Transcribing a consultation, laying a note out in four sections, and summarising a record
+   * are things you do TO a document. None of them names a syndrome, decides a diagnosis, or
+   * has a clinical answer to be right or wrong about — the run ends with a formatted document,
+   * not with something established about the patient. So the router does not select them:
+   * routing is the question "what does this document raise about this patient", and a document
+   * being a dialogue is an answer to a different question entirely.
+   *
+   * Tooling tasks are NOT second-class. Each keeps its contract, its corpus, its eval and its
+   * stages, and each remains runnable by name — `--task transcript` is how a caller who wants a
+   * transcript asks for one, and `--task all` still grades them. What they lack is the ability
+   * to be chosen FOR a caller by the clinical router.
+   *
+   * The consequence worth stating is what happens to a consultation: it is routed by what it
+   * says. A dialogue in which a patient is hypotensive and tachycardic used to be transcribed
+   * and nothing else, because modality won outright; it now runs the front door and reaches the
+   * shock arm like any other prose that states those two findings.
+   */
+  tooling: boolean
+  /**
+   * Whether `extract` can run this task over ONE document.
+   *
+   * False for summary alone: it reads a whole record assembled from many notes, so there is no
+   * single document to hand it, and `review` refuses it by name rather than failing obscurely
+   * on an input of the wrong shape.
+   */
+  reviewable: boolean
+  /**
+   * Which task consumes this one's output, when prose takes the long path.
+   *
+   * The two prose arms are two-contract workflows: extract the closed payload first, then hand
+   * that payload to the contract that reasons over it. A structured payload — an exam or a
+   * qSOFA screen — enters the downstream contract directly, which is why the downstream task
+   * remains a valid entry of its own rather than being folded into its extraction.
+   *
+   * Read by the router to expand a plan and by the topology to draw an edge; one statement,
+   * because a graph that disagreed with the plan would be drawing a chain nobody runs.
+   */
+  feeds?: Task
+  /**
+   * Rank within a multi-question plan: what runs first. Absent means this task is not part of
+   * one, and it sorts after everything that is — see `ROUTED_TASKS`, which relies on that.
+   */
+  order?: number
+}
+
+export const TASK_SPECS = {
+  'vital-signs': { graded: true, tooling: false, reviewable: true, order: 5 },
+  summary: { graded: true, tooling: true, reviewable: false },
+  'note-format': { graded: true, tooling: true, reviewable: true },
+  transcript: { graded: true, tooling: true, reviewable: true },
+  shock: { graded: true, tooling: false, reviewable: true, order: 2 },
+  'shock-extraction': { graded: true, tooling: false, reviewable: true, feeds: 'shock', order: 1 },
+  'shock-pipeline': { graded: true, tooling: false, reviewable: true },
+  sepsis: { graded: true, tooling: false, reviewable: true, order: 4 },
+  'sepsis-extraction': { graded: false, tooling: false, reviewable: true, feeds: 'sepsis', order: 3 },
+} as const
+
+export type Task = keyof typeof TASK_SPECS
 
 /**
- * Tasks that are REVIEWABLE but not GRADED: the profile can run them over a document, and no
- * eval mode scores them, because the pack declares no answer key for them.
+ * The same table, typed — and the check that it is well-formed.
  *
- * Stated here, once, because two things read it and they must not disagree: `--task all`
- * skips these rather than dying on them, and the eval dispatch refuses them by name rather
- * than by falling off the end of its chain into whatever branch happens to be last.
+ * Declared AFTER `Task` rather than as a `satisfies` on the literal above, because that is the
+ * only order that works: `feeds` names a `Task`, and `Task` is `keyof` the very table being
+ * annotated, so constraining the literal in place is a type that references itself. Separating
+ * the two costs one line and still fails the build if a `feeds` names a task that does not
+ * exist, which is the mistake worth catching.
  *
- * `sepsis-extraction` is the first and currently the only member. It ships a prompt, a schema
- * and a parser, and the routed task runs it — but nobody has measured whether a small
- * model reads three qSOFA numbers off prose correctly, so it reports no percentage. The day a
- * corpus arrives, it comes off this list in the same commit as its eval.
+ * Read this rather than `TASK_SPECS` everywhere below; the literal is exported only so `Task`
+ * can be derived from it.
  */
-export const UNGRADED_TASKS: Task[] = ['sepsis-extraction']
+export const TASK_SPEC: Record<Task, TaskSpec> = TASK_SPECS
+
+/** Every task, in declaration order. */
+export const TASKS: Task[] = Object.keys(TASK_SPEC) as Task[]
+
+const withSpec = (p: (s: TaskSpec) => boolean): Task[] => TASKS.filter((t) => p(TASK_SPEC[t]))
+
+/** Reviewable but unscored — see `TaskSpec.graded`. */
+export const UNGRADED_TASKS: Task[] = withSpec((s) => !s.graded)
 
 /** The tasks `--task all` runs: every task that can actually report a number. */
-export const GRADED_TASKS: Task[] = TASKS.filter((t) => !UNGRADED_TASKS.includes(t))
+export const GRADED_TASKS: Task[] = withSpec((s) => s.graded)
 
-/**
- * The tasks that are DOCUMENT TOOLING rather than clinical questions.
- *
- * Transcribing a consultation, laying a note out in four sections, and summarising a record
- * are things you do TO a document. None of them names a syndrome, decides a diagnosis, or
- * has a clinical answer to be right or wrong about — the run ends with a formatted document,
- * not with something established about the patient. So the router does not select them:
- * routing is the question "what does this document raise about this patient", and a document
- * being a dialogue is an answer to a different question entirely.
- *
- * They are NOT removed, and the distinction matters. Each keeps its contract, its corpus,
- * its eval and its stages, and each remains runnable by name — `--task transcript` is how a
- * caller who wants a transcript asks for one, and `--task all` still grades them. What they
- * lost is the ability to be chosen FOR a caller by the clinical router.
- *
- * The consequence worth stating is what now happens to a consultation: it is routed by what
- * it says. A dialogue in which a patient is hypotensive and tachycardic used to be
- * transcribed and nothing else, because modality won outright; it now runs the front door
- * and reaches the shock arm like any other prose that states those two findings.
- */
-export const TOOLING_TASKS: Task[] = ['summary', 'note-format', 'transcript']
+/** Document tooling rather than clinical questions — see `TaskSpec.tooling`. */
+export const TOOLING_TASKS: Task[] = withSpec((s) => s.tooling)
 
 /** Every task that answers a clinical question — the complement of `TOOLING_TASKS`. */
-export const CLINICAL_TASKS: Task[] = TASKS.filter((t) => !TOOLING_TASKS.includes(t))
+export const CLINICAL_TASKS: Task[] = withSpec((s) => !s.tooling)
 
 export type ClinicalShape = 'exam-json' | 'qsofa-json' | 'shock-suspicion' | 'sepsis-suspicion' | 'vitals-note' | 'note'
 
@@ -356,44 +424,24 @@ export const DEFAULT_TASK_FOR_SHAPE: Record<ClinicalShape, Task> = {
   note: 'vital-signs',
 }
 
-/**
- * Which task consumes which other task's output, when prose takes the long path.
- *
- * The two prose arms are two-contract workflows: extract the closed payload first, then hand
- * that payload to the contract that reasons over it. A structured payload — an exam or a
- * qSOFA screen — enters the downstream contract directly, which is why the downstream task
- * remains a valid entry of its own rather than being folded into its extraction.
- *
- * One statement, because the router walks it to expand a plan and the topology draws it as
- * an edge, and a graph that disagreed with the plan would be drawing a chain nobody runs.
- */
-export const TASK_FEEDS: Partial<Record<Task, Task>> = {
-  'shock-extraction': 'shock',
-  'sepsis-extraction': 'sepsis',
-}
+/** Which task consumes which other task's output — see `TaskSpec.feeds`. */
+export const TASK_FEEDS: Partial<Record<Task, Task>> = Object.fromEntries(
+  TASKS.flatMap((t) => (TASK_SPEC[t].feeds ? [[t, TASK_SPEC[t].feeds]] : [])),
+)
 
 /**
  * Dependency order over the tasks: what a multi-question plan runs first.
  *
  * Read by the router to sort a plan and by the topology to order the route fan, so the
- * picture a reader sees is the order the work happens in.
+ * picture a reader sees is the order the work happens in. Only the tasks a plan can contain
+ * appear; see `TaskSpec.order`.
  */
-export const TASK_ORDER: Task[] = [
-  'shock-extraction',
-  'shock',
-  'sepsis-extraction',
-  'sepsis',
-  'vital-signs',
-]
+export const TASK_ORDER: Task[] = TASKS.filter((t) => TASK_SPEC[t].order !== undefined).sort(
+  (a, b) => (TASK_SPEC[a].order ?? 0) - (TASK_SPEC[b].order ?? 0),
+)
 
-/**
- * Tasks the profile can GRADE but cannot RUN over one document.
- *
- * Summary reads a whole record assembled from many notes, so `extract` refuses it by name.
- * It is tooling and therefore not a route either, so this no longer has a drawn route to
- * agree with — it is now only the refusal, stated once, where `review` reads it.
- */
-export const UNREVIEWABLE_TASKS: Task[] = ['summary']
+/** Tasks the profile can GRADE but cannot RUN over one document — see `TaskSpec.reviewable`. */
+export const UNREVIEWABLE_TASKS: Task[] = withSpec((s) => !s.reviewable)
 
 /**
  * Every task the internal router can select, in dependency order.

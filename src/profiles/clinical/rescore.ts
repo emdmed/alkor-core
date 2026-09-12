@@ -126,13 +126,26 @@ export const rescoreTrace = (o: RescoreOptions): RescoreResult[] => {
     byTask.set(task, [...(byTask.get(task) ?? []), c])
   }
 
+  /**
+   * Which tasks can be re-scored from a trace, keyed by the task NAME as the file spells it.
+   *
+   * Deliberately keyed by `string` rather than by `Task`: the key comes out of a file on disk,
+   * so it is not known to be a task at all, and the refusal below is what says so. The four
+   * here are the set-extraction tasks, whose grade is recomputable from the completion alone —
+   * a task whose answer key is a subprocess is not re-scorable without re-running it.
+   */
+  const RESCORERS: Record<string, (events: TraceEvent[]) => RescoreResult> = {
+    'vital-signs': (events) => rescoreVital(o, events, record),
+    summary: (events) => rescoreSummary(o, events),
+    'note-format': (events) => rescoreFormat(o, events),
+    transcript: (events) => rescoreTranscript(o, events),
+  }
+
   const results: RescoreResult[] = []
   for (const [task, events] of byTask) {
-    if (task === 'vital-signs') results.push(rescoreVital(o, events, record))
-    else if (task === 'summary') results.push(rescoreSummary(o, events))
-    else if (task === 'note-format') results.push(rescoreFormat(o, events))
-    else if (task === 'transcript') results.push(rescoreTranscript(o, events))
-    else throw new TraceError(`${o.path} holds case events for an unknown task '${task}'`)
+    const rescoreTask = RESCORERS[task]
+    if (!rescoreTask) throw new TraceError(`${o.path} holds case events for an unknown task '${task}'`)
+    results.push(rescoreTask(events))
   }
   if (results[0]) results[0].lines = [...header, '', ...results[0].lines]
   return results

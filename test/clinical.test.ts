@@ -18,9 +18,13 @@ import { parse as parseToml } from 'smol-toml'
 import { loadPack, SPEC_CHANGES, specGap, SPEC_VERSION } from '../src/core/pack.ts'
 import { loadSampling, loadSettings } from '../src/profiles/clinical/settings.ts'
 import { gradedExpectations, loadVitalCases, parseDifficultyRange } from '../src/profiles/clinical/cases.ts'
-import { gradedFields, vitalPrompt, vitalSchema, vitalSchemaGolden } from '../src/profiles/clinical/contracts.ts'
+import { GRADED_TASKS, gradedFields, TASK_SPEC, TASKS, vitalPrompt, vitalSchema, vitalSchemaGolden } from '../src/profiles/clinical/contracts.ts'
 import { parseVitalSigns } from '../src/profiles/clinical/extraction.ts'
 import { scoreCase, norm } from '../src/profiles/clinical/scorer.ts'
+import { PROFILE } from '../src/profiles/clinical/profile.ts'
+import { clinicalRedactor } from '../src/profiles/clinical/redact.ts'
+import { openTrace } from '../src/core/trace.ts'
+import type { Provider } from '../src/core/client.ts'
 
 const pack = loadPack(join(import.meta.dirname, '..', 'packs', 'clinical'))
 const fields = gradedFields(pack)
@@ -549,4 +553,89 @@ test('the digest changes when a contract changes', () => {
 test('the harness names its own version', async () => {
   const { HARNESS_VERSION } = await import('../src/core/version.ts')
   assert.match(HARNESS_VERSION, /^\d+\.\d+\.\d+/, 'a run record must name what produced it')
+})
+
+/**
+ * The task registry and the profile's dispatch tables, checked against each other.
+ *
+ * `contracts.ts` declares what each task IS — graded, reviewable, tooling — and `profile.ts`
+ * wires what each task DOES. Nothing makes the two agree on its own, and the failure they
+ * would produce is the quiet kind: a task the pack advertises as runnable that refuses on
+ * arrival, or one the pack calls graded that `--task all` walks past. Both used to be
+ * reachable only by running the command.
+ */
+test('every task the registry calls reviewable has a reviewer wired', async () => {
+  // A provider that refuses to answer, so the check reaches the dispatch and stops before any
+  // model call. Anything other than this sentinel — a ProfileError about wiring, most of all —
+  // is the failure this test exists to catch.
+  const SENTINEL = 'provider-reached'
+  const refuse = () => Promise.reject(new Error(SENTINEL))
+  const provider = {
+    chat: refuse,
+    toolChat: refuse,
+    streamChat: refuse,
+    identify: () => Promise.resolve({ model: 'stub', identified: true, props: {} }),
+  } as unknown as Provider
+
+  const dir = mkdtempSync(join(tmpdir(), 'medextract-wiring-'))
+  const before = process.env.TRACE_DIR
+  process.env.TRACE_DIR = dir
+  const trace = openTrace('wiring-test', clinicalRedactor(true))
+  if (before === undefined) delete process.env.TRACE_DIR
+  else process.env.TRACE_DIR = before
+
+  try {
+    for (const task of TASKS) {
+      const reviewable = TASK_SPEC[task].reviewable
+      const attempt = PROFILE.review!({
+        pack,
+        trace,
+        input: { kind: 'text', text: 'BP 90/60, HR 118, RR 24, temp 38.5C, GCS 15.' },
+        options: { task, constrain: false },
+        provider,
+      })
+      const err = await attempt.then(() => undefined, (e: Error) => e)
+
+      if (!reviewable) {
+        assert.match(
+          String(err?.message),
+          /not a reviewable one/,
+          `${task} is declared unreviewable and should be refused by name`,
+        )
+        continue
+      }
+      assert.doesNotMatch(
+        String(err?.message),
+        /wires no reviewer/,
+        `${task} is declared reviewable but profile.ts has no entry in its reviewer table`,
+      )
+    }
+  } finally {
+    trace.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('every graded task is one --task all will actually run', () => {
+  // GRADED_TASKS is derived from the registry; the eval dispatch is a separate table in
+  // profile.ts. This asserts the registry does not promise a number nobody computes.
+  for (const task of GRADED_TASKS) {
+    assert.ok(TASK_SPEC[task].graded, `${task} is in GRADED_TASKS but the registry does not call it graded`)
+  }
+  for (const task of TASKS) {
+    assert.equal(GRADED_TASKS.includes(task), TASK_SPEC[task].graded, `${task} disagrees with its own graded flag`)
+  }
+})
+
+test('the registry is internally well-formed', () => {
+  for (const task of TASKS) {
+    const spec = TASK_SPEC[task]
+    // A feed target that is not a task would be a chain the router walks into nothing.
+    if (spec.feeds) assert.ok(TASKS.includes(spec.feeds), `${task} feeds '${spec.feeds}', which is not a task`)
+    // Tooling is never routed, so a tooling task with a plan rank is a contradiction: the
+    // rank only means anything inside a plan the router builds.
+    if (spec.tooling) assert.equal(spec.order, undefined, `${task} is tooling and cannot hold a plan rank`)
+  }
+  const ranks = TASKS.map((t) => TASK_SPEC[t].order).filter((o) => o !== undefined)
+  assert.equal(new Set(ranks).size, ranks.length, 'two tasks claim the same plan rank, so their order is undefined')
 })
