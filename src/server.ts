@@ -23,6 +23,7 @@ import type { RouteContext, ServerDeps } from './server/deps.ts'
 import { health } from './server/routes/health.ts'
 import { corpusList, corpusDocument } from './server/routes/corpus.ts'
 import { events } from './server/routes/events.ts'
+import { sessionCreate, sessionAction, sessionDelete } from './server/routes/session.ts'
 import { createSseHub } from './server/sse.ts'
 import { randomUUID, createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
@@ -36,7 +37,7 @@ import { loadProfileModule, resolveProfileModule, ProfileError } from './core/pr
 import { nullTrace } from './core/trace.ts'
 import { route, type RouteResult, type RouteRule, type RouterOptions } from './modes/router.ts'
 import { runAgent } from './modes/agentic.ts'
-import { createSession, type Session, type TurnResult } from './modes/session.ts'
+import type { Session } from './modes/session.ts'
 import { runWorkflow, buildWorkflow } from './modes/workflow.ts'
 import { defaultProvider } from './core/client.ts'
 import { createActivity, withActivity, withActivityScope, LLM_CALL_STAGE, ACTIVITY_INSTANCE_HEADER, type Activity, type ActivityEvent } from './core/activity.ts'
@@ -968,46 +969,8 @@ export const createServer = async (configPath?: string, options: ServerOptions =
         })
       }
 
-      // --- Create session ------------------------------------------------------
-      if (method === 'POST' && url.pathname === '/session') {
-        const body = (await readBody(req)) as Record<string, unknown> | undefined
-        const profileName = String(body?.profile ?? '')
-        if (!profileName) {
-          bad('profile is required')
-          done(400)
-          return
-        }
+      if (method === 'POST' && url.pathname === '/session') return void (await sessionCreate(routeCtx()))
 
-        const { profile, config: profileConfig } = await loadProfile(profileName)
-        const baseUrl = profileConfig.url ? backendFor(profileConfig.url as string) : undefined
-
-        const rawPrompt = profile.chatSystemPrompt ?? profile.systemPrompt ?? ''
-        const systemPrompt = typeof rawPrompt === 'function' ? rawPrompt(undefined) : rawPrompt
-        const tools = profile.tools ?? []
-        const workspace = String(body?.workspace ?? '/tmp')
-        const stream = Boolean(body?.stream ?? false)
-
-        const session = createSession({
-          systemPrompt,
-          workspace,
-          tools,
-          baseUrl,
-          stream,
-          provider: wrappedProvider,
-        })
-
-        const id = randomUUID()
-        const effectiveBaseUrl = backendFor(baseUrl)
-        // Session creation carries no user prompt, so it must not wake a dormant model.
-        // Retaining the URL here lets the first (and every post-idle) send wait for it.
-        sessions.set(id, { profile: profileName, baseUrl: effectiveBaseUrl, session })
-        activity.emit({ kind: 'session.created', sessionId: id, profile: profileName })
-        ok({ id, profile: profileName })
-        done(200)
-        return
-      }
-
-      // --- Session operations --------------------------------------------------
       const sessionMatch = url.pathname.match(/^\/session\/([^/]+)\/(.+)$/)
       if (sessionMatch && method === 'POST') {
         const [, id, action] = sessionMatch
@@ -1016,122 +979,11 @@ export const createServer = async (configPath?: string, options: ServerOptions =
           done(404)
           return
         }
-        const entry = sessions.get(id)
-        if (!entry) {
-          notFound(`session '${id}' not found`)
-          done(404)
-          return
-        }
-
-        const body = (await readBody(req)) as Record<string, unknown> | undefined
-
-        if (action === 'send') {
-          const text = String(body?.text ?? '')
-          if (!text) {
-            bad('text is required')
-            done(400)
-            return
-          }
-
-          // `text` is now owned by this request and remains in memory while a dormant
-          // llama-server starts. Concurrent sends share LlamaManager.ensure's one startup
-          // promise; no prompt reaches the transport until the readiness probe succeeds.
-          const ready = await manager.ensure(entry.baseUrl)
-          backendReachability.set(entry.baseUrl, ready)
-          if (!ready) {
-            serviceUnavailable(
-              `no model backend is reachable at ${entry.baseUrl} — ${manager.describe(entry.baseUrl)}. ` +
-                'Start llama-server on it first (scripts/llama-server.sh), or check MEDEXTRACT_MANAGE_MODELS.',
-            )
-            done(503)
-            return
-          }
-          await emitModelIdentified(entry.baseUrl)
-
-          const controller = new AbortController()
-          res.on('close', () => {
-            if (!res.writableFinished) controller.abort()
-          })
-
-          const turn = entry.session.messages.filter((m: any) => m?.role === 'user').length + 1
-
-          return withActivityScope({ sessionId: id }, async () => {
-            activity.emit({ kind: 'turn.started', sessionId: id, turn })
-
-            const turnStart = performance.now()
-            let result: TurnResult
-            try {
-              result = await entry.session.send(text, controller.signal)
-            } catch (e) {
-              activity.emit({
-                kind: 'turn.completed',
-                sessionId: id,
-                turn,
-                stop: 'error',
-                iterations: 0,
-                toolsUsed: [],
-              })
-              throw e
-            }
-            activity.emit({
-              kind: 'turn.completed',
-              sessionId: id,
-              turn,
-              stop: result.stop,
-              iterations: result.iterations,
-              toolsUsed: result.toolsUsed,
-              usage: result.usage
-                ? {
-                    promptTokens: result.usage.promptTokens,
-                    completionTokens: result.usage.completionTokens,
-                    totalTokens: result.usage.totalTokens,
-                    cachedTokens: result.usage.cachedTokens,
-                  }
-                : undefined,
-            })
-            ok(result)
-            done(200)
-          })
-        }
-
-        if (action === 'reset') {
-          entry.session.reset()
-          ok({ ok: true })
-          done(200)
-          return
-        }
-
-        if (action === 'load') {
-          const messages = body?.messages as unknown[] | undefined
-          if (!messages || !Array.isArray(messages)) {
-            bad('messages array is required')
-            done(400)
-            return
-          }
-          entry.session.load(messages)
-          ok({ ok: true })
-          done(200)
-          return
-        }
-
-        notFound(`unknown session action '${action}'`)
-        done(404)
-        return
+        return void (await sessionAction(routeCtx(), id, action))
       }
 
       if (method === 'DELETE' && url.pathname.match(/^\/session\/([^/]+)$/)) {
-        const match = url.pathname.match(/^\/session\/([^/]+)$/)
-        const id = match?.[1]
-        if (!id || !sessions.has(id)) {
-          notFound(`session '${id}' not found`)
-          done(404)
-          return
-        }
-        sessions.delete(id)
-        activity.emit({ kind: 'session.destroyed', sessionId: id })
-        ok({ ok: true })
-        done(200)
-        return
+        return void (await sessionDelete(routeCtx()))
       }
 
       notFound(`unknown route ${method} ${url.pathname}`)
