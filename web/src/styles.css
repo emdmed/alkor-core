@@ -43,16 +43,14 @@
   --s-2: 12px;
   --s-3: 16px;
 
-  /* Shell region heights (see dashboard_improvement.md). */
-  --h-header: 44px;
-  --h-strip: 28px;
-  --h-dock: 28px;
-  --h-run-head: 42px;
-  --w-run: 288px;
-  --w-drawer: 328px;
+  /* Shell regions. The workspace is two zones — a canvas and one rail — so these are the
+     only fixed dimensions in the shell; everything else takes what is left. */
+  --h-topbar: 46px;
+  --h-stagebar: 40px;
+  --w-rail-strip: 44px;
 
-  /* Wide-desktop threshold: below it, overlays stop reserving workspace. */
-  --bp-wide: 1360px;
+  /* Below this the rail overlays the canvas instead of taking width from it. */
+  --bp-narrow: 900px;
 
   /* The palette is light; keep form controls, scrollbars, and the caret in that register. */
   color-scheme: light;
@@ -137,34 +135,89 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
   flex-direction: column;
 }
 
-.app-header {
-  min-height: var(--h-header);
+/* ---------------------------------------------------------------------------- */
+/* Top bar — the workspace's one permanent band.                                  */
+
+.topbar {
+  min-height: var(--h-topbar);
   display: grid;
-  grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 14px;
-  padding: 4px 12px;
+  gap: var(--s-3);
+  padding: var(--s-half) var(--s-2);
   border-bottom: 1px solid var(--border);
   background: var(--card);
   color: var(--card-foreground);
 }
-/* Header actuators stay 30px so the bar holds to 44–48px while hit targets remain usable. */
-.app-header [data-slot="button"],
-.app-header .connection-input { height: 30px; }
+/* Actuators hold to 30px so the band stays at 46px with usable hit targets. */
+.topbar [data-slot="button"] { height: 30px; }
 
-.brand-lockup {
-  min-width: 0;
-  max-width: min(300px, 26vw);
-  display: inline-flex;
-  align-items: baseline;
-  gap: 7px;
-  line-height: 1;
+.topbar-identity { display: inline-flex; align-items: center; gap: var(--s-1); min-width: 0; }
+.brand-name {
+  color: var(--foreground);
+  font-weight: 750;
+  font-size: 14px;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
 }
-.brand-name { color: var(--foreground); font-weight: 750; font-size: 14px; letter-spacing: -0.02em; white-space: nowrap; }
-.brand-host { color: var(--muted-foreground); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.75rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* Connection cluster: server state, model availability, and any refusal reason read as one group. */
-.header-health {
+/* The server address: a chip that reads at a glance, a form only when you mean to move. */
+.conn { position: relative; min-width: 0; }
+.conn-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: min(240px, 22vw);
+  padding: 3px 6px 3px 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+  line-height: 1.3;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 140ms ease, border-color 140ms ease;
+}
+.conn-chip:hover { color: var(--foreground); border-color: var(--border); }
+.conn-chip svg { width: 13px; height: 13px; flex: none; opacity: 0.7; }
+.conn-chip[aria-expanded="true"] { color: var(--foreground); border-color: var(--ring); background: var(--secondary); }
+.conn-pop {
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 7px);
+  left: 0;
+  width: 372px;
+  max-width: calc(100vw - 24px);
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--popover);
+  box-shadow: 0 14px 34px -22px oklch(30% 0.04 210 / 0.7);
+}
+.conn-pop-label {
+  color: var(--foreground);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.conn-pop-row { display: flex; align-items: center; gap: 6px; }
+.conn-input {
+  min-width: 0;
+  height: 32px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+}
+.conn-pop-note { margin: 0; color: var(--muted-foreground); font-size: 0.7rem; line-height: 1.45; }
+
+/* Connection state, the model that answered, and anything wrong with either. */
+.topbar-state {
   min-width: 0;
   display: flex;
   align-items: center;
@@ -188,46 +241,50 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
 .health-state.tone-warn .health-dot { background: var(--caution); }
 .health-state.tone-err { color: var(--destructive); }
 .health-state.tone-err .health-dot { background: var(--destructive); }
-.header-health .health-chip { flex: none; font-size: 0.7rem; line-height: 1.2; }
-.header-model, .header-error { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.header-model { color: var(--primary); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.75rem; max-width: 260px; }
-.header-error { color: var(--destructive); font-size: 0.75rem; max-width: min(320px, 30vw); }
-.connection-form { display: flex; align-items: center; gap: 6px; }
-.connection-input { width: 190px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-.header-actions { display: flex; align-items: center; gap: 4px; padding-left: 10px; border-left: 1px solid var(--border); }
-
-.status-strip {
-  min-height: var(--h-strip);
-  display: flex;
-  align-items: center;
-  margin: 0;
-  padding: 0 var(--s-2);
-  border-bottom: 1px solid var(--border);
-  background: color-mix(in oklab, var(--secondary) 32%, var(--background));
-  overflow-x: auto;
-  scrollbar-width: thin;
+.topbar-state .health-chip { flex: none; font-size: 0.7rem; line-height: 1.2; }
+.topbar-model, .topbar-error { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar-model {
+  color: var(--primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+  max-width: 260px;
 }
-.status-strip > * { flex: none; }
-.status-metric {
-  display: inline-flex;
+.topbar-error { color: var(--destructive); font-size: 0.75rem; max-width: min(320px, 30vw); }
+
+/* Counters: what is in flight, what has landed, and the ratios that stay quiet at zero. */
+.counters {
+  display: flex;
   align-items: baseline;
-  gap: 6px;
-  padding: 0 14px;
-  color: var(--muted-foreground);
-  font-size: 0.7rem;
+  gap: 0;
+  margin: 0;
+  padding: 0;
   white-space: nowrap;
 }
-.status-metric:first-child { padding-left: 2px; }
-.status-metric + .status-metric {
-  border-left: 1px solid color-mix(in oklab, var(--border) 72%, transparent);
+.counter {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 0 11px;
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
 }
-.status-icon { display: inline-flex; align-self: center; color: var(--muted-foreground); }
-.status-icon svg { width: 13px; height: 13px; stroke-width: 1.8; }
-.status-metric dd { order: 1; margin: 0; color: var(--foreground); font-weight: 700; font-variant-numeric: tabular-nums; }
-.status-metric dt { order: 2; }
-.status-metric.is-live .status-icon, .status-metric.is-live dd { color: var(--success); }
-.status-metric.is-danger .status-icon, .status-metric.is-danger dd { color: var(--destructive); }
-.status-detail { order: 3; margin-left: 2px; color: color-mix(in oklab, var(--muted-foreground) 72%, transparent); }
+.counter + .counter { border-left: 1px solid color-mix(in oklab, var(--border) 72%, transparent); }
+.counter dd {
+  margin: 0;
+  color: var(--foreground);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.counter.is-live dd { color: var(--success); }
+.counter.is-danger dd { color: var(--destructive); }
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
 
 /* --- Semantic colour helpers (name says what it means, not what it is) */
 .ok { color: var(--primary); }
@@ -339,114 +396,205 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
 /* ---------------------------------------------------------------------------- */
 /* Pipeline execution graph (the primary view).                                  */
 
-.graph-main {
+/* The workspace: a canvas, and one rail beside it. Nothing else is resident. */
+.workspace {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+  display: flex;
+  /* The collapsed rail's transition runs off the right edge; clip it so it never widens
+     the document or flashes a second scrollbar. */
+  overflow: hidden;
+}
+
+.stage {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* --- the rail: run, activity, inspector, log ------------------------------- */
+.rail {
+  flex: none;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+  background: var(--card);
+}
+/* Narrow viewports cannot spare the width, so the rail floats over the canvas instead. */
+.workspace.is-rail-overlay .rail {
+  position: absolute;
+  inset: 0 0 0 auto;
+  z-index: 40;
+  max-width: 100%;
+  box-shadow: -18px 0 40px -34px oklch(30% 0.04 210 / 0.8);
+}
+
+.rail-grip {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 7px;
+  cursor: col-resize;
+  background: transparent;
+  touch-action: none;
+}
+.rail-grip:hover, .rail-grip:focus-visible {
+  outline: none;
+  background: color-mix(in oklab, var(--ring) 55%, transparent);
+}
+body.is-rail-resizing { cursor: col-resize; user-select: none; }
+
+.rail-tabs {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  padding: 5px 5px 0;
+  border-bottom: 1px solid var(--border);
+}
+/* Only the open tab spells its name. Four labels never fit a rail narrow enough to be
+   worth having, and a truncated label ("Inspe…") is worse than the icon alone. */
+.rail-tab {
+  flex: none;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 9px;
+  margin-bottom: -1px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 140ms ease, border-color 140ms ease;
+}
+.rail-tab svg { width: 15px; height: 15px; flex: none; }
+.rail-tab > span:not(.rail-tab-count) { display: none; }
+.rail-tab.is-on > span:not(.rail-tab-count) { display: inline; white-space: nowrap; }
+.rail-tab:hover { color: var(--foreground); background: color-mix(in oklab, var(--muted) 60%, transparent); }
+.rail-tab.is-on { flex: 1; color: var(--primary); border-bottom-color: var(--primary); }
+.rail-tab.is-on:hover { background: transparent; }
+.rail-tab-count {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.65rem;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.rail-collapse {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  margin-bottom: 1px;
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.rail-collapse:hover { color: var(--foreground); }
+.rail-collapse svg { width: 15px; height: 15px; }
+
+.rail-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.rail-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-2) var(--s-3) var(--s-3); }
+.rail-hint {
+  margin: 0 0 14px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+/* Collapsed: the same four destinations, as a strip the canvas can ignore. */
+.rail-strip {
+  flex: none;
+  width: var(--w-rail-strip);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 4px;
+  border-left: 1px solid var(--border);
+  background: var(--card);
+}
+.rail-strip-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: color 140ms ease, background-color 140ms ease;
+}
+.rail-strip-btn:hover { color: var(--primary); background: var(--muted); }
+.rail-strip-btn svg { width: 16px; height: 16px; }
+
+/* --- run panel (the rail's first tab) -------------------------------------- */
+.runpanel {
   flex: 1;
   min-height: 0;
   position: relative;
   display: flex;
-  min-width: 0;
-  /* The closed drawer sits translated off the right edge; clip it so it never
-     widens the document or flashes a second scrollbar on any viewport. */
-  overflow: hidden;
-}
-
-/* The graph sits to the right of the chat panel and fills the remaining width. */
-.graph-area {
-  flex: 1;
-  min-width: 0;
-  display: flex;
   flex-direction: column;
 }
 
-/* --- chat panel (left column; command surface that feeds the graph) --------- */
-.chat-panel {
-  flex: none;
-  width: var(--w-run);
-  max-width: 38vw;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  margin: 12px 0 12px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--card);
-  box-shadow: 0 10px 24px -20px oklch(30% 0.04 210 / 0.55);
-  overflow: hidden;
-}
-
-.chat-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: var(--h-run-head);
-  padding: 6px 8px 6px 12px;
-  border-bottom: 1px solid var(--border);
-}
-.chat-title {
-  display: block;
-  color: var(--foreground);
-  font-weight: 700;
-  font-size: 0.85rem;
-  letter-spacing: -0.01em;
-}
-.chat-head-note { display: block; margin-top: 1px; color: var(--muted-foreground); font-size: 0.7rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-/* collapsed: thin vertical tab pinned to the left edge */
-.chat-tab {
-  flex: none;
-  align-self: stretch;
-  width: 34px;
-  margin-left: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: color-mix(in oklab, var(--card) 96%, transparent);
-  color: var(--muted-foreground);
-  font-size: 0.7rem;
-  letter-spacing: 0.1em;
+.chat-options { color: var(--muted-foreground); font-size: 0.7rem; }
+.chat-options > summary {
   cursor: pointer;
-  font-family: inherit;
-  writing-mode: vertical-rl;
-  transform: rotate(180deg);
-  text-align: center;
-  padding: 10px 4px;
-}
-.chat-tab:hover { color: var(--primary); border-color: var(--ring); }
-
-.chat-head-actions { display: flex; align-items: center; gap: 2px; }
-.chat-head-activity { display: none; }
-@media (max-width: 760px) {
-  .chat-head-activity { display: inline-flex; }
-}
-
-.chat-options {
-  border-bottom: 1px solid var(--border);
-  color: var(--muted-foreground);
-  font-size: 0.7rem;
-}
-.chat-options summary {
-  cursor: pointer;
-  padding: 7px 12px;
+  padding: 4px 7px;
+  border-radius: 8px;
   font-weight: 600;
+  list-style: none;
 }
-.chat-options summary:hover { color: var(--foreground); }
-.chat-options summary:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
-.chat-options p { margin: -2px 12px 8px; line-height: 1.4; }
-.chat-target {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
+.chat-options > summary::-webkit-details-marker { display: none; }
+.chat-options > summary::before { content: '\203a'; margin-right: 5px; display: inline-block; transition: transform 140ms ease; }
+.chat-options[open] > summary::before { transform: rotate(90deg); }
+.chat-options > summary:hover { color: var(--foreground); background: var(--muted); }
+.chat-options > summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.chat-options-body {
+  position: absolute;
+  z-index: 30;
+  bottom: calc(100% + 6px);
+  left: 0;
+  width: min(300px, calc(100% - 8px));
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--popover);
+  box-shadow: 0 14px 34px -22px oklch(30% 0.04 210 / 0.7);
 }
+.chat-options-body p { margin: 0; line-height: 1.45; }
 .chat-target-label {
-  color: var(--muted-foreground);
+  color: var(--foreground);
   font-size: 0.7rem;
+  font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  white-space: nowrap;
-  flex: none;
 }
 .chat-select {
-  flex: 1;
   min-width: 0;
   background: var(--background);
   color: var(--foreground);
@@ -463,8 +611,14 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
 .chat-presets {
   display: grid;
   gap: 2px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
+  padding: var(--s-3) 10px var(--s-2);
+}
+.chat-presets-lead {
+  margin: 0 0 6px 7px;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  max-width: 34ch;
 }
 .chat-preset {
   display: flex;
@@ -643,20 +797,327 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
 }
 .chat-textarea:focus { outline: none; border-color: var(--ring); }
 .chat-textarea:disabled { opacity: 0.5; }
+/* Routing sits left, the one action sits right. `relative` anchors the options popover. */
 .chat-foot-actions {
+  position: relative;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 4px;
+  justify-content: space-between;
+  gap: var(--s-1);
 }
+
+/* --- corpus: the pack documents, loaded into the run box ------------------- */
+
+/* In the empty state the corpus is the first offer, so it reads as an action rather than
+   as a fourth canned phrase. */
+.chat-preset.is-corpus {
+  color: var(--primary);
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.chat-preset.is-corpus:hover { background: color-mix(in oklab, var(--primary) 9%, transparent); }
+
+.chat-corpus-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-family: inherit;
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 140ms ease, border-color 140ms ease;
+}
+.chat-corpus-btn:hover { color: var(--primary); border-color: var(--ring); }
+.chat-corpus-btn svg { width: 12px; height: 12px; }
+
+/* What is in the box and where it came from. */
+.chat-loaded {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0;
+  padding: 5px 9px;
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--primary) 8%, transparent);
+  font-size: 0.7rem;
+  min-width: 0;
+}
+.chat-loaded svg { width: 12px; height: 12px; flex: none; align-self: center; color: var(--primary); }
+/* The name is what identifies the run's input, so it keeps the room and the metadata
+   beside it gives way. Truncating the name first told the operator "tr-e…". */
+.chat-loaded-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-loaded-meta {
+  flex: 0 1 auto;
+  min-width: 0;
+  color: var(--muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The picker takes the whole rail while it is open: a hundred documents with descriptions
+   is worth the panel for the seconds it takes to choose one. */
+.corpus {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--card);
+}
+.corpus-head {
+  flex: none;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: var(--s-1) var(--s-1) var(--s-1) 10px;
+  border-bottom: 1px solid var(--border);
+}
+.corpus-search-icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--muted-foreground);
+}
+.corpus-search {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--foreground);
+  font-family: inherit;
+  font-size: 0.78rem;
+  padding: 5px 2px;
+}
+.corpus-search::placeholder { color: var(--muted-foreground); }
+.corpus-search:focus { outline: none; }
+.corpus-search::-webkit-search-cancel-button { appearance: none; }
+/* The field is the surface's whole point, so the focus ring belongs on the bar. */
+.corpus-head:focus-within { box-shadow: inset 0 -2px 0 var(--primary); }
+.corpus-close {
+  flex: none;
+  display: inline-flex;
+  padding: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.corpus-close:hover { color: var(--foreground); background: var(--muted); }
+.corpus-close svg { width: 14px; height: 14px; }
+
+.corpus-list { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: var(--s-1); }
+.corpus-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+.corpus-status svg { width: 13px; height: 13px; flex: none; }
+.corpus-error {
+  flex: none;
+  margin: 0;
+  padding: 8px 12px;
+  border-bottom: 1px solid color-mix(in oklab, var(--destructive) 35%, var(--border));
+  background: color-mix(in oklab, var(--destructive) 6%, var(--card));
+  color: var(--destructive);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+/* A section heading that is also a control: the whole row opens and closes it. */
+.corpus-group-btn {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 8px 12px 8px 8px;
+  border: 0;
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 55%, transparent);
+  background: var(--card);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.corpus-group-btn.is-at-cursor { background: color-mix(in oklab, var(--primary) 8%, var(--card)); }
+.corpus-caret {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--muted-foreground);
+  transition: transform 140ms ease;
+}
+.corpus-caret.is-open { transform: rotate(90deg); }
+.corpus-group-name {
+  min-width: 0;
+  color: var(--foreground);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.corpus-group-kind {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+  font-size: 0.64rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.corpus-group-count {
+  flex: none;
+  margin-left: auto;
+  color: var(--muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A case that owns several documents: one heading, one description, then its notes. */
+.corpus-case {
+  display: grid;
+  gap: 1px;
+  padding: 8px 12px 4px 22px;
+}
+.corpus-case-name {
+  color: var(--foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+.corpus-case-meta {
+  color: var(--muted-foreground);
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+}
+.corpus-case-count { color: var(--primary); font-weight: 600; }
+.corpus-case-note {
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+
+.corpus-row {
+  display: grid;
+  gap: 1px;
+  width: 100%;
+  padding: 7px 12px 7px 22px;
+  border: 0;
+  border-left: 2px solid transparent;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+/* A note inside a multi-note case sits under its heading on a rule, so the sequence reads
+   as one record rather than as three documents that happen to be adjacent. */
+.corpus-row.is-in-run {
+  margin-left: 22px;
+  padding-left: 10px;
+  border-left-color: color-mix(in oklab, var(--border) 80%, transparent);
+}
+.corpus-row.is-in-run.is-at-cursor { border-left-color: var(--primary); }
+.corpus-row.is-at-cursor {
+  border-left-color: var(--primary);
+  background: color-mix(in oklab, var(--primary) 7%, transparent);
+}
+.corpus-row-head { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.corpus-row-name {
+  min-width: 0;
+  color: var(--foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.74rem;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.corpus-row-glyph { width: 12px; height: 12px; flex: none; margin-left: auto; color: var(--muted-foreground); }
+.corpus-row.is-at-cursor .corpus-row-glyph { color: var(--primary); }
+.corpus-row-meta {
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+}
+.corpus-row-note {
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+.corpus-foot {
+  flex: none;
+  margin: 0;
+  padding: 7px 12px;
+  border-top: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+  line-height: 1.45;
+}
+
+.chat-scroll-actions {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  padding: 6px 8px 0;
+}
+
+/* ---------------------------------------------------------------------------- */
+/* The stage: one bar, then the canvas.                                          */
 
 .graph-wrap {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   position: relative;
   display: flex;
   flex-direction: column;
-  padding: 10px 12px 12px;
+  padding: 0 var(--s-2) var(--s-2);
 }
 .graph-wrap.is-graph-fullscreen {
   position: fixed;
@@ -668,111 +1129,106 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
   padding: var(--s-2);
   background: var(--background);
 }
-.graph-wrap.is-graph-fullscreen .graph-toolbar {
-  flex-direction: row;
+.graph-wrap.is-graph-fullscreen .graph-canvas { border-radius: 12px; }
+
+/*
+ * One bar, one question: which run am I looking at, and where has it got to.
+ * Anything that changes how the canvas is *drawn* is folded into View, so this row
+ * never grows a second line of controls the way the toolbar it replaces did.
+ */
+.stagebar {
+  flex: none;
+  min-height: var(--h-stagebar);
+  display: flex;
   align-items: center;
   gap: var(--s-2);
-}
-.graph-wrap.is-graph-fullscreen .graph-heading { flex: 1; }
-.graph-wrap.is-graph-fullscreen .graph-commandbar { flex: none; }
-.graph-wrap.is-graph-fullscreen .graph-map-hint,
-.graph-wrap.is-graph-fullscreen .graph-runs,
-.graph-wrap.is-graph-fullscreen .graph-legend { display: none; }
-.graph-wrap.is-graph-fullscreen .control-group [data-slot="button"] {
-  font-size: 0;
-  gap: 0;
-}
-.graph-wrap.is-graph-fullscreen .control-group [data-slot="button"] svg {
-  width: 15px;
-  height: 15px;
-}
-.graph-wrap.is-graph-fullscreen .graph-canvas {
-  border-radius: 12px;
+  padding: var(--s-half) 2px;
+  min-width: 0;
 }
 
-.graph-toolbar {
+.stagebar-runs {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 0 2px 10px;
-}
-.graph-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
-.graph-heading-copy { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
-.graph-title {
-  font-weight: 700;
-  color: var(--foreground);
-  font-size: 0.85rem;
-  letter-spacing: -0.015em;
-  white-space: nowrap;
-}
-.graph-subtitle {
-  color: var(--muted-foreground);
-  font-size: 0.75rem;
-  white-space: nowrap;
-}
-.graph-position {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  min-width: 0;
-  padding: 4px 9px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted-foreground);
-  font-size: 0.7rem;
-}
-.graph-position-live { border-color: var(--primary); background: var(--secondary); color: var(--secondary-foreground); }
-.graph-position-done { border-color: var(--border); background: var(--muted); color: var(--secondary-foreground); }
-.graph-position-failed { border-color: var(--destructive); background: color-mix(in oklab, var(--destructive) 6%, var(--card)); color: var(--destructive); }
-.graph-position-kicker { font-size: 0.7rem; font-weight: 800; letter-spacing: 0.07em; }
-.graph-position-name { color: var(--foreground); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 18ch; }
-.graph-position-context { color: currentColor; opacity: 0.82; white-space: nowrap; }
-.graph-commandbar { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.graph-map-hint {
-  color: var(--muted-foreground);
-  font-size: 0.7rem;
-  white-space: nowrap;
-}
-.graph-runs {
-  display: flex;
-  gap: 4px;
-  flex-wrap: nowrap;
   align-items: center;
-  flex: 1;
+  gap: 5px;
   min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 2px 0;
 }
-.graph-waiting { color: var(--muted-foreground); font-size: 0.75rem; }
+.stagebar-runs::-webkit-scrollbar { display: none; }
+.stagebar-waiting { color: var(--muted-foreground); font-size: 0.75rem; white-space: nowrap; }
+
 .run-chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 0.75rem;
-  color: var(--foreground);
-  background: var(--card);
+  gap: 6px;
+  flex: none;
+  padding: 3px 9px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  padding: 3px 9px;
-  cursor: pointer;
+  background: var(--card);
+  color: var(--foreground);
   font-family: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 140ms ease, background-color 140ms ease;
 }
 .run-chip:hover { border-color: var(--ring); }
 .run-chip-on {
   border-color: var(--primary);
-  background: var(--secondary);
+  background: color-mix(in oklab, var(--primary) 10%, var(--card));
 }
 .run-chip-id { color: var(--muted-foreground); }
 
-.graph-tools { display: flex; gap: 6px; align-items: center; flex: none; }
-.control-group { display: flex; align-items: center; gap: 1px; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: color-mix(in oklab, var(--card) 72%, transparent); }
-.control-group [data-slot="button"] { height: 28px; padding-inline: 8px; }
-
-@media (min-width: 1360px) {
-  /* Wide desktop only: the inspector reserves its footprint so graph controls
-     and terminal nodes stay reachable while it is open. Below this width it
-     overlays instead, because the run panel and canvas need the space. */
-  .graph-main:has(.drawer.is-open) .graph-area { margin-right: var(--w-drawer); }
+/* Where the run has got to: a mark, and the name of the thing doing the work. */
+.stagebar-position {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  padding: 3px 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.72rem;
+  white-space: nowrap;
 }
+.stagebar-position svg { width: 13px; height: 13px; flex: none; }
+.stagebar-position-name {
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 24ch;
+}
+.stagebar-position-time {
+  color: var(--muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.stagebar-position.is-live {
+  border-color: var(--success);
+  background: color-mix(in oklab, var(--success) 11%, var(--card));
+  color: color-mix(in oklab, var(--success) 72%, var(--foreground));
+}
+.stagebar-position.is-done { background: var(--muted); color: var(--muted-foreground); }
+.stagebar-position.is-failed {
+  border-color: var(--destructive);
+  background: color-mix(in oklab, var(--destructive) 6%, var(--card));
+  color: var(--destructive);
+}
+
+.stagebar-tools { display: flex; align-items: center; gap: 6px; flex: none; margin-left: auto; }
+.stagebar-tools [data-slot="button"] { height: 28px; }
+.stagebar-scope {
+  color: var(--muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 30ch;
+}
+.stagebar-icon { padding-inline: 7px; }
 
 .graph-canvas {
   flex: 1;
@@ -823,36 +1279,65 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
 .graph-loading-note { color: var(--muted-foreground); font-size: 0.7rem; }
 
 /* --- compact legend; kept outside the canvas so it never obscures the graph */
+/* The legend is reference, so it floats in the canvas corner rather than taking a band
+   under it. Three corners, one thing in each: legend here, zoom bottom-left, overview
+   bottom-right. */
 .graph-legend {
-  flex: none;
-  min-height: 32px;
-  margin-top: 8px;
-  padding: 5px 8px;
-  background: transparent;
-  border-top: 0;
-  font-size: 0.7rem;
+  position: absolute;
+  z-index: 6;
+  top: 10px;
+  left: 10px;
+  width: 168px;
+  display: grid;
+  gap: 10px;
+  padding: 9px 11px 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--card) 94%, transparent);
+  backdrop-filter: blur(3px);
   color: var(--muted-foreground);
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  overflow-x: auto;
-  scrollbar-width: thin;
+  font-size: 0.7rem;
 }
-.graph-legend-group {
+.graph-legend-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.graph-legend-heading {
+  color: var(--foreground);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.graph-legend-close {
   display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex: none;
+  padding: 2px;
+  margin: -2px -3px -2px 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.graph-legend-close:hover { color: var(--foreground); background: var(--muted); }
+.graph-legend-close svg { width: 13px; height: 13px; }
+.graph-legend-group {
+  display: grid;
+  gap: 3px;
 }
 .graph-legend-title {
-  font-size: 0.7rem;
+  margin-bottom: 2px;
+  font-size: 0.68rem;
   letter-spacing: 0.02em;
   color: var(--secondary-foreground);
   font-weight: 700;
 }
 .graph-legend-row { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+.graph-legend-note {
+  margin: 0;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in oklab, var(--border) 65%, transparent);
+  line-height: 1.4;
+  opacity: 0.85;
+}
 .legend-now { display: inline-block; width: 18px; height: 8px; border: 1px solid var(--success); border-radius: 8px; background: color-mix(in oklab, var(--success) 17%, var(--card)); }
-.graph-legend-note { margin-left: auto; color: var(--muted-foreground); opacity: 0.72; white-space: nowrap; }
 .legend-edge {
   display: inline-block;
   width: 22px;
@@ -876,59 +1361,9 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
 .legend-work-route { background: var(--caution); }
 
 /* --- drawer (right slide-over) --------------------------------------------- */
-.drawer {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 20;
-  width: var(--w-drawer);
-  max-width: 100vw;
-  background: color-mix(in oklab, var(--card) 94%, var(--secondary));
-  border-left: 1px solid var(--border);
-  box-shadow: -12px 0 28px -22px oklch(30% 0.04 210 / 0.55);
-  display: flex;
-  flex-direction: column;
-  transform: translateX(0);
-  transition: transform 180ms ease;
-}
-.drawer:not(.is-open) { transform: translateX(100%); pointer-events: none; }
-.drawer:not(.is-open) .drawer-head,
-.drawer:not(.is-open) .drawer-body { display: none; }
-.drawer-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: var(--h-run-head);
-  padding: 6px 8px 6px 14px;
-  border-bottom: 1px solid var(--border);
-}
-.drawer-title { color: var(--foreground); font-weight: 700; font-size: 0.85rem; letter-spacing: -0.01em; text-transform: lowercase; }
-.drawer-title::first-letter { text-transform: uppercase; }
-.drawer-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px 18px; }
-.drawer-tab {
-  position: absolute;
-  left: -34px;
-  top: 50%;
-  width: 34px;
-  height: 124px;
-  writing-mode: vertical-rl;
-  transform: translateY(-50%) rotate(180deg);
-  text-align: center;
-  background: color-mix(in oklab, var(--card) 96%, transparent);
-  border: 1px solid var(--border);
-  border-right: 0;
-  border-radius: 8px 0 0 8px;
-  color: var(--muted-foreground);
-  font-size: 0.7rem;
-  letter-spacing: 0.08em;
-  cursor: pointer;
-  font-family: inherit;
-  padding: 10px 4px;
-}
-.drawer-tab:hover { color: var(--primary); border-color: var(--ring); }
-
-.drawer-summary { max-width: 34ch; margin: 0 0 18px; color: var(--muted-foreground); font-size: 0.75rem; }
+/* The rail's content vocabulary. `drawer-*` names survive the drawer itself: the
+   activity and inspector panels are written in them, and renaming them would be a
+   rewrite of two files to say the same thing. */
 .drawer-section-title {
   display: flex;
   align-items: baseline;
@@ -960,7 +1395,7 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
 .status-spin { animation: status-spin 1.4s linear infinite; }
 @keyframes status-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
-  .drawer, .chat-panel, .log-reopen, .chat-tab { transition: none; }
+  .rail, .rail-tab, .rail-strip-btn, .conn-chip { transition: none; }
   .status-spin { animation: none; }
   .g-profile .g-card { transition: none; }
   /* ReactFlow animates "live" edges with a marching-steps dash; the running state
@@ -968,10 +1403,20 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
   .react-flow__edge.animated .react-flow__edge-path { animation: none; }
 }
 
-/* Keyboard reach on shell chrome: a visible ring on every collapsible control. */
-.chat-tab:focus-visible,
-.log-reopen:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
-.chat-preset:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; background: var(--muted); }
+/* Keyboard reach on shell chrome: a visible ring on every control the shell draws itself. */
+.rail-tab:focus-visible,
+.rail-strip-btn:focus-visible,
+.rail-collapse:focus-visible,
+.conn-chip:focus-visible,
+.run-chip:focus-visible,
+.ev-row:focus-visible,
+.graph-legend-close:focus-visible,
+.ev-detail-close:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.chat-preset:focus-visible,
+.corpus-row:focus-visible,
+.corpus-group-btn:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; background: var(--muted); }
+.chat-corpus-btn:focus-visible,
+.corpus-close:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
 
 /* --- inspected node detail (inspector drawer header) ------------------------ */
 .inspected {
@@ -1000,120 +1445,119 @@ input, textarea, select, .eventlog, .graph-subtitle, .run-chip-id, .inspected-js
   max-height: 180px;
 }
 
-/* --- event log: collapsible bottom dock ----------------------------------- */
-.graph-logbar {
-  flex: 0 0 clamp(140px, 20vh, 190px);
-  min-height: 0;
-  padding: 0 var(--s-2);
-}
-.graph-logbar:has(.log-reopen) { flex: 0 0 var(--h-dock); }
-
+/* --- event log (the rail's last tab) -------------------------------------- */
 .eventlog {
-  height: 100%;
+  flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  margin: 0 0 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--card);
 }
-.eventlog-top {
+.eventlog-bar {
   flex: none;
-  min-height: var(--h-strip);
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 3px 8px 3px 12px;
+  gap: var(--s-1);
+  padding: var(--s-1) 10px;
   border-bottom: 1px solid var(--border);
-  cursor: pointer;
 }
-.eventlog-top:hover { background: color-mix(in oklab, var(--secondary) 32%, var(--card)); }
-.eventlog-top:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
-.eventlog-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  flex: none;
-  color: var(--primary);
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-}
-.eventlog-filters { flex: 1; min-width: 0; display: flex; gap: 6px; align-items: center; }
-.eventlog-aux { flex: none; display: flex; gap: 6px; align-items: center; font-size: 0.7rem; color: var(--muted-foreground); }
-.eventlog-count { white-space: nowrap; color: var(--muted-foreground); }
-.eventlog-list { flex: 1; min-height: 0; overflow: auto; }
-.ev-row { display: flex; align-items: center; gap: 8px; min-height: 27px; min-width: max-content; padding: 3px 10px; cursor: pointer; white-space: nowrap; }
-.ev-row:hover, .ev-pinned { background: var(--muted); }
-.ev-time, .ev-run, .ev-req { font-size: 0.7rem; color: var(--muted-foreground); white-space: nowrap; }
-.ev-detail { flex: none; max-height: 110px; overflow: auto; border-top: 1px solid var(--border); }
-.ev-detail pre { margin: 0; padding: 8px 10px; font-size: 0.7rem; color: var(--muted-foreground); }
-.log-reopen {
-  width: 100%;
-  height: var(--h-dock);
-  box-sizing: border-box;
-  margin: 0;
-  border: 1px solid var(--border);
-  border-bottom: 0;
-  border-radius: var(--radius) var(--radius) 0 0;
-  background: color-mix(in oklab, var(--card) 92%, var(--secondary));
+.eventlog-bar [data-slot="button"] { height: 28px; flex: none; }
+.eventlog-volume {
+  min-width: 0;
   color: var(--muted-foreground);
-  font-family: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.eventlog-jump { margin-left: auto; }
+.eventlog-list { flex: 1; min-height: 0; overflow: auto; }
+.eventlog-empty {
+  margin: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: var(--muted);
+  color: var(--muted-foreground);
   font-size: 0.75rem;
-  letter-spacing: 0.04em;
-  padding: 5px 12px;
-  cursor: pointer;
-  text-align: left;
+  line-height: 1.45;
+}
+.ev-row {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--s-1);
+  width: 100%;
+  min-width: max-content;
+  min-height: 26px;
+  padding: 3px 10px;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
 }
-.log-reopen svg { width: 14px; height: 14px; }
-.log-reopen span { margin-left: auto; color: var(--primary); font-weight: 650; }
-.log-reopen:hover { color: var(--primary); border-color: var(--ring); }
+.ev-row:hover, .ev-pinned { background: var(--muted); }
+.ev-time, .ev-id {
+  flex: none;
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+}
+/* The kind is what you scan the log for, so it carries the event's own hue. */
+.ev-kind { flex: none; font-size: 0.7rem; font-weight: 650; }
+.ev-detail { flex: none; max-height: 180px; overflow: auto; border-top: 1px solid var(--border); background: var(--background); }
+.ev-detail-head {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-1);
+  padding: 5px 8px 5px 10px;
+  background: var(--background);
+  color: var(--primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.7rem;
+}
+.ev-detail-close {
+  display: inline-flex;
+  padding: 2px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.ev-detail-close:hover { color: var(--foreground); background: var(--muted); }
+.ev-detail-close svg { width: 13px; height: 13px; }
+.ev-detail pre { margin: 0; padding: 2px 10px 8px; font-size: 0.7rem; color: var(--muted-foreground); }
 
-@media (max-width: 760px) {
-  .app-header { grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px 10px; padding: 7px 10px; }
-  .header-health { justify-content: flex-end; min-width: 0; gap: 7px; }
+/* --- narrow viewports ------------------------------------------------------ */
+@media (max-width: 899px) {
+  .topbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px 10px;
+    padding: 7px 10px;
+  }
+  .topbar-state { grid-column: 1; justify-content: flex-start; gap: 7px; }
   .health-state { font-size: 0.65rem; }
-  .brand-host { display: none; }
-  .health-state .health-dot { display: none; }
-  /* Truncate the model name instead of letting it widen the status row. */
-  .header-model { max-width: min(140px, 30vw); }
-  .header-error { max-width: min(160px, 34vw); }
-  .connection-form { grid-column: 1 / -1; order: 5; display: grid; grid-template-columns: minmax(0, 1fr) auto; }
-  .connection-input { width: 100%; min-width: 0; }
-  .header-actions { padding-left: 0; border-left: 0; }
-  .status-strip { min-height: var(--h-strip); padding-inline: 8px; }
-  .status-metric { min-width: auto; padding-inline: 10px; }
-  .status-detail { display: none; }
-  .eventlog-count { display: none; }
-  .chat-panel { position: absolute; inset: 8px; z-index: 30; width: auto; max-width: none; margin: 0; box-shadow: 0 18px 42px -26px oklch(30% 0.04 210 / 0.55); }
-  .chat-tab { width: 32px; margin-left: 4px; }
-  .graph-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
-  .graph-heading-copy { min-width: 0; flex-direction: column; gap: 2px; }
-  .graph-subtitle { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-  .graph-position { max-width: 112px; align-self: start; overflow: hidden; }
-  .graph-position-context { display: none; }
-  .graph-commandbar { width: 100%; min-width: 0; flex-direction: column; align-items: stretch; gap: 6px; }
-  .graph-map-hint { white-space: normal; }
-  .graph-runs { width: 100%; overflow-x: auto; padding-bottom: 2px; }
-  .graph-tools { width: 100%; overflow-x: auto; max-width: 100%; justify-content: flex-end; }
-  .control-group [data-slot="button"] { font-size: 0; gap: 0; }
-  .control-group [data-slot="button"] svg { width: 15px; height: 15px; }
-  /* Mobile touch targets: keep the toolbar reachable at the 44px recommendation
-     without collapsing the graph space away. */
-  .control-group [data-slot="button"] { min-width: 40px; min-height: 38px; }
+  .topbar-model { max-width: min(160px, 34vw); }
+  .topbar-error { max-width: min(160px, 34vw); }
+  .counters { grid-column: 1; }
+  .counter:first-child { padding-left: 0; }
+  .topbar-actions { grid-column: 2; grid-row: 2; padding-left: 0; border-left: 0; }
+  .topbar [data-slot="button"] { min-height: 38px; }
+  .conn-chip { max-width: 46vw; min-height: 30px; }
   .run-chip { min-height: 32px; }
-  .app-header [data-slot="button"] { min-width: 44px; }
-  .connection-input { min-height: 38px; }
-  .drawer { width: min(var(--w-drawer), calc(100vw - 36px)); z-index: 30; }
-  .graph-minimap { display: none; }
-  .graph-legend-note { display: none; }
-  .graph-logbar { flex-basis: 176px; padding: 0 8px; }
+  .stagebar { flex-wrap: wrap; gap: var(--s-1); }
+  .stagebar-runs { order: 2; width: 100%; }
+  .stagebar-tools { order: 1; }
+  .stagebar-scope { display: none; }
   .graph-wrap { padding-left: 8px; padding-right: 8px; }
+  .graph-minimap { display: none; }
+  .graph-legend { display: none; }
 }
 
 /* --- graph nodes ------------------------------------------------------------ */

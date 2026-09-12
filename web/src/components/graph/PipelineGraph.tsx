@@ -6,27 +6,31 @@
  * hiding any pipeline or route.
  */
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Circle, ChevronsDownUp, ChevronsUpDown, Columns3, ListTree, LoaderCircle, Maximize2, Minimize2, Rows3, ScrollText, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronsDownUp, ChevronsUpDown, Circle, LoaderCircle, Maximize2, Minimize2, SlidersHorizontal, X } from 'lucide-react'
 import { Background, BackgroundVariant, Controls, ReactFlow, ReactFlowProvider, useReactFlow, useStore } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import type { GraphNode, GraphNodeData, CompactStepData } from '../../lib/graph/index.ts'
 import { buildCompactGraph, buildExpandedWorkflowsGraph, layoutHeightOf } from '../../lib/graph/index.ts'
 import { fmtSec } from '../../lib/format.ts'
 import { NODE_TYPES } from './nodes.tsx'
-import { Badge } from '../ui/badge'
 import { Button } from '../ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuCheckboxItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from '../ui/dropdown-menu'
 import type { ProjectState } from '../../../../src/tui/state.ts'
 
 export interface PipelineGraphProps {
   state: ProjectState
   selectedWorkflow: string
   onSelectedWorkflowChange: (profile: string) => void
-  /** Inspector-side: what node the user last clicked (rendered into the drawer). */
+  /** Inspector-side: what node the user last clicked (rendered into the rail). */
   onInspect: (data: GraphNodeData) => void
-  onToggleActivity: () => void
-  onToggleLog: () => void
-  activityOpen: boolean
-  logOpen: boolean
 }
 
 const shortId = (id: string): string => `#${id.slice(0, 6)}`
@@ -123,7 +127,7 @@ const GraphMiniMap = ({ nodes }: { nodes: GraphNode[] }) => {
   )
 }
 
-const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspect, onToggleActivity, onToggleLog, activityOpen, logOpen }: PipelineGraphProps) => {
+const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspect }: PipelineGraphProps) => {
   const { fitView, getNodes, getViewport, setViewport } = useReactFlow()
   const canvasWidth = useStore((store) => store.width)
   const graphShellRef = useRef<HTMLDivElement>(null)
@@ -136,7 +140,10 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
   // a card that stays shut must be openable.
   const [compactExpanded, setCompactExpanded] = useState<Set<string>>(new Set())
   const [compactCollapsed, setCompactCollapsed] = useState<Set<string>>(new Set())
-  const [showLegend, setShowLegend] = useState(true)
+  // The legend floats over the canvas now, so it starts out of the way: it is reference
+  // material, and a card parked on top of the board costs more than it explains. It is one
+  // click away under View, and the nodes it describes are labelled in plain words anyway.
+  const [showLegend, setShowLegend] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [fullscreenFallback, setFullscreenFallback] = useState(false)
   const [graphMode, setGraphMode] = useState<'full' | 'compact'>('full')
@@ -278,7 +285,7 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
     )
     return { nodes, edges: graph.edges, title: graph.title, expanded: expandedKeys, disclosures: undefined }
   }, [state, selected, userCollapsed, userExpanded, compactExpanded, compactCollapsed, onInspect, graphMode])
-  const { nodes, edges, title, expanded } = graphView
+  const { nodes, edges, expanded } = graphView
 
   // Compact disclosure keys embed the workflow node identity and step number; when a
   // key's owning card is no longer rendered (switch of selected run, catalogue change),
@@ -304,9 +311,18 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
     const frame = requestAnimationFrame(() => {
       const trail = nodes.filter((node) => node.data.kind !== 'group')
       const currentIndex = trail.findIndex((node) => node.data.current)
+      // While work is in flight the camera holds the live neighbourhood. When nothing is
+      // live there is no neighbourhood to hold, and the two obvious fallbacks are both
+      // wrong: the first five nodes of the catalogue park most of the canvas on empty
+      // paper, and the whole board zooms out to the thumbnail this view exists to avoid.
+      // What the operator came for is the route the run actually took, so frame that.
       const windowSize = canvasWidth < 620 ? 1 : 5
       const center = currentIndex >= 0 ? currentIndex : 0
       const start = Math.max(0, Math.min(center - Math.floor(windowSize / 2), trail.length - windowSize))
+      const traversed = trail.filter((node) => node.data.traversed)
+      const framed = currentIndex >= 0 || traversed.length === 0
+        ? trail.slice(start, start + windowSize)
+        : traversed
       // Fit only what the flow store actually holds. A run replaces every node id at
       // once (the catalogue card becomes the run's card), and this frame can land before
       // the store has them: fitting a set it cannot match measures an empty box and
@@ -314,7 +330,7 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
       // even the dot grid, since the background pattern rides the same transform. The
       // whole board is the honest fallback while the new ids land.
       const known = new Set(getNodes().map((node) => node.id))
-      const focus = trail.slice(start, start + windowSize).filter((node) => known.has(node.id))
+      const focus = framed.filter((node) => known.has(node.id))
       void (async () => {
         await fitView({ nodes: focus.length > 0 ? focus : undefined, padding: canvasWidth < 620 ? 0.22 : 0.1, minZoom: 0.45, maxZoom: 1 })
         // Belt and braces: an unusable viewport is silent and unrecoverable without a
@@ -351,75 +367,84 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
     setUserCollapsed(new Set(nodes.filter((n) => (n.data.childCount ?? 0) > 0).map((n) => n.data.expandKey ?? n.id)))
   }
 
+  const hasDisclosures = graphMode === 'compact'
+    ? (disclosures?.size ?? 0) > 0
+    : nodes.some((n) => (n.data.childCount ?? 0) > 0)
+
   return (
     <div ref={graphShellRef} className={`graph-wrap${isFullscreen ? ' is-graph-fullscreen' : ''}`}>
-      <div className="graph-toolbar">
-        <div className="graph-heading">
-          <div className="graph-heading-copy">
-            <span className="graph-title">Data flow</span>
-            {title && <span className="graph-subtitle">{title}</span>}
-          </div>
-          <RunPosition run={selected} nodes={nodes} />
+      {/* One bar, and it answers one question: which run am I looking at, and where has it
+          got to. Everything that changes how the canvas is *drawn* folds into View. */}
+      <div className="stagebar">
+        <div className="stagebar-runs" aria-label="Recent runs">
+          {runs.length === 0 && <span className="stagebar-waiting">No runs yet — send one from the Run panel.</span>}
+          {runs.slice(-8).map((run) => {
+            const on = run.runId === selected?.runId
+            return (
+              <button key={run.runId} className={`run-chip${on ? ' run-chip-on' : ''}`} onClick={() => {
+                setSelectedId(run.runId)
+                onSelectedWorkflowChange(run.profile)
+                setViewportPinned(false)
+              }} title={run.runId} aria-pressed={on}>
+                <span className={on ? 'text-primary' : 'text-muted-foreground'}><RunStatusIcon status={run.status === 'started' ? 'active' : run.status === 'failed' ? 'failed' : 'done'} /></span>
+                <span>{run.profile}</span>
+                <span className="run-chip-id">{shortId(run.runId)}</span>
+              </button>
+            )
+          })}
         </div>
 
-        <div className="graph-commandbar">
-          <span className="graph-map-hint">Pipeline workflows · live activity highlights the route taken</span>
-          <div className="graph-runs" aria-label="Recent runs">
-            {runs.length === 0 && <span className="graph-waiting">Waiting for the first run…</span>}
-            {runs.slice(-8).map((run) => {
-              const on = run.runId === selected?.runId
-              return (
-                <button key={run.runId} className={`run-chip${on ? ' run-chip-on' : ''}`} onClick={() => {
-                  setSelectedId(run.runId)
-                  onSelectedWorkflowChange(run.profile)
-                  setViewportPinned(false)
-                }} title={run.runId}>
-                  <span className={on ? 'text-primary' : 'text-muted-foreground'}><RunStatusIcon status={run.status === 'started' ? 'active' : run.status === 'failed' ? 'failed' : 'done'} /></span>
-                  <span>{run.profile}</span>
-                  <span className="run-chip-id">{shortId(run.runId)}</span>
-                </button>
-              )
-            })}
-          </div>
+        <RunPosition run={selected} nodes={nodes} />
 
-          <div className="graph-tools" aria-label="Graph controls">
-            <div className="graph-mode-toggle control-group">
-              <Button variant={graphMode === 'full' ? 'secondary' : 'ghost'} size="sm" onClick={() => { setGraphMode('full'); setViewportPinned(false) }} title="Full topology view" aria-pressed={graphMode === 'full'}>
-                <Columns3 />Full
+        <div className="stagebar-tools">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" title="How the canvas is drawn">
+                <SlidersHorizontal aria-hidden="true" />View<ChevronDown className="text-muted-foreground" aria-hidden="true" />
               </Button>
-              <Button variant={graphMode === 'compact' ? 'secondary' : 'ghost'} size="sm" onClick={() => { setGraphMode('compact'); setViewportPinned(false) }} title="Compact single-node view" aria-pressed={graphMode === 'compact'}>
-                <Rows3 />Compact
-              </Button>
-            </div>
-            {(graphMode === 'compact' ? (disclosures?.size ?? 0) > 0 : nodes.some((n) => (n.data.childCount ?? 0) > 0)) && (
-              <div className="control-group">
-                <Button variant="ghost" size="sm" onClick={expandAll} title="Expand every step"><ChevronsUpDown />Expand</Button>
-                <Button variant="ghost" size="sm" onClick={collapseAll} title="Collapse every step"><ChevronsDownUp />Collapse</Button>
-              </div>
-            )}
-            <div className="control-group">
-              <Button variant={showLegend ? 'secondary' : 'ghost'} size="sm" onClick={() => setShowLegend((v) => !v)} aria-pressed={showLegend} title={showLegend ? 'Hide legend' : 'Show legend'}>
-                <ListTree />Legend
-              </Button>
-              <Button variant={activityOpen ? 'secondary' : 'ghost'} size="sm" onClick={onToggleActivity} aria-pressed={activityOpen}>
-                <Rows3 />Activity
-              </Button>
-              <Button variant={logOpen ? 'secondary' : 'ghost'} size="sm" onClick={onToggleLog} aria-pressed={logOpen}>
-                <ScrollText />Events
-              </Button>
-              <Button
-                variant={isFullscreen ? 'secondary' : 'ghost'}
-                size="sm"
-                onClick={() => void toggleFullscreen()}
-                aria-label={isFullscreen ? 'Exit graph fullscreen' : 'View graph fullscreen'}
-                aria-pressed={isFullscreen}
-                title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen graph'}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52">
+              <DropdownMenuLabel>Detail</DropdownMenuLabel>
+              <DropdownMenuCheckboxItem
+                checked={graphMode === 'full'}
+                onCheckedChange={() => { setGraphMode('full'); setViewportPinned(false) }}
               >
-                {isFullscreen ? <Minimize2 /> : <Maximize2 />}
-                {isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-              </Button>
-            </div>
-          </div>
+                Full topology
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem
+                checked={graphMode === 'compact'}
+                onCheckedChange={() => { setGraphMode('compact'); setViewportPinned(false) }}
+              >
+                Compact
+              </DropdownMenuCheckboxItem>
+              {hasDisclosures && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={expandAll}><ChevronsUpDown aria-hidden="true" />Expand every step</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={collapseAll}><ChevronsDownUp aria-hidden="true" />Collapse every step</DropdownMenuItem>
+                </>
+              )}
+              <DropdownMenuSeparator />
+              <DropdownMenuCheckboxItem
+                checked={showLegend}
+                onCheckedChange={(next) => setShowLegend(next === true)}
+                onSelect={(e) => e.preventDefault()}
+              >
+                Legend
+              </DropdownMenuCheckboxItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="stagebar-icon"
+            onClick={() => void toggleFullscreen()}
+            aria-label={isFullscreen ? 'Exit graph fullscreen' : 'View graph fullscreen'}
+            aria-pressed={isFullscreen}
+            title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen graph'}
+          >
+            {isFullscreen ? <Minimize2 /> : <Maximize2 />}
+          </Button>
         </div>
       </div>
 
@@ -452,16 +477,18 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
           />
           {graphMode === 'full' && nodes.filter((node) => node.data.kind !== 'group').length > 6 && <GraphMiniMap nodes={nodes} />}
         </ReactFlow>
+
+        {/* Three corners, one thing in each: legend reads top-left, zoom sits bottom-left
+            with ReactFlow's own controls, the overview anchors bottom-right. */}
+        {showLegend && <Legend onDismiss={() => setShowLegend(false)} />}
+
+        {nodes.length === 0 && (
+          <div className="graph-empty">
+            <div>No execution path</div>
+            <div className="text-muted-foreground text-xs">Waiting for the pipeline workflow catalogue.</div>
+          </div>
+        )}
       </div>
-
-      {showLegend && <Legend />}
-
-      {nodes.length === 0 && (
-        <div className="graph-empty">
-          <div>No execution path</div>
-          <div className="text-muted-foreground text-xs">Waiting for the pipeline workflow catalogue.</div>
-        </div>
-      )}
     </div>
   )
 }
@@ -480,26 +507,39 @@ const RunPosition = ({
     nodes.find((n) => n.data.current && n.data.status === 'active' && (n.data.kind === 'stage' || n.data.kind === 'route'))?.data ??
     nodes.find((n) => n.data.current && n.data.status === 'active')?.data ??
     nodes.find((n) => n.data.current)?.data
-  if (current) {
+  // One line, one reading: the mark says what state the run is in, the name says where it
+  // is. The old pill said "NOW RUNNING", then the step, then "active step" — three ways of
+  // saying the same thing, stacked.
+  //
+  // A finished run can leave its last node flagged `current`, which used to leave a
+  // spinner turning under a run that had already landed. The run's own status is the
+  // authority on whether anything is still working.
+  if (current && run.status === 'started') {
     return (
-      <div className="graph-position graph-position-live" role="status" aria-live="polite">
-        <span className="graph-position-kicker">NOW RUNNING</span>
-        <span className="graph-position-name">{current.kind === 'input' ? 'preparing input' : current.label}</span>
-        <span className="graph-position-context">{current.kind === 'stage' ? 'active stage' : current.kind === 'input' ? 'starting run' : 'active step'}</span>
+      <div className="stagebar-position is-live" role="status" aria-live="polite">
+        <LoaderCircle className="status-spin" aria-hidden="true" />
+        <span className="stagebar-position-name">{current.kind === 'input' ? 'preparing input' : current.label}</span>
       </div>
     )
   }
   const failed = run.status === 'failed'
   return (
-    <div className={`graph-position ${failed ? 'graph-position-failed' : 'graph-position-done'}`} role="status" aria-live="polite">
-      <span className="graph-position-kicker">{failed ? 'RUN FAILED' : 'RUN COMPLETE'}</span>
-      {run.wallMs != null && <span className="graph-position-name">{fmtSec(run.wallMs)}</span>}
+    <div className={`stagebar-position ${failed ? 'is-failed' : 'is-done'}`} role="status" aria-live="polite">
+      {failed ? <X aria-hidden="true" /> : <Check aria-hidden="true" />}
+      <span className="stagebar-position-name">{failed ? 'run failed' : 'run complete'}</span>
+      {run.wallMs != null && <span className="stagebar-position-time">{fmtSec(run.wallMs)}</span>}
     </div>
   )
 }
 
-const Legend = () => (
+const Legend = ({ onDismiss }: { onDismiss: () => void }) => (
   <div className="graph-legend" aria-label="Graph legend">
+    <div className="graph-legend-head">
+      <span className="graph-legend-heading">Legend</span>
+      <button type="button" className="graph-legend-close" onClick={onDismiss} aria-label="Hide legend">
+        <X aria-hidden="true" />
+      </button>
+    </div>
     <div className="graph-legend-group">
       <span className="graph-legend-title">Status</span>
       <span className="graph-legend-row"><span className="g-glyph ok" />path taken</span>
@@ -519,7 +559,7 @@ const Legend = () => (
       <span className="graph-legend-row"><span className="legend-work legend-work-code" />deterministic</span>
       <span className="graph-legend-row"><span className="legend-work legend-work-route" />decision</span>
     </div>
-    <div className="graph-legend-note">Every route stays visible · green marks execution · click any node to inspect</div>
+    <p className="graph-legend-note">Click any node to inspect it.</p>
   </div>
 )
 

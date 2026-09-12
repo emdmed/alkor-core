@@ -75,9 +75,13 @@ Clinical Sky is the singular action and navigation color; Mint Wash is the quiet
 
 ## Layout
 
-The desktop workspace is a three-part operating view: chat is left-aligned, the expandable execution graph occupies the flexible center, and activity/inspection slides from the right. The event log stays below as a full-width history surface. Use 8px for tight internal relationships, 12px as the normal panel rhythm, and 16px where regions need separation.
+The desktop workspace is two zones under one band. A single top bar carries session truth — server, connection, model, run counters, and the two controls that act on the feed. Below it the execution graph is the resident surface, and everything that is not the graph lives in one rail beside it: sending a run, watching requests, inspecting a clicked node, and reading the raw feed, as four tabs of the same panel. The rail is drag-resizable and collapses to a strip of icons, so the canvas can take the whole window without any destination becoming unreachable.
 
-At constrained widths, existing grid breakpoints stack supporting panels before compromising the graph's interaction area.
+Above the canvas sits one bar, and it answers one question: which run am I looking at, and where has it got to. Anything that changes how the canvas is *drawn* — detail level, expansion, legend — folds into a single View menu rather than a row of toggles. Inside the canvas, three corners hold one thing each: legend top-left, zoom bottom-left, overview bottom-right.
+
+Use 8px for tight internal relationships, 12px as the normal panel rhythm, and 16px where regions need separation.
+
+Below 900px the rail floats over the canvas instead of taking width from it, and the top bar wraps rather than truncating what it carries.
 
 ## Elevation & Depth
 

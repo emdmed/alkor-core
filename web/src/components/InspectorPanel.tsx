@@ -21,7 +21,6 @@ export const InspectorPanel = memo(({ state }: { state: ProjectState }) => {
 
   return (
     <div className="inspector-feed">
-      <p className="drawer-summary">Run structure, routing decisions, and transport metadata.</p>
       <h3 className="drawer-section-title">Sessions</h3>
       {sessions.length === 0 && <div className="drawer-empty">No sessions opened yet.</div>}
       {sessions.map((session) => (

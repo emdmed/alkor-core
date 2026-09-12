@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useRef, useState, lazy, Suspense } from 'react'
-import { ChevronUp } from 'lucide-react'
 import { Header } from './components/Header.tsx'
-import { StatusStrip } from './components/StatusStrip.tsx'
 import { ActivityPanel } from './components/ActivityPanel.tsx'
 import { InspectorPanel } from './components/InspectorPanel.tsx'
-import { Drawer } from './components/Drawer.tsx'
 import { EventLog } from './components/EventLog.tsx'
-import { ChatPanel } from './components/ChatPanel.tsx'
+import { RunPanel } from './components/RunPanel.tsx'
+import { SideRail, readRailWidth, type RailTab } from './components/SideRail.tsx'
 import { useMedextract } from './hooks/useMedextract.ts'
 import type { GraphNodeData } from './lib/graph/index.ts'
 
@@ -18,6 +16,8 @@ const PipelineGraph = lazy(async () => {
 })
 
 const DEFAULT_URL = (import.meta.env.VITE_MEDEXTRACT_URL as string | undefined) ?? 'http://127.0.0.1:3000'
+
+const NARROW = '(max-width: 899px)'
 
 /** Match a media query against the live viewport and keep listening for changes. */
 const useMedia = (query: string) => {
@@ -34,35 +34,23 @@ const useMedia = (query: string) => {
   return matches
 }
 
-const WIDE = '(min-width: 1360px)'
-const NARROW = '(max-width: 759px)'
-
+/**
+ * The workspace is two zones: the canvas, and one rail beside it.
+ *
+ * Everything that is not the graph — sending a run, watching requests, inspecting a node,
+ * reading the feed — is a tab in that rail. The rail collapses to a strip of icons, so
+ * the canvas can have the whole window without any of it becoming unreachable.
+ */
 export const App = () => {
   const { state, serverUrl, activeUrl, setServerUrl, connect, paused, setPaused, clear, run, models } = useMedextract(DEFAULT_URL)
-  const isWide = useMedia(WIDE)
   const isNarrow = useMedia(NARROW)
 
-  // Shell modes (see dashboard_improvement.md):
-  //  wide      — run panel may stay open; the drawer may reserve its footprint.
-  //  intermediate — the drawer overlays; the run panel defaults collapsed.
-  //  narrow    — the run panel and drawer are coordinated overlays: one open, one closed.
-  const [chatOpen, setChatOpen] = useState(() =>
-    typeof window === 'undefined' ? false : window.matchMedia(WIDE).matches,
-  )
-  const [rightOpen, setRightOpen] = useState(false)
-  const [rightTab, setRightTab] = useState<'activity' | 'inspector'>('activity')
-  const [logOpen, setLogOpen] = useState(false)
+  const [railOpen, setRailOpen] = useState(() => typeof window === 'undefined' || !window.matchMedia(NARROW).matches)
+  const [railTab, setRailTab] = useState<RailTab>('run')
+  const [railWidth, setRailWidth] = useState(readRailWidth)
   const [inspected, setInspected] = useState<GraphNodeData | null>(null)
   const [selectedWorkflow, setSelectedWorkflow] = useState('')
   const lastFocus = useRef<HTMLElement | null>(null)
-
-  // Live values of panel/drawer/width state kept behind stable callbacks so the graph
-  // rebuild does not re-run (and regenerate every node's onInspect) just because an
-  // unrelated panel toggled.
-  const chatOpenRef = useRef(chatOpen)
-  chatOpenRef.current = chatOpen
-  const isNarrowRef = useRef(isNarrow)
-  isNarrowRef.current = isNarrow
 
   useEffect(() => {
     const pipelines = state.topology.workflows
@@ -70,61 +58,20 @@ export const App = () => {
     setSelectedWorkflow(pipelines[0]?.name ?? '')
   }, [selectedWorkflow, state.topology.workflows])
 
-  // The run panel can no longer lean on the graph once the viewport stops being wide.
+  // On a narrow viewport the rail overlays the canvas, so it starts out of the way.
   useEffect(() => {
-    if (!isWide) setChatOpen(false)
-  }, [isWide])
+    if (isNarrow) setRailOpen(false)
+  }, [isNarrow])
 
-  const rememberFocus = () => {
+  // Clicking a node is a question about that node: answer it in the inspector, and
+  // remember where the click came from so Escape can hand focus back.
+  const openInspector = useCallback((data: GraphNodeData) => {
     const el = document.activeElement
     if (el instanceof HTMLElement) lastFocus.current = el
-  }
-
-  const openInspector = useCallback((data: GraphNodeData) => {
-    if (isNarrowRef.current && chatOpenRef.current) setChatOpen(false)
-    rememberFocus()
     setInspected(data)
-    setRightTab('inspector')
-    setRightOpen(true)
+    setRailTab('inspector')
+    setRailOpen(true)
   }, [])
-
-  const toggleActivity = useCallback(() => {
-    if (!rightOpen || rightTab !== 'activity') {
-      if (isNarrowRef.current && chatOpenRef.current) setChatOpen(false)
-      rememberFocus()
-      setRightTab('activity')
-      setRightOpen(true)
-    } else {
-      setRightOpen(false)
-    }
-  }, [rightOpen, rightTab])
-
-  const toggleInspector = useCallback(() => {
-    if (!rightOpen || rightTab !== 'inspector') {
-      if (isNarrowRef.current && chatOpenRef.current) setChatOpen(false)
-      rememberFocus()
-      setRightTab('inspector')
-      setRightOpen(true)
-    } else {
-      setRightOpen(false)
-    }
-  }, [rightOpen, rightTab])
-
-  const toggleChat = useCallback(() => {
-    if (!chatOpen) {
-      if (isNarrowRef.current && rightOpen) setRightOpen(false)
-      rememberFocus()
-      setChatOpen(true)
-    } else {
-      setChatOpen(false)
-    }
-  }, [chatOpen, rightOpen])
-
-  const onTogglePause = useCallback(() => setPaused(!paused), [paused])
-
-  const onToggleLog = useCallback(() => setLogOpen((v) => !v), [])
-
-  const onClose = useCallback(() => setRightOpen(false), [])
 
   // The graph is primary: warm its chunk as soon as the shell mounts so the first
   // topology frame is always rendered by the real component, never a long spinner.
@@ -132,25 +79,18 @@ export const App = () => {
     void import('./components/graph/PipelineGraph.tsx')
   }, [])
 
-  // Escape closes the topmost overlay and returns focus to whoever opened it.
-  const closePanel = useCallback((close: 'top' | 'chat') => {
-    if (close === 'chat') setChatOpen(false)
-    setRightOpen(false)
-    lastFocus.current?.focus()
-    lastFocus.current = null
-  }, [])
-
+  // Escape collapses the rail and returns focus to whoever opened it.
   useEffect(() => {
-    if (!rightOpen && !chatOpen && !logOpen) return
+    if (!railOpen) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
-      if (chatOpen) closePanel('chat')
-      else if (rightOpen) closePanel('top')
-      else setLogOpen(false)
+      setRailOpen(false)
+      lastFocus.current?.focus()
+      lastFocus.current = null
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [rightOpen, chatOpen, logOpen, closePanel])
+  }, [railOpen])
 
   return (
     <div className="app">
@@ -160,54 +100,43 @@ export const App = () => {
         onServerUrlChange={setServerUrl}
         onConnect={connect}
         paused={paused}
-        onTogglePause={onTogglePause}
+        onTogglePause={useCallback(() => setPaused(!paused), [paused])}
         onClear={clear}
         models={models}
       />
-      <StatusStrip state={state} />
-      <main className="graph-main">
-        <ChatPanel
-          open={chatOpen}
-          onToggle={toggleChat}
-          state={state}
-          run={run}
-          serverUrl={activeUrl}
-          onOpenActivity={isNarrow ? toggleActivity : undefined}
-        />
-        <div className="graph-area">
+      <main className={`workspace${isNarrow && railOpen ? ' is-rail-overlay' : ''}`}>
+        <div className="stage">
           <Suspense fallback={<GraphLoadingSurface />}>
             <PipelineGraph
               state={state}
               selectedWorkflow={selectedWorkflow}
               onSelectedWorkflowChange={setSelectedWorkflow}
               onInspect={openInspector}
-              onToggleActivity={toggleActivity}
-              onToggleLog={onToggleLog}
-              activityOpen={rightOpen && rightTab === 'activity'}
-              logOpen={logOpen}
             />
           </Suspense>
         </div>
-        <Drawer open={rightOpen} onClose={onClose} title={rightTab === 'activity' ? 'LIVE ACTIVITY' : 'INSPECTOR'}>
-          {rightTab === 'activity' ? (
-            <ActivityPanel state={state} />
-          ) : (
-            <>
-              {inspected && <InspectedHeader data={inspected} />}
-              <InspectorPanel state={state} />
-            </>
+        <SideRail
+          open={railOpen}
+          tab={railTab}
+          width={railWidth}
+          onTabChange={setRailTab}
+          onOpenChange={setRailOpen}
+          onWidthChange={setRailWidth}
+          logCount={state.eventLog.length}
+        >
+          {railTab === 'run' && <RunPanel state={state} run={run} serverUrl={activeUrl} />}
+          {railTab === 'activity' && (
+            <div className="rail-scroll"><ActivityPanel state={state} /></div>
           )}
-        </Drawer>
+          {railTab === 'inspector' && (
+            <div className="rail-scroll">
+              {inspected ? <InspectedHeader data={inspected} /> : <p className="rail-hint">Click any node on the canvas to inspect it.</p>}
+              <InspectorPanel state={state} />
+            </div>
+          )}
+          {railTab === 'log' && <EventLog state={state} />}
+        </SideRail>
       </main>
-      <div className="graph-logbar">
-        {logOpen ? (
-          <EventLog state={state} onToggle={() => setLogOpen(false)} />
-        ) : (
-          <button className="log-reopen" onClick={() => setLogOpen(true)}>
-            <ChevronUp aria-hidden="true" /> Event log <span>Open</span>
-          </button>
-        )}
-      </div>
     </div>
   )
 }

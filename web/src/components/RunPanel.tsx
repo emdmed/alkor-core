@@ -1,26 +1,24 @@
 /**
- * ChatPanel — send a prompt into the medextract pipeline and watch the
+ * RunPanel — send a prompt into the medextract pipeline and watch the
  * response stream back in, the same way the terminal CLI or the TUI does.
  *
- * The panel lives on the left side of the layout so it doesn't fight with
- * the right drawer for attention. When collapsed it reduces to a thin
- * vertical tab; when open it fills the space between the header and the
- * graph.
- *
- * The graph is the primary view; this panel is a command surface that feeds
- * work into it.
+ * It is the rail's first tab, not a surface of its own: the rail owns the title,
+ * the width, and the closing. The graph is the primary view; this is the command
+ * surface that feeds work into it.
  */
 import { memo, useEffect, useRef, useState } from 'react'
-import { List, Send, Sparkles, X } from 'lucide-react'
+import { FolderOpen, Send, Sparkles } from 'lucide-react'
 import {
   type WorkflowDefinition,
   type ProjectState,
 } from '../../../src/tui/state.ts'
 import { Button } from './ui/button'
 import { CopyButton } from './CopyButton'
+import { CorpusPicker } from './CorpusPicker'
 import { formatRunLog } from '../lib/runlog.ts'
 import { RunFailure } from '../hooks/useMedextract.ts'
 import { cn } from '../lib/utils'
+import type { CorpusDocument } from '../lib/corpus.ts'
 
 export interface ChatMessage {
   id: string
@@ -40,15 +38,11 @@ export interface ChatMessage {
   forcedWorkflow?: string
 }
 
-interface ChatPanelProps {
-  open: boolean
-  onToggle: () => void
+interface RunPanelProps {
   state: ProjectState
   run: (input: string, workflow?: string) => Promise<unknown>
   /** Where the run was sent — recorded in the log so a pasted one names its server. */
   serverUrl: string
-  /** Narrow-shell coordination: jump straight from the run console to the drawer. */
-  onOpenActivity?: () => void
 }
 
 const PRESETS = [
@@ -57,13 +51,16 @@ const PRESETS = [
   'Extract allergies and prior surgeries',
 ]
 
-export const ChatPanel = memo(({ open, onToggle, state, run, serverUrl, onOpenActivity }: ChatPanelProps) => {
+export const RunPanel = memo(({ state, run, serverUrl }: RunPanelProps) => {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [pending, setPending] = useState(false)
   const [forcedWorkflow, setForcedWorkflow] = useState('')
   /** Which run logs are expanded. Kept here so a failure can open its own without a click. */
   const [openLogs, setOpenLogs] = useState<ReadonlySet<string>>(new Set())
+  const [pickerOpen, setPickerOpen] = useState(false)
+  /** The pack document currently in the box, so the composer can say where the text is from. */
+  const [loaded, setLoaded] = useState<CorpusDocument | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -76,10 +73,11 @@ export const ChatPanel = memo(({ open, onToggle, state, run, serverUrl, onOpenAc
     scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight)
   }, [messages, messages.length])
 
-  // Focus the textarea whenever the panel opens.
+  // The rail mounts this tab only while it is showing; focusing on mount puts the caret
+  // where the operator was going anyway.
   useEffect(() => {
-    if (open) textareaRef.current?.focus()
-  }, [open])
+    textareaRef.current?.focus()
+  }, [])
 
   // The composer grows to a controlled maximum instead of resizing by hand.
   const fitTextarea = () => {
@@ -116,6 +114,7 @@ export const ChatPanel = memo(({ open, onToggle, state, run, serverUrl, onOpenAc
     }
     setMessages((prev) => [...prev, msg])
     setInput('')
+    setLoaded(null)
     setPending(true)
     requestAnimationFrame(fitTextarea)
 
@@ -168,62 +167,38 @@ export const ChatPanel = memo(({ open, onToggle, state, run, serverUrl, onOpenAc
     setOpenLogs(new Set())
   }
 
-  if (!open) {
-    return (
-      <button className="chat-tab" onClick={onToggle} aria-label="open chat">
-        RUN
-      </button>
-    )
+  const loadDocument = (text: string, doc: CorpusDocument) => {
+    setInput(text)
+    setLoaded(doc)
+    setPickerOpen(false)
+    textareaRef.current?.focus()
+    requestAnimationFrame(fitTextarea)
   }
 
   return (
-    <aside className="chat-panel">
-      <div className="chat-head">
-        <div>
-          <span className="chat-title">Run pipeline</span>
-          <span className="chat-head-note">Send input and follow its execution</span>
-        </div>
-        <div className="chat-head-actions">
-          {onOpenActivity && (
-            <Button variant="ghost" size="sm" onClick={onOpenActivity} aria-label="open activity" className="chat-head-activity">
-              <List size={14} aria-hidden="true" />Activity
-            </Button>
-          )}
-          <Button variant="ghost" size="sm" onClick={onToggle} aria-label="close chat">
-            <X size={14} />
-          </Button>
-        </div>
-      </div>
-
-      <details className="chat-options">
-        <summary>Run options</summary>
-        <div className="chat-target">
-          <label className="chat-target-label" htmlFor="chat-workflow">Force workflow</label>
-          <select
-            id="chat-workflow"
-            className="chat-select"
-            value={forcedWorkflow}
-            onChange={(e) => setForcedWorkflow(e.target.value)}
-          >
-            <option value="">Automatic routing</option>
-            {pipelines.map((workflow) => (
-              <option key={workflow.name} value={workflow.name}>
-                {workflow.name} ({workflow.steps.map((step) => step.profile).join(' → ')})
-              </option>
-            ))}
-          </select>
-        </div>
-        <p>For diagnostics only. Forcing a workflow bypasses the router.</p>
-      </details>
-
-      {/* Presets — compact actions that say what to do next on their own. */}
+    <div className="runpanel">
+      {/* Presets carry the empty state on their own: things worth asking beat a sentence
+          explaining that you may ask something. The corpus sits first because a real note
+          from the pack is the better test, and typing one out is the worse one. */}
       {messages.length === 0 && (
         <div className="chat-presets">
+          <p className="chat-presets-lead">Paste a clinical note, load one the evals grade against, or ask for an extraction.</p>
+          <button className="chat-preset is-corpus" onClick={() => setPickerOpen(true)} type="button">
+            <FolderOpen size={12} aria-hidden="true" />Browse the pack corpus
+          </button>
           {PRESETS.map((p) => (
             <button key={p} className="chat-preset" onClick={() => pickPreset(p)} type="button">
               <Sparkles size={12} aria-hidden="true" />{p}
             </button>
           ))}
+        </div>
+      )}
+
+      {messages.length > 0 && (
+        <div className="chat-scroll-actions">
+          <Button variant="ghost" size="sm" onClick={clearMessages} type="button">
+            Clear transcript
+          </Button>
         </div>
       )}
 
@@ -294,26 +269,63 @@ export const ChatPanel = memo(({ open, onToggle, state, run, serverUrl, onOpenAc
         )}
       </div>
 
-      {/* Footer: composer + send */}
+      {/* Composer. The routing override sits with it rather than at the top of the panel:
+          it is a property of the run about to be sent, not a setting of the workspace. */}
       <div className="chat-foot">
+        {/* What is in the box, when it came from the corpus rather than from the operator.
+            Worth saying: two shock notes differ by one word, and a run whose input you
+            cannot name is a result you cannot repeat. */}
+        {loaded && (
+          <p className="chat-loaded">
+            <FolderOpen aria-hidden="true" />
+            <span className="chat-loaded-name">{loaded.case}</span>
+            <span className="chat-loaded-meta">{loaded.kind} · {loaded.lines} lines</span>
+          </p>
+        )}
         <textarea
           ref={textareaRef}
           className="chat-textarea"
-          placeholder="Paste text or enter an extraction request…"
+          placeholder="Paste a note, or ask for an extraction…"
+          aria-label="Run input"
           rows={2}
           value={input}
           onChange={(e) => {
             setInput(e.target.value)
+            // Typed-over text is the operator's own, whatever it started as.
+            if (loaded) setLoaded(null)
             fitTextarea()
           }}
           onKeyDown={handleKeyDown}
         />
         <div className="chat-foot-actions">
-          {messages.length > 0 && (
-            <Button variant="ghost" size="sm" onClick={clearMessages} type="button">
-              clear
-            </Button>
-          )}
+          <button
+            type="button"
+            className="chat-corpus-btn"
+            onClick={() => setPickerOpen(true)}
+            title="Load a note, transcript, or exam payload from the contract packs"
+          >
+            <FolderOpen aria-hidden="true" />Corpus
+          </button>
+          <details className="chat-options">
+            <summary>{forcedWorkflow ? `Forcing ${forcedWorkflow}` : 'Automatic routing'}</summary>
+            <div className="chat-options-body">
+              <label className="chat-target-label" htmlFor="run-workflow">Force workflow</label>
+              <select
+                id="run-workflow"
+                className="chat-select"
+                value={forcedWorkflow}
+                onChange={(e) => setForcedWorkflow(e.target.value)}
+              >
+                <option value="">Automatic routing</option>
+                {pipelines.map((workflow) => (
+                  <option key={workflow.name} value={workflow.name}>
+                    {workflow.name} ({workflow.steps.map((step) => step.profile).join(' → ')})
+                  </option>
+                ))}
+              </select>
+              <p>Diagnostics only — this bypasses the router.</p>
+            </div>
+          </details>
           <Button
             size="sm"
             onClick={handleSend}
@@ -323,7 +335,11 @@ export const ChatPanel = memo(({ open, onToggle, state, run, serverUrl, onOpenAc
           </Button>
         </div>
       </div>
-    </aside>
+
+      {pickerOpen && (
+        <CorpusPicker serverUrl={serverUrl} onPick={loadDocument} onClose={() => setPickerOpen(false)} />
+      )}
+    </div>
   )
 })
 
