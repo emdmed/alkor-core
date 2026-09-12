@@ -18,6 +18,7 @@ import { formatBench, summarizeBench, type BenchSample, type BenchSummary } from
 import { formatStability, summarizeStability, type Observation, type StabilitySummary } from '../../core/stability.ts'
 import { HARNESS_VERSION } from '../../core/version.ts'
 import { extract } from '../../modes/extract.ts'
+import { benchSampleOf } from './eval-run.ts'
 import { loadSettings } from './settings.ts'
 import { DIFFICULTY_MAX, DIFFICULTY_MIN, gradedExpectations, loadVitalCases, parseDifficultyRange } from './cases.ts'
 import { vitalRequest } from './contracts.ts'
@@ -199,21 +200,8 @@ export const runVitalSignsEval = async (o: VitalEvalOptions): Promise<VitalEvalR
 
       // Summed over attempts: a case that had to be retried cost the caller both passes.
       // A run whose every attempt failed to reach the server contributes no sample at all,
-      // which is why this is guarded rather than pushed unconditionally.
-      const sample: BenchSample | undefined = outcome.cost.length
-        ? {
-            case: c.name,
-            // Completions AND the attempts that produced none. A first attempt lost at
-            // transport is time the caller waited, and it used to appear in neither number.
-            wallMs: outcome.cost.reduce((n, a) => n + a.wallMs, 0) + outcome.lostMs,
-            attempts: outcome.attempts,
-            promptTokens: outcome.cost.reduce((n, a) => n + (a.timings?.promptTokens ?? 0), 0),
-            promptMs: outcome.cost.reduce((n, a) => n + (a.timings?.promptMs ?? 0), 0),
-            predictedTokens: outcome.cost.reduce((n, a) => n + (a.timings?.predictedTokens ?? 0), 0),
-            predictedMs: outcome.cost.reduce((n, a) => n + (a.timings?.predictedMs ?? 0), 0),
-            cachedTokens: outcome.cost.reduce((n, a) => n + (a.timings?.cachedTokens ?? 0), 0),
-          }
-        : undefined
+      // which is why `benchSampleOf` answers undefined rather than a zeroed row.
+      const sample = benchSampleOf(c.name, outcome)
       if (sample) samples.push(sample)
 
       const scored = outcome.parsed ? scoreCase(c, outcome.parsed, note, quoteRule) : scoreFailure(c)

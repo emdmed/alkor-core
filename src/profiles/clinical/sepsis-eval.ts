@@ -22,15 +22,23 @@
  * folded into the gate, because no answer key here can grade a sentence.
  */
 import type { Pack } from '../../core/pack.ts'
-import type { Trace } from '../../core/trace.ts'
 import type { Provider } from '../../core/client.ts'
-import { identifyServer, UNIDENTIFIED, type ServerIdentity } from '../../core/client.ts'
-import { formatBench, summarizeBench, type BenchSample, type BenchSummary } from '../../core/bench.ts'
-import { formatStability, summarizeStability, type Observation } from '../../core/stability.ts'
+import { summarizeBench, type BenchSample } from '../../core/bench.ts'
+import { summarizeStability, type Observation } from '../../core/stability.ts'
 import { HARNESS_VERSION } from '../../core/version.ts'
 import { extract } from '../../modes/extract.ts'
-import { DIFFICULTY_MAX, DIFFICULTY_MIN, parseDifficultyRange } from './cases.ts'
 import { CONTRACTS, buildRequest } from './contracts.ts'
+import {
+  announceRun,
+  benchSampleOf,
+  evalScope,
+  pct,
+  recordParseFailure,
+  reportRuleArm,
+  reportTrailer,
+  runConditions,
+  type EvalRunOptions,
+} from './eval-run.ts'
 import type { Gate, TaskResult } from './set-eval.ts'
 import {
   assess,
@@ -45,20 +53,9 @@ import {
 } from './sepsis.ts'
 import { checkMedprotocolVersion, loadMedprotocolRule } from './medprotocol.ts'
 
-export interface SepsisEvalOptions {
-  pack: Pack
-  baseUrl?: string
-  trace: Trace
-  constrain: boolean
-  runs?: number
-  difficulty?: string
-  identity?: ServerIdentity
-  cachePrompt?: boolean
+export interface SepsisEvalOptions extends EvalRunOptions {
   provider?: Provider
 }
-
-/** A percentage, or `n/a` when the denominator was zero. Never `(0/0) -> 100%`. */
-const pct = (n: number, d: number): string => (d ? `${((n / d) * 100).toFixed(0)}% (${n}/${d})` : `n/a (0/0)`)
 
 export const runSepsisEval = async (o: SepsisEvalOptions): Promise<TaskResult> => {
   const spec = CONTRACTS.sepsis
@@ -74,17 +71,8 @@ export const runSepsisEval = async (o: SepsisEvalOptions): Promise<TaskResult> =
   const medprotocolVersion = checkMedprotocolVersion(mp, o.pack.name)
   const { cases: allCases, ...floors } = loadSepsisCases(o.pack, mp)
 
-  // Filtered here rather than in the loader, so the loader's checks — every expectation
-  // reconciled against the rule, both kinds of case present — run over the WHOLE corpus even
-  // when a run grades four payloads of it.
-  const inScope = o.difficulty ? parseDifficultyRange(o.difficulty) : () => true
-  const cases = allCases.filter((c) => inScope(c.difficulty))
-  if (!cases.length) throw new Error(`no cases at difficulty '${o.difficulty}' in pack '${o.pack.name}'`)
-
-  const runs = Math.max(1, o.runs ?? 1)
-  const cachePrompt = o.cachePrompt ?? true
-  const identity = o.identity ?? (await identifyServer(o.baseUrl))
-  const served = identity.model ?? UNIDENTIFIED
+  const s = await evalScope(o, allCases, 'payloads')
+  const { cases, runs, cachePrompt, identity, served } = s
 
   const scores: SepsisScore[] = []
   const samples: BenchSample[] = []
@@ -93,47 +81,29 @@ export const runSepsisEval = async (o: SepsisEvalOptions): Promise<TaskResult> =
   /** Replies that never parsed. Counted apart from wrong answers; see `measured` below. */
   let failedRuns = 0
 
-  const conditions = {
-    harness: HARNESS_VERSION,
-    model: served,
-    declared: o.pack.toml<{ generation?: { id?: string } }>('models').generation?.id,
-    baseUrl: o.baseUrl,
-    constrained: o.constrain,
-    sampling: req.sampling,
-    pack: { name: o.pack.name, spec: o.pack.spec },
-    task: 'sepsis',
-    cases: cases.length,
-    corpusCases: allCases.length,
-    difficulty: o.difficulty ?? `${DIFFICULTY_MIN}-${DIFFICULTY_MAX}`,
-    runs,
-    cachePrompt,
-    identified: identity.identified,
-    identityWarning: identity.warning,
-    // The threshold rule the criteria breakdown was derived under, in the trace. A number
-    // reproduced against a different cut-point is a number about a different contract, and this
-    // is the only record that would say so.
-    rule,
-    // The CLI that decided every number in this run, by version. A result reproduced against a
-    // different build is a result about a different rule.
-    medprotocol: { version: medprotocolVersion, command: mp.command },
-    floors,
-  }
-  o.trace.write({ event: 'run', ...conditions })
-  if (!o.identity && identity.warning) console.error(`\nwarning: ${identity.warning}`)
+  o.trace.write({
+    event: 'run',
+    ...runConditions(o, s, req, {
+      task: 'sepsis',
+      corpusCases: allCases.length,
+      // The threshold rule the criteria breakdown was derived under, in the trace. A number
+      // reproduced against a different cut-point is a number about a different contract, and this
+      // is the only record that would say so.
+      rule,
+      // The CLI that decided every number in this run, by version. A result reproduced against a
+      // different build is a result about a different rule.
+      medprotocol: { version: medprotocolVersion, command: mp.command },
+      floors,
+    }),
+  })
 
-  const scope =
-    cases.length === allCases.length
-      ? `difficulty ${DIFFICULTY_MIN}-${DIFFICULTY_MAX}`
-      : `difficulty ${o.difficulty} only — ${cases.length} of ${allCases.length} payloads`
-  console.log(`\n=== Sepsis screen — ${cases.length} qSOFA payloads, ${scope} ===`)
-  console.log(
-    `model '${served}' · pack '${o.pack.name}' spec ${o.pack.spec} · ` +
-      `${o.constrain ? 'constrained' : 'unconstrained'} · ` +
-      `temp ${req.sampling.temperature} · max_tokens ${req.sampling.max_tokens}${runs > 1 ? ` · ${runs} runs` : ''}`,
-  )
-  // Printed BEFORE the per-case lines rather than in a footnote. Everything below is a
-  // percentage beside the word "sepsis", and the caveat is worth less after the number.
-  console.log(`\nagreement with the medprotocol "sepsis qsofa" verdict — a POSITIVE SCREEN IS NOT A DIAGNOSIS OF SEPSIS\n`)
+  announceRun(o, s, req, {
+    title: 'Sepsis screen',
+    unit: 'qSOFA payloads',
+    // Printed BEFORE the per-case lines rather than in a footnote. Everything below is a
+    // percentage beside the word "sepsis", and the caveat is worth less after the number.
+    caveat: `\nagreement with the medprotocol "sepsis qsofa" verdict — a POSITIVE SCREEN IS NOT A DIAGNOSIS OF SEPSIS\n`,
+  })
 
   for (const c of cases) {
     // The rendering, not the file. It is the contract's input and it lives in sepsis.ts so the
@@ -157,47 +127,16 @@ export const runSepsisEval = async (o: SepsisEvalOptions): Promise<TaskResult> =
         provider: o.provider,
       })
 
-      const sample: BenchSample | undefined = outcome.cost.length
-        ? {
-            case: c.name,
-            wallMs: outcome.cost.reduce((n, a) => n + a.wallMs, 0) + outcome.lostMs,
-            attempts: outcome.attempts,
-            promptTokens: outcome.cost.reduce((n, a) => n + (a.timings?.promptTokens ?? 0), 0),
-            promptMs: outcome.cost.reduce((n, a) => n + (a.timings?.promptMs ?? 0), 0),
-            predictedTokens: outcome.cost.reduce((n, a) => n + (a.timings?.predictedTokens ?? 0), 0),
-            predictedMs: outcome.cost.reduce((n, a) => n + (a.timings?.predictedMs ?? 0), 0),
-            cachedTokens: outcome.cost.reduce((n, a) => n + (a.timings?.cachedTokens ?? 0), 0),
-          }
-        : undefined
+      const sample = benchSampleOf(c.name, outcome)
       if (sample) samples.push(sample)
 
-      // A reply that never parsed is NOT scored as a wrong verdict. It contributes no score at
-      // all, and `failedRuns` carries it into the gate through `measured`: a run where every
-      // completion was fenced would otherwise report 0% agreement, which reads as a model that
-      // cannot read a screen when it is a model whose output was never read.
+      // A reply that never parsed is NOT scored as a wrong verdict — see `recordParseFailure`.
       if (!outcome.parsed) {
         failedRuns++
-        misses.push(`parse         ${c.name} — ${outcome.error?.slice(0, 90) ?? 'unknown'}`)
-        observations.push({
-          case: c.name,
-          run,
-          completion: outcome.raw ?? `(no completion: ${outcome.error ?? 'unknown'})`,
-          score: 'FAILED',
-        })
-        o.trace.write({
-          event: 'case',
-          task: 'sepsis',
-          case: c.name,
-          class: c.class,
-          difficulty: c.difficulty,
-          run,
-          ok: false,
-          error: outcome.error,
-          expected: truth,
-          cost: sample,
-          completion: outcome.raw,
-        })
-        console.log(`${c.name.padEnd(30)} ${c.class.padEnd(15)} d${c.difficulty}  FAILED: ${outcome.error?.slice(0, 60)}`)
+        recordParseFailure(
+          { misses, observations, trace: o.trace },
+          { task: 'sepsis', case: c, run, outcome, sample, expected: truth },
+        )
         continue
       }
 
@@ -288,29 +227,16 @@ export const runSepsisEval = async (o: SepsisEvalOptions): Promise<TaskResult> =
    * the model has that the CLI does not, and it is the only column where the rule scores zero.
    */
   const bench = samples.length ? summarizeBench(samples) : undefined
-  console.log(`\nwhat the model bought over the rule it is graded against:`)
-  console.log(`  rule arm     100% agreement by construction, 0 tokens, no server — it is the answer key`)
-  console.log(
-    `  model arm    ${pct(scores.filter((s) => s.screenAgrees).length, scores.length)} agreement` +
-      (bench ? `, ${(bench.wall.totalMs / 1000).toFixed(1)}s of wall clock` : ''),
-  )
-  console.log(`  narration    the model's screen_reason and criteria are reported, never gated — no answer key here can grade a sentence`)
-
-  if (bench) {
-    console.log(`\nwhat it cost:`)
-    for (const line of formatBench(bench, identity.props)) console.log(`  ${line}`)
-  }
+  reportRuleArm({
+    agreement: pct(scores.filter((s) => s.screenAgrees).length, scores.length),
+    bench,
+    narration: [
+      `  narration    the model's screen_reason and criteria are reported, never gated — no answer key here can grade a sentence`,
+    ],
+  })
 
   const stability = summarizeStability(observations)
-  if (runs > 1) {
-    console.log(`\nwhat repeated (${runs} runs per case):`)
-    for (const line of formatStability(stability)) console.log(`  ${line}`)
-  }
-
-  if (misses.length) {
-    console.log(`\nwhat went wrong (${misses.length}):`)
-    for (const m of misses) console.log(`  ${m}`)
-  }
+  reportTrailer({ bench, identity, stability, runs, misses })
 
   o.trace.write({
     event: 'record',

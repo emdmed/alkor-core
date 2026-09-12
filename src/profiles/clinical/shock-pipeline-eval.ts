@@ -23,11 +23,12 @@ import type { Pack } from '../../core/pack.ts'
 import type { Trace } from '../../core/trace.ts'
 import type { Provider } from '../../core/client.ts'
 import { identifyServer, UNIDENTIFIED, type ServerIdentity } from '../../core/client.ts'
-import { formatBench, summarizeBench, type BenchSample, type Timings } from '../../core/bench.ts'
+import { formatBench, summarizeBench, type BenchSample } from '../../core/bench.ts'
 import { HARNESS_VERSION } from '../../core/version.ts'
 import { extract } from '../../modes/extract.ts'
 import { ProfileError } from '../../core/profile.ts'
 import { buildRequest, CONTRACTS } from './contracts.ts'
+import { costOf, pct } from './eval-run.ts'
 import { DIFFICULTY_MAX, DIFFICULTY_MIN, parseDifficultyRange } from './cases.ts'
 import { examEqual, loadShockExtractionCases, parseShockExam } from './shock-extraction-eval.ts'
 import {
@@ -56,9 +57,6 @@ export interface ShockPipelineEvalOptions {
   cachePrompt?: boolean
   provider?: Provider
 }
-
-/** A percentage, or `n/a` when the denominator was zero. Never `(0/0) -> 100%`. */
-const pct = (n: number, d: number): string => (d ? `${((n / d) * 100).toFixed(0)}% (${n}/${d})` : `n/a (0/0)`)
 
 /**
  * The floors this task gates on, from the pack.
@@ -98,17 +96,6 @@ const loadPipelineFloors = (pack: Pack): PipelineFloors => {
     completionFloor: p.completionFloor as number,
   }
 }
-
-/** One stage's cost, folded into the shape `summarizeBench` reads. */
-const costOf = (outcome: { cost: Array<{ wallMs: number; timings?: Timings }>; lostMs: number; attempts: number }): Omit<BenchSample, 'case'> => ({
-  wallMs: outcome.cost.reduce((n, a) => n + a.wallMs, 0) + outcome.lostMs,
-  attempts: outcome.attempts,
-  promptTokens: outcome.cost.reduce((n, a) => n + (a.timings?.promptTokens ?? 0), 0),
-  promptMs: outcome.cost.reduce((n, a) => n + (a.timings?.promptMs ?? 0), 0),
-  predictedTokens: outcome.cost.reduce((n, a) => n + (a.timings?.predictedTokens ?? 0), 0),
-  predictedMs: outcome.cost.reduce((n, a) => n + (a.timings?.predictedMs ?? 0), 0),
-  cachedTokens: outcome.cost.reduce((n, a) => n + (a.timings?.cachedTokens ?? 0), 0),
-})
 
 export const runShockPipelineEval = async (o: ShockPipelineEvalOptions): Promise<TaskResult> => {
   const extractionReq = buildRequest(CONTRACTS['shock-extraction'], o.pack, o.constrain)
