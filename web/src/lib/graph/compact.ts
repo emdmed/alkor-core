@@ -123,10 +123,33 @@ const stageRouteDecision = (root?: StageEntry): StepRouteDecision => {
   return visit(root) ?? {}
 }
 
+/**
+ * The stage that actually holds the run's steps.
+ *
+ * Two unrelated things emit a parentless stage called `workflow` in one product run: the mode
+ * that RUNS a workflow, and the router whose decision is WHICH workflow to run. The router's
+ * lands first, so matching on the name alone found the decision — a node with no children —
+ * and every step came back with an empty stage list. That is the whole middle of the board:
+ * no passes under a step, no route decision to read, so the fan stayed "possible route" and
+ * `before routing` stayed "only when the note carries it" for a run that had gone through
+ * both. The eye then saw the first step finish and the last segment finish with nothing
+ * moving in between.
+ *
+ * The steps are what tell the two apart, so that is what is matched on; the name is only a
+ * tie-break for the moment before the first step stage arrives.
+ */
+const workflowRootOf = (tree: StageEntry[]): StageEntry | undefined => {
+  const roots = tree.filter((n) => n.parentId === undefined)
+  const ownsSteps = (n: StageEntry): boolean => n.children.some((child) => stepIndexOf(child) !== undefined)
+  const named = roots.filter((n) => n.name === 'workflow')
+  // Last, not first: the runner's root is opened after whatever decided to run it.
+  return named.find(ownsSteps) ?? roots.find(ownsSteps) ?? named[named.length - 1]
+}
+
 const buildCompactSteps = (nodeId: string, state: ProjectState, run: RunEntry, tree: StageEntry[], disclosure: Disclosure): CompactStepData[] => {
   const entry = state.workflows.get(run.runId)
   const def = matchTopology(state, entry, run.profile)
-  const workflowRoot = tree.find((n) => n.name === 'workflow' && n.parentId === undefined)
+  const workflowRoot = workflowRootOf(tree)
 
   const defSteps = def?.steps ?? []
   const executed = entry?.steps ?? []
@@ -226,13 +249,37 @@ const stagesByTask = (
   // whichever task is open, which before the decision is the first task in the plan. That drew
   // the front door's two passes inside `shock`, as work the shock arm did.
   let decided = false
+  // The one exception, and it is the head of the plan only: a profile can name a task it
+  // ALREADY ran. The clinical one reads the vital signs at the front door because the decision
+  // is made on those numbers, then puts `vital-signs` at the head of the plan because it ran —
+  // so that branch's passes are all behind it, and a rule that files nothing from before the
+  // decision draws a raised branch with nothing in it. They are matched by the names the
+  // topology declares for that task, so nothing else from before the decision is filed at all.
+  let headRanUpFront = false
+  let inHead = false
   for (const stage of stages) {
     // The decision itself belongs to no branch: it is what chose between them, and the
     // step that made it already shows it. Copying it into a branch — with whatever it
     // nests — would read as work that branch did.
     if (stage.depth === 0) skipping = stage.name === ROUTE_STAGE
-    if (stage.depth === 0 && stage.name === ROUTE_STAGE) decided = true
-    if (skipping || !decided) continue
+    if (stage.depth === 0 && stage.name === ROUTE_STAGE) {
+      decided = true
+      // A head already spent at the front door must not capture the passes that follow it.
+      if (headRanUpFront) {
+        planIndex = 1
+        nameIndex = 0
+        current = plan[1]?.task
+      }
+    }
+    if (skipping) continue
+    if (!decided) {
+      const head = plan[0]
+      if (stage.depth === 0) inHead = head != null && head.names.includes(stage.name)
+      if (!inHead || !head) continue
+      headRanUpFront = true
+      assigned.get(head.task)!.push(stage)
+      continue
+    }
     // Only a top-level stage can open a task; a nested one belongs to its parent's task.
     if (stage.depth === 0) {
       let candidateIndex = planIndex

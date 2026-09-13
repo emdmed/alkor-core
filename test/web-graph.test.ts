@@ -970,6 +970,98 @@ test('pre-decision work is never attributed to a branch', () => {
   assert.equal(named.includes('calculations'), false)
 })
 
+/**
+ * The same run as the server really reports it: the product router's own decision stage is
+ * parentless and is ALSO called `workflow`, and it lands before the workflow that runs.
+ */
+const routedBothSyndromesRun = () => {
+  const state = bothSyndromesRun()
+  const ran = new Map(state.stages)
+  state.stages = new Map([
+    ['router-choice', {
+      stageId: 'router-choice', runId: 'run-1', name: 'workflow', status: 'completed' as const, operation: 'decision' as const,
+      detail: { profile: 'clinical-verified', confidence: 100, reason: 'sole workflow in the catalogue' }, children: [],
+    }],
+    ...ran,
+  ])
+  return state
+}
+
+test("the router's own decision does not shadow the workflow that ran", () => {
+  // Two parentless stages named `workflow` in one run: the choice, and the thing chosen. The
+  // choice arrives first and has no steps under it, so matching on the name alone gave every
+  // step an empty stage list — no passes, no decision to read — and the whole middle of the
+  // board stayed at rest while the run went through it.
+  const graph = buildCompactGraph(routedBothSyndromesRun(), 'run-1', new Set())
+  const extract = graph.nodes.find((node) => node.id === 'compact-run-1')!.data.steps![0]!
+  const shock = graph.nodes.find((node) => node.id === 'compact-run-1-route-shock')!
+  const front = graph.nodes.find((node) => node.id.includes('-front-clinical'))!
+
+  assert.ok(extract.stages.length > 0, 'the step shows the work it did')
+  assert.deepEqual(extract.tasks, ['shock-extraction', 'shock', 'sepsis-extraction', 'sepsis'], 'and the decision it made')
+  assert.equal(shock.data.status, 'done', 'the branch the note raised is painted as taken')
+  assert.equal(front.data.status, 'done', 'and so is the work that ran before the decision')
+})
+
+/** A note whose plan opens with the pass the front door already made. */
+const frontDoorRaisedRun = () => {
+  const state = routingWorkflowState()
+  state.runs.set('run-1', { runId: 'run-1', profile: 'clinical-verified', status: 'started' })
+  state.routes.push({ runId: 'run-1', profile: 'clinical-verified', confidence: 0.9, reason: 'default', ruleVsModel: 'rule' })
+  state.workflows.set('run-1', { runId: 'run-1', steps: [{ step: 0, name: 'extract', profile: 'clinical', status: 'started' }] })
+  state.stages.set('pipeline', { stageId: 'pipeline', runId: 'run-1', name: 'workflow', status: 'started', children: [] })
+  state.stages.set('clinical', {
+    stageId: 'clinical', runId: 'run-1', parentId: 'pipeline', name: 'clinical', status: 'started', detail: { step: 0 }, children: [],
+  })
+  let seq = 0
+  const stage = (name: string, parentId = 'clinical') => {
+    const stageId = `st-${seq++}`
+    state.stages.set(stageId, { stageId, runId: 'run-1', parentId, name, status: 'completed' as const, children: [] })
+    return stageId
+  }
+  // The front door: the marker, then the vital-signs pass itself, flat — all of it before the
+  // decision that `vital-signs` then heads.
+  stage('vitals-first')
+  stage('llm-call')
+  stage('verify')
+  stage('calculations')
+  state.stages.set('decision', {
+    stageId: 'decision', runId: 'run-1', parentId: 'clinical', name: 'route', status: 'completed',
+    detail: { shape: 'shock-suspicion', confidence: 0.92, task: 'shock-extraction', tasks: ['vital-signs', 'shock-extraction', 'shock'] },
+    children: [],
+  })
+  stage('llm-call', stage('shock-extraction'))
+  stage('gateway')
+  stage('llm-call', stage('shock-classification'))
+  stage('verify')
+  return state
+}
+
+test('a branch whose pass ran at the front door shows that pass', () => {
+  // `vital-signs` heads the plan because it RAN — before the decision, because the decision is
+  // made on what it read. Filing nothing from before the decision drew it as a raised branch
+  // with nothing inside it, which is the one thing a raised branch cannot be.
+  const graph = buildCompactGraph(frontDoorRaisedRun(), 'run-1', new Set())
+  const vitals = graph.nodes.find((node) => node.id === 'compact-run-1-route-vital-signs')!
+  const shock = graph.nodes.find((node) => node.id === 'compact-run-1-route-shock')!
+
+  assert.equal(vitals.data.status, 'done')
+  assert.deepEqual(vitals.data.steps!.flatMap((step) => step.stages.map((s) => s.name)), ['llm-call', 'verify'])
+  assert.equal(
+    vitals.data.steps!.flatMap((step) => step.stages.map((s) => s.name)).includes('vitals-first'), false,
+    'the marker stays on the front-door card; the branch shows the passes themselves',
+  )
+  // The head is spent, so the passes that follow the decision belong to the arms that made them.
+  assert.deepEqual(
+    shock.data.steps!.map((step) => `${step.name}:${step.status}`),
+    ['shock-extraction:done', 'shock:done'],
+  )
+  assert.deepEqual(
+    shock.data.steps!.flatMap((step) => step.stages.map((s) => s.name)),
+    ['shock-extraction', 'llm-call', 'gateway', 'shock-classification', 'llm-call', 'verify'],
+  )
+})
+
 test('the front door stays on the canvas for a note that never lights it', () => {
   // At rest — and for a note with no vital sign in it — the card is drawn and says so, rather
   // than vanishing. A stage that appears only sometimes cannot be read as part of the shape.
