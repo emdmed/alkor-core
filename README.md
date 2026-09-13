@@ -243,7 +243,7 @@ recover zero is more useful than retrying in production.
 
 ## Status
 
-**First release.** The version is `0.1.1`, and everything that reports it — the CLI banner,
+**Early release.** The version is `0.1.2`, and everything that reports it — the CLI banner,
 `--version`, the badge on the dashboard mark — reads that one string. What that stage means
 here: the pieces marked done below are tested and usable, and the interfaces around them are
 not yet frozen.
