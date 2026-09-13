@@ -130,7 +130,7 @@ reads. Narrower on purpose.
   motion, executed at that level of finish and without irony. Future work on this surface
   raises the craft, never smuggles a metaphor back in. The one element carried across from
   the superseded worlds is the `alkor` wordmark with its Mizar/Alcor star pair.
-- Apache-2.0.
+- MIT. Contract packs under `packs/` carry CC BY 4.0 separately.
 
 ## Evidence on Hand
 

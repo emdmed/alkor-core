@@ -63,5 +63,5 @@ a test that wants a fixture — does not have to touch this directory.
 medprotocol, from medprotocol-core, which declares `"license": "MIT"` in its package.json and
 ships no LICENSE file of its own — so there is no upstream text to retain here and no copyright
 line to reproduce, and inventing one would be worse than saying so. If medprotocol-core is ever
-published with a LICENSE, copy it into this directory. alkor's own license (Apache-2.0)
-covers the rest of the repository and does not cover this directory.
+published with a LICENSE, copy it into this directory. alkor's own license (MIT) covers the
+rest of the repository and does not cover this directory.

@@ -1,7 +1,7 @@
 {
   "name": "alkor",
-  "version": "0.1.0",
-  "license": "Apache-2.0",
+  "version": "0.1.0-alpha.1",
+  "license": "MIT",
   "description": "Extract structured medical data from clinical notes with a small local model, against contract packs you own — with the gate that says whether it is good enough attached.",
   "type": "module",
   "exports": {

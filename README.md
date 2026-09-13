@@ -247,5 +247,5 @@ The corpus needs harder cases more than the harness needs features.
 
 ## License
 
-Apache-2.0. Contract packs under `packs/` carry CC BY 4.0 separately, so a pack can be
+MIT. Contract packs under `packs/` carry CC BY 4.0 separately, so a pack can be
 forked and adapted without dragging code terms along.
