@@ -7,6 +7,13 @@
     <!-- The name does not describe the product, so it never travels alone (PRODUCT.md). -->
     <title>alkor — structured extraction from clinical notes</title>
     <!--
+      The star pair, in indigo. The SVG follows the tab strip between light and dark; the
+      PNG is the Safari fallback and carries the light value only. Order matters: browsers
+      that understand image/svg+xml take the first, the rest fall through to the second.
+    -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
+    <!--
       Resolve the theme before first paint. Without this the document renders light, then
       the React effect stamps data-theme and a dark-theme user watches the whole dashboard
       flash white. It is inline and synchronous for exactly that reason.

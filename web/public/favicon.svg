@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-33.96 -39 78 78">
+  <!--
+    The star pair from Logotype.tsx, at favicon size. Same geometry, squared canvas:
+    the mark's bounding box centres on x=5.04, and 78 units of side leave Mizar at 77%
+    of the canvas, which is as full as the disc can sit without the crescent touching
+    the edge.
+
+    Indigo here rather than ink. The One Accent Rule governs the product surface, where
+    an indigo mark would read as a control next to the run chips; the tab strip is outside
+    that surface, and an ink favicon would be a grey dot among other sites' colour.
+
+    The value follows the tab strip, not the document: a browser in dark mode paints the
+    strip dark, and #4f46e5 on it is dim enough to lose the mark. The dark value is the
+    same primary the dashboard switches to. Chrome and Firefox honour this query on SVG
+    favicons; Safari falls back to favicon.png below, which carries the light value only.
+
+    Alcor keeps its 54% alpha. SVG and PNG both hold it; the stencil case the mark's own
+    comment warns about is a monochrome ICO, which this does not ship.
+  -->
+  <style>
+    .mark { fill: #4f46e5 }
+    @media (prefers-color-scheme: dark) {
+      .mark { fill: #7c7ff2 }
+    }
+  </style>
+  <circle class="mark" cx="25.38" cy="-11.83" r="14.70" opacity="0.54" />
+  <circle class="mark" cx="0" cy="0" r="30" />
+</svg>
