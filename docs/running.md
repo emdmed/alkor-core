@@ -305,6 +305,12 @@ profile is stopped because of how it was called, not because it remembered to pa
 The workflow and agent loops check at their own boundaries too, which is what stops a cancel
 landing during a code step from going unnoticed until the next model is loaded.
 
+**The backend stops too.** llama.cpp cancels the task rather than finishing it into a closed
+socket, so the cancel frees the machine and not just the caller — measured at 592% CPU during
+generation, 1% within three seconds of the abort, with the aborted task stopping at 206 tokens
+against a control's 2039. Conditions and the caveat in
+[What a cancelled run stops](measured.md#what-a-cancelled-run-stops).
+
 **What a cancel does not interrupt.** It takes effect at the next model call or step boundary,
 and it cannot stop a profile's own work in between — a `code` step that sits in a loop for
 thirty seconds without touching the provider will finish those thirty seconds, and the run is

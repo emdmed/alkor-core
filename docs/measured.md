@@ -34,6 +34,43 @@ notes *is* the maximum, so it is printed with its sample count. `--runs N` no lo
 re-averages: it reports which cases returned a *different answer* and which of those flipped
 a grade, because averaging N identical replies at temperature 0 is arithmetic on a constant.
 
+## What a cancelled run stops
+
+Cancelling a run stops the harness by construction — `withCancellation` refuses the next call
+and aborts the one in flight. Whether it stops **the machine working** is a question about
+llama.cpp, not about this repository, and it is the one that decides whether the feature is
+worth having: a backend that finished the completion into a closed socket would leave the
+cancel freeing nothing but the caller.
+
+Measured 2026-09-13. Qwen3-1.7B-Q4_K_M, ctx 4096, 1 slot, `--jinja --no-webui --parallel 1`,
+`llama-server` build 10566 (`bb4caa7540`), AMD Ryzen 5 5500U, 12 cores, **CPU only**. A
+2000-token generation, aborted through `chat()`'s signal at 6.0s, against a control that ran
+the same request to completion. CPU is the backend process, sampled from `/proc/<pid>/stat`:
+
+| | backend CPU |
+|---|---|
+| idle, before the request | 0% |
+| generating, client connected | 592% |
+| T+0–3s after the client aborts | 1% |
+| T+3–6s after the client aborts | 0% |
+| control: same request, left alone | 592%, 589% — ran 81.9s |
+
+llama.cpp cancels the task rather than merely losing the reader, and says so:
+
+```
+srv   stop: cancel task, id_task = 0
+slot  release: id 0 | task 0 | stop processing: n_tokens = 206, truncated = 0
+```
+
+**206 tokens against the control's 2039** is the number that settles it: the aborted task
+stopped where the client left, not where the cap was. The slot is released and answers the
+next request in 0.373s.
+
+What this does not show: one build, one model, one transport. It is a fact about llama.cpp's
+HTTP server on this build, not a guarantee from this harness — nothing here gates on it, and
+the harness stops either way. A different or older build could hold the slot, and the way to
+tell is the two log lines above.
+
 ## Measured
 
 **These numbers are from a corpus that no longer exists.** They were measured on 21 notes /
