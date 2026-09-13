@@ -28,6 +28,19 @@ import { ConfigError, loadConfig, type PipelineConfig } from '../../core/config.
 export const WORKFLOW_RULES: RouteRule[] = []
 
 /**
+ * The name this router's decision is emitted and published under.
+ *
+ * `route`, as every other routing decision in this harness is named — the specialist router
+ * beside it, and the blueprint the server falls back to for any profile in `router` mode. It
+ * was `workflow` once, which put a SECOND parentless stage of that name in every product run:
+ * the choice of workflow, and the workflow mode's own root that the run's steps hang off. A
+ * reader with only a name to go on got the choice, which has no steps under it, and the whole
+ * middle of a run — every pass, every branch — became invisible to it. Two unrelated things
+ * may not share one name in a stream whose consumers are told to match on names.
+ */
+const DECISION_STAGE = 'route'
+
+/**
  * The catalogue this router chooses from, read from `[pipeline]` in profiles.toml.
  *
  * NOT restated here. The deployment already declares `workflows` and `default`, and
@@ -69,7 +82,7 @@ export const PROFILE: ProfileModule = {
       stages: [
         { name: 'goal-match' as const, operation: 'code' as const },
         {
-          name: 'workflow',
+          name: DECISION_STAGE,
           kind: 'decision' as const,
           operation: 'decision' as const,
           routes: catalogue().workflows.map((profile) => ({ name: profile, targetProfile: profile })),
@@ -93,7 +106,7 @@ export const PROFILE: ProfileModule = {
     ctx.activity?.emit({
       kind: 'stage',
       stageId: nextStageId(),
-      name: 'workflow',
+      name: DECISION_STAGE,
       operation: 'decision',
       status: 'completed',
       detail: { profile: result.profile, confidence: Number((result.confidence * 100).toFixed(0)), reason: result.reason },

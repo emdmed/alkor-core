@@ -141,6 +141,42 @@ test('front-door router sends clinical goals to the clinical workflow, syndrome 
   }
 })
 
+/**
+ * The choice of workflow and the workflow itself may not answer to one name.
+ *
+ * `workflow` mode emits a parentless stage called `workflow` as the root its steps hang off.
+ * This router used to emit a parentless stage called `workflow` too, for the decision of which
+ * one to run, and it lands first — so a reader matching on the name got the decision, a node
+ * with no steps beneath it, and every pass and branch of the run it was describing went
+ * unseen. The decision is a route, and it is named the way every other route in this harness
+ * is named.
+ */
+test("the front door's decision is not named after the thing it chooses", async () => {
+  const activity = createActivity()
+  await withActivityScope({ runId: 'run-front-door' }, () => WORKFLOW_ROUTER.review!({
+    pack: undefined,
+    trace: nullTrace(),
+    input: { kind: 'text', text: 'Extract the findings from this synthetic note' },
+    options: {},
+    activity,
+  }))
+  const stages = activity.recent().filter((e: any) => e.kind === 'stage') as any[]
+  const decision = stages.find((e) => e.operation === 'decision')
+
+  assert.ok(decision, 'the router publishes its decision as a stage')
+  assert.equal(decision.name, 'route')
+  assert.equal(decision.parentId, undefined, 'the product-level decision belongs to no step')
+  assert.equal(decision.detail.profile, 'clinical-verified')
+  assert.equal(
+    stages.some((e) => e.name === 'workflow'), false,
+    'a name the workflow mode already uses for its own root',
+  )
+  // And the topology says the same thing the run does — the dashboard draws the shape from it
+  // before a run exists, so a name that disagreed would be a decision drawn in one place and
+  // lit in another.
+  assert.equal(WORKFLOW_ROUTER.topology!.stages.find((stage: any) => stage.kind === 'decision')!.name, 'route')
+})
+
 // ---------------------------------------------------------------------------
 // Pipeline tests
 // ---------------------------------------------------------------------------
