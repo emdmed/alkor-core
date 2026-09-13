@@ -14,6 +14,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer as createAlkorServer } from '../src/server.ts'
 import type { SpawnFn } from '../src/core/llama-manager.ts'
+import { isolateTraces } from './traces.ts'
+
+// Every run this file drives is recorded; keep those files out of the operator's state dir.
+isolateTraces('server')
 
 /** A profile in agentic mode for the session tests; this project ships no built-in one. */
 const AGENT_PROFILE = join(import.meta.dirname, 'fixtures', 'agent-profile.mjs')

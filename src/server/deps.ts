@@ -19,6 +19,7 @@ import type { ProfileTopology } from '../core/topology.ts'
 import type { Provider, ServerIdentity } from '../core/client.ts'
 import type { loadConfig, requireProfile } from '../core/config.ts'
 import type { Session } from '../modes/session.ts'
+import type { Trace } from '../core/trace.ts'
 import type { LlamaManager } from '../core/llama-manager.ts'
 import type { Reply } from './reply.ts'
 import type { SseHub } from './sse.ts'
@@ -48,6 +49,12 @@ export interface ServerDeps {
   /** Profiles pinned as the front door. Only a pinned router qualifies. */
   pinnedRouters: ReturnType<typeof loadConfig>['profiles'][string][]
   manageModels: boolean
+  /**
+   * A trace for one run, named after its run id and redacted by every profile that can write
+   * into it. Returns the null trace when ALKOR_SERVER_TRACE=0, so a handler never branches on
+   * whether recording is on — it writes either way and one of the two writes goes nowhere.
+   */
+  openRunTrace(profileName: string, runId: string): Promise<Trace>
   /** Live sessions, each remembering which profile and backend it was opened against. */
   sessions: Map<string, { profile: string; baseUrl: string; session: Session }>
   /** The SSE fan-out: mutable, shared, and the reason this is an object and not a copy. */

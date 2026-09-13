@@ -53,11 +53,35 @@ export interface Trace {
 export const stateRoot = () =>
   process.env.XDG_STATE_HOME ?? join(homedir(), '.local', 'state')
 
-const defaultTraceRoot = () =>
+/**
+ * The directory every trace is written under, and therefore the only directory anything
+ * reads them back from. Exported so the reader and the writer cannot disagree about where
+ * a run went: a lister that hardcoded this path would go blind the moment TRACE_DIR is set.
+ */
+export const traceRoot = () =>
   process.env.TRACE_DIR ?? join(stateRoot(), 'alkor', 'traces')
 
 /** Deterministic, filesystem-safe stamp. Callers pass one in to keep runs comparable. */
 const stamp = () => new Date().toISOString().replace(/[:.]/g, '-')
+
+/**
+ * Several profiles' redaction judgements, applied in turn as one hook.
+ *
+ * A workflow traces under the WORKFLOW's name, but the lines in that file are written by its
+ * steps — so the redactor of the profile that opened the trace is not the only one with an
+ * opinion about the content in it. Composing them is what stops a workflow wrapper with no
+ * redactor of its own writing a step's raw completions to disk.
+ *
+ * Each redactor must appear ONCE. `redactClinical` replaces a completion with a digest of it,
+ * and a second application would digest the marker instead — still redacted, but a hash of
+ * the wrong string, which is worse than useless to a reader comparing two runs. Callers
+ * deduplicate by profile, which is the boundary that means something: one profile, one
+ * judgement about its own content.
+ */
+export const composeRedactors = (...redactors: readonly Redactor[]): Redactor =>
+  redactors.length === 0
+    ? (event) => event
+    : (event) => redactors.reduce((acc, redact) => redact(acc), event)
 
 /**
  * A trace that records nothing, for a verb that produces no run.
@@ -70,10 +94,19 @@ const stamp = () => new Date().toISOString().replace(/[:.]/g, '-')
  */
 export const nullTrace = (): Trace => ({ path: '(not recorded)', write: () => {}, close: () => {} })
 
-export const openTrace = (profile: string, redact: Redactor = (e) => e): Trace => {
-  const dir = join(defaultTraceRoot(), profile)
+/**
+ * Open a trace for one run.
+ *
+ * `runId` is the server's id for the run, and naming the file after it is what lets a caller
+ * holding only that id find the recording later. The separator is a DOUBLE dash: the stamp is
+ * an ISO timestamp with its colons and dots turned into single dashes, so a single one would
+ * not be a boundary any reader could split on. A trace opened without an id — every CLI verb —
+ * keeps the plain stamped name it always had.
+ */
+export const openTrace = (profile: string, redact: Redactor = (e) => e, runId?: string): Trace => {
+  const dir = join(traceRoot(), profile)
   mkdirSync(dir, { recursive: true })
-  const path = join(dir, `${stamp()}.jsonl`)
+  const path = join(dir, runId ? `${stamp()}--${runId}.jsonl` : `${stamp()}.jsonl`)
   closeSync(openSync(path, 'a'))
 
   return {

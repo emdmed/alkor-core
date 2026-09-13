@@ -10,12 +10,20 @@
  * refused with 503 when its backend cannot be brought up, because a run that proceeds without
  * one produces a confident-looking failure attributed to the model rather than to the missing
  * server.
+ *
+ * Every run here is RECORDED, in the same trace format and the same directory the CLI writes
+ * to. It used to pass `nullTrace()` on all three paths, which made the dashboard the one
+ * surface that could produce a result nothing on disk could account for. The server's own
+ * contribution to the file is an envelope — a header and a footer, metadata only, digest and
+ * not document — and everything between them is written by the profiles, under their own
+ * redaction.
  */
 import { randomUUID } from 'node:crypto'
 import { route, type RouteResult } from '../../modes/router.ts'
 import { runAgent } from '../../modes/agentic.ts'
 import { runWorkflow, buildWorkflow } from '../../modes/workflow.ts'
-import { nullTrace } from '../../core/trace.ts'
+import { nullTrace, type Trace } from '../../core/trace.ts'
+import { RUN_HEADER_EVENT, RUN_FOOTER_EVENT } from '../../core/runs.ts'
 import { callsModel } from '../../core/config.ts'
 import { withActivityScope, LLM_CALL_STAGE } from '../../core/activity.ts'
 import { EXTRACT_STAGES } from '../../modes/extract.ts'
@@ -118,13 +126,18 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
       const pack = await deps.loadPackForProfile(profileName, profile, profileConfig)
       const baseUrl = profileConfig.url ? deps.backendFor(profileConfig.url as string) : undefined
       const options = (body?.options ?? {}) as Record<string, unknown>
+      // Declared here, opened after the preflight below. A run refused because its backend
+      // could never answer did not start, and a dated empty file for it would be a trace of
+      // nothing sitting in the directory the real ones live in.
+      let trace: Trace = nullTrace()
       // `runId` is on the response for the same reason it is on every event this run
       // emits: it is the only key that ties the answer a caller holds to the feed that
       // explains how it was produced. A dashboard uses it to assemble the run's log.
+      // `trace` is the durable half of that: the feed is a ring buffer and this is a file.
       const respond = <T extends object>(result: T, output: unknown) => reply.ok(
         automatic
-          ? { ...deps.runResult(result, output), runId, workflow: profileName, route: pipelineRoute }
-          : { ...deps.runResult(result, output), runId },
+          ? { ...deps.runResult(result, output), runId, trace: trace.path, workflow: profileName, route: pipelineRoute }
+          : { ...deps.runResult(result, output), runId, trace: trace.path },
       )
 
       // A run that would need a model can see the check coming: a backend that can never
@@ -205,20 +218,60 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
 
       await deps.emitModelIdentified(baseUrl)
 
+      trace = await deps.openRunTrace(profileName, runId)
+
       return withActivityScope({ runId }, async () => {
         deps.activity.emit({
           kind: 'run.started',
           profile: profileName,
           inputChars: input.length,
           inputDigest: deps.inputDigest(input),
+          trace: trace.path,
         })
 
         const runStartedAt = performance.now()
+
+        // The header is METADATA about the input, not the input. A digest and a length
+        // answer "was this the same text as run #3" without this server writing the
+        // caller's document into a file on its own authority — the profiles below write
+        // what they read, each under the redaction its own pack chose. `route` is here
+        // because the routing call happens before the run's profile is known and so
+        // cannot be traced into this file; recording the decision is what keeps the
+        // recording able to say why this workflow and not another.
+        trace.write({
+          event: RUN_HEADER_EVENT,
+          runId,
+          profile: profileName,
+          mode: profile.mode,
+          via: automatic ? '/pipeline' : '/run',
+          inputChars: input.length,
+          inputDigest: deps.inputDigest(input),
+          ...(automatic ? { workflow: profileName, route: pipelineRoute } : {}),
+        })
+
+        // The footer, written once on every exit — including the ones that never reached a
+        // model. A reader cannot tell an unfinished file from a failed one, so a run that
+        // stopped on a configuration refusal must say so rather than trail off looking
+        // exactly like a run whose process was killed.
+        let settled = false
+        const settle = (ok: boolean, error?: string) => {
+          if (settled) return
+          settled = true
+          trace.write({
+            event: RUN_FOOTER_EVENT,
+            runId,
+            profile: profileName,
+            ok,
+            wallMs: performance.now() - runStartedAt,
+            ...(error ? { error } : {}),
+          })
+        }
 
         try {
           // Extract / router / code — one review call, three declared shapes.
           if (profile.mode === 'extract' || profile.mode === 'router' || profile.mode === 'code') {
             if (!profile.review) {
+              settle(false, `profile '${profileName}' has no review implementation`)
               reply.serverError(`profile '${profileName}' has no review implementation`, { runId })
               done(500)
               return
@@ -226,7 +279,7 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
             const result = await profile.review({
               pack,
               baseUrl,
-              trace: nullTrace(),
+              trace,
               input: { kind: 'text', text: input, label: 'server-input' },
               options,
               provider: deps.provider,
@@ -237,6 +290,10 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
               profile: profileName,
               wallMs: performance.now() - runStartedAt,
             })
+            // `ok` is the profile's own verdict on its run, not "the call returned" — a
+            // review that refused because a quote did not check out is a run that did its
+            // job and produced no reading, and a listing must not show it as a pass.
+            settle(result.ok !== false)
             respond(result, result.report ?? result.raw ?? result.text)
             done(200)
             return
@@ -245,6 +302,7 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
           // Agentic
           if (profile.mode === 'agentic') {
             if (!profile.tools) {
+              settle(false, `profile '${profileName}' declares no tools`)
               reply.serverError(`profile '${profileName}' declares no tools`, { runId })
               done(500)
               return
@@ -256,7 +314,7 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
               tools: profile.tools,
               maxIterations: Number(options.iterations ?? profile.maxIterations ?? 12),
               baseUrl,
-              trace: nullTrace(),
+              trace,
               provider: deps.provider,
               activity: deps.activity,
             })
@@ -265,6 +323,9 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
               profile: profileName,
               wallMs: performance.now() - runStartedAt,
             })
+            // An iteration cap or a loop that never called a tool is a failure, not a quiet
+            // success — the same reading the CLI's exit code takes of the same field.
+            settle(result.stop === 'done', result.error)
             respond(result, result.answer ?? result.error ?? result)
             done(200)
             return
@@ -274,6 +335,7 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
           if (profile.mode === 'workflow') {
             const steps = profileConfig.steps as Array<Record<string, unknown>> | undefined
             if (!steps || !Array.isArray(steps)) {
+              settle(false, `profile '${profileName}' has no 'steps' array in its config`)
               reply.serverError(`profile '${profileName}' has no 'steps' array in its config`, { runId })
               done(500)
               return
@@ -323,7 +385,7 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
               profiles,
               packs,
               baseUrls,
-              trace: nullTrace(),
+              trace,
               contextDir: options.contextDir as string | undefined,
               runStep: options.step !== undefined ? Number(options.step) : undefined,
               provider: deps.provider,
@@ -343,11 +405,19 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
             const ending = terminalIndex === -1
               ? undefined
               : result.steps.find((step) => step.step === terminalIndex)?.text
+            // `ok` here means THE CHAIN COMPLETED, and nothing stronger. `stoppedEarly` is
+            // set by any step returning not-ok, which is the same signal for a step that
+            // broke and for a verifier that refused a quote — the workflow level does not
+            // tell them apart, so neither may this. The distinction is a step-level fact and
+            // it is in this same file, on the `workflow.step.completed` lines above the
+            // footer. A reader wanting "did it refuse or did it fail" reads those.
+            settle(!result.stoppedEarly)
             respond({ ...result, ending }, result.final)
             done(200)
             return
           }
 
+          settle(false, `mode '${profile.mode}' is not supported by the server`)
           reply.serverError(`mode '${profile.mode}' is not supported by the server`, { runId })
           done(500)
         } catch (e) {
@@ -361,10 +431,18 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
           // the request but not the run, so its response could not name the run id the
           // caller needs to read the feed. The console line is kept for the operator.
           console.error(`Run ${runId} (${profileName}) failed:`, e)
+          settle(false, (e as Error).message)
           const status = e instanceof ConfigError || e instanceof PackError || e instanceof ProfileError ? 400 : 500
-          json(res, status, { error: (e as Error).message, runId, profile: profileName }, reply.cors)
+          json(res, status, { error: (e as Error).message, runId, profile: profileName, trace: trace.path }, reply.cors)
           done(status)
           return
+        } finally {
+          // The backstop, and the reason `settle` is idempotent. Every branch above names
+          // its own outcome; this one exists so that a path nobody anticipated still
+          // closes the envelope, because an unfooted file reads as a run whose process
+          // died — a worse lie than any of the outcomes it could have recorded.
+          settle(false, 'the run ended without recording an outcome')
+          trace.close()
         }
       })
 }

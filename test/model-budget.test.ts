@@ -15,6 +15,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { LlamaManager, type SpawnFn, type SpawnResult } from '../src/core/llama-manager.ts'
 import { modelBudgetBytes, footprintBytesFor } from '../src/server.ts'
+import { isolateTraces } from './traces.ts'
+
+// Every run this file drives is recorded; keep those files out of the operator's state dir.
+isolateTraces('model-budget')
 import { runWorkflow } from '../src/modes/workflow.ts'
 import type { ProfileModule, ReviewResult } from '../src/core/profile.ts'
 import type { EvalVerdict } from '../src/core/profile.ts'

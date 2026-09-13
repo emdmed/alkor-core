@@ -221,6 +221,47 @@ that explain how it was produced, and it is how the dashboard assembles a run's 
 error it saw, plus the events the feed carried while the run was in flight, as one block of
 text you can copy out of the run panel.
 
+### Recorded runs
+
+A run through `POST /pipeline` or `POST /run` is written to a JSONL trace, in the same format
+and the same directory the CLI verbs write to — `${XDG_STATE_HOME:-~/.local/state}/alkor/traces/<profile>/`,
+outside any repository. The response carries `trace` beside `runId`, and `run.started` on the
+activity feed carries it too: the feed is a ring buffer and the file is not, so a run that has
+scrolled out of the dashboard is still on disk.
+
+The server's own contribution to the file is an envelope — a `server-run` header and a
+`server-result` footer, both metadata-only, a digest and a length rather than the document.
+Everything between them is written by the profiles that ran, under the redaction hook each
+one supplies. A workflow's trace composes the hooks of the workflow **and every step**, so a
+workflow wrapper with no redactor of its own cannot write a step's raw completions to disk.
+
+Two endpoints read them back:
+
+```bash
+curl -s localhost:3000/runs | jq '.runs[] | {runId, profile, startedAt, outcome}'
+curl -s localhost:3000/runs/<runId> | jq '.events | length'
+curl -s "localhost:3000/runs/<runId>?events=0"      # the verdict without the prompts
+curl -s "localhost:3000/runs?profile=clinical-verified&limit=10"
+```
+
+A run is fetched by the id its caller was handed, or by the `<profile>/<stem>` id the listing
+gives it — which is how a trace written by the CLI, with no run id in its name, is reachable
+too. Ids are matched against the listing rather than joined onto a path, so the only readable
+files are ones this harness wrote.
+
+**An absent `outcome` is not a pass.** It means no footer was written: the run is in flight,
+its process died, or a CLI verb wrote the trace and never had an envelope to close.
+
+**`ok` means the run reached its end, and nothing stronger.** For a workflow it is
+`!stoppedEarly`, and a step returning not-ok is what sets that — the same signal for a step
+that broke and for a verifier that refused a quote. The workflow level does not distinguish
+them, so a listing must not be read as an error rate. The distinction is a step-level fact,
+recorded on the `workflow.step.completed` lines of the same trace.
+
+`ALKOR_SERVER_TRACE=0` turns recording off for a deployment that wants the server to hold
+nothing; `TRACE_DIR` moves the directory. `GET /runs` keeps working either way, because it
+reads the directory rather than a memory of what this process ran.
+
 See [Nomenclature](reference.md#nomenclature) for how these words nest, and `spec/nomenclature.md` for
 the full statement.
 

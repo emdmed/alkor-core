@@ -8,6 +8,8 @@
  * Endpoints:
  *   GET  /health                    — list loaded profiles, active sessions, and activity stats
  *   GET  /events                    — SSE stream of activity events (metadata-only)
+ *   GET  /runs                      — recorded runs, newest first
+ *   GET  /runs/:id                  — one recorded run, by run id or by listed id
  *   POST /route                     — classify input (uses router mode directly)
  *   POST /pipeline                  — route to and execute one workflow
  *   POST /run                       — execute a profile against input
@@ -23,6 +25,7 @@ import type { RouteContext, ServerDeps } from './server/deps.ts'
 import { health } from './server/routes/health.ts'
 import { corpusList, corpusDocument } from './server/routes/corpus.ts'
 import { events } from './server/routes/events.ts'
+import { runsList, runsDocument } from './server/routes/runs.ts'
 import { sessionCreate, sessionAction, sessionDelete } from './server/routes/session.ts'
 import { routeRequest } from './server/routes/route.ts'
 import { runPipeline } from './server/routes/pipeline.ts'
@@ -35,7 +38,8 @@ import { isAbsolute, join, resolve } from 'node:path'
 import { loadConfig, requireProfile, ConfigError } from './core/config.ts'
 import { loadPack, resolvePackRoot, PackError } from './core/pack.ts'
 import { listCorpus, readCorpusDocument, CorpusError } from './core/corpus.ts'
-import { loadProfileModule, resolveProfileModule, ProfileError } from './core/profile.ts'
+import { loadProfileModule, redactor, resolveProfileModule, ProfileError } from './core/profile.ts'
+import { composeRedactors, nullTrace, openTrace, type Redactor, type Trace } from './core/trace.ts'
 import type { Session } from './modes/session.ts'
 import { defaultProvider } from './core/client.ts'
 import { createActivity, withActivity, LLM_CALL_STAGE, type Activity } from './core/activity.ts'
@@ -431,6 +435,61 @@ export const createServer = async (configPath?: string, options: ServerOptions =
     return pack
   }
 
+  // --- Recording what the server runs ----------------------------------------------------
+  // A run driven through /pipeline used to be recorded nowhere: it passed `nullTrace()`, so
+  // the same assembly left evidence when the CLI ran it and nothing when the dashboard did.
+  // That is the one place this server contradicted the rule that a result the repository
+  // cannot reproduce is not a measurement. It records by default now; ALKOR_SERVER_TRACE=0
+  // is for a deployment that wants the server to hold nothing.
+  const serverTrace = (process.env.ALKOR_SERVER_TRACE ?? '1') !== '0'
+
+  /**
+   * The redaction hook for a trace opened under `profileName`, including its steps'.
+   *
+   * A workflow traces under the WORKFLOW's name, and a workflow profile typically declares no
+   * redactor — the profiles that touch documents are its steps. Opening that trace with the
+   * wrapper's own hook alone would write a step's raw completions to disk while the profile
+   * doing the reading appeared to have redaction configured, which is precisely the failure
+   * `core/trace.ts` warns about. So every profile that can write into this file contributes
+   * its judgement, once: `seen` both breaks a cycle and keeps a redactor from being applied
+   * twice, which would digest its own marker.
+   */
+  const runRedactor = async (profileName: string): Promise<Redactor> => {
+    const seen = new Set<string>()
+    const collect = async (name: string): Promise<Redactor[]> => {
+      if (seen.has(name)) return []
+      seen.add(name)
+      let entry: Awaited<ReturnType<typeof loadProfile>>
+      try {
+        entry = await loadProfile(name)
+      } catch {
+        // A step naming a profile that will not load is the run's problem to report, with
+        // the context to report it well. Choosing a redactor is not the place to fail over
+        // it — and the safe reading of "I cannot see this profile" is "I have no hook from
+        // it", which is what returning nothing here means.
+        return []
+      }
+      let pack: Pack | undefined
+      try {
+        pack = await loadPackForProfile(name, entry.profile, entry.config)
+      } catch {
+        pack = undefined
+      }
+      const own = redactor(entry.profile, pack)
+      const hooks = own ? [own] : []
+      const steps = Array.isArray(entry.config.steps) ? (entry.config.steps as Array<Record<string, unknown>>) : []
+      for (const step of steps) {
+        const stepName = String(step?.profile ?? '')
+        if (stepName) hooks.push(...(await collect(stepName)))
+      }
+      return hooks
+    }
+    return composeRedactors(...(await collect(profileName)))
+  }
+
+  const openRunTrace = async (profileName: string, runId: string): Promise<Trace> =>
+    serverTrace ? openTrace(profileName, await runRedactor(profileName), runId) : nullTrace()
+
   // In-memory sessions
   const sessions = new Map<string, { profile: string; baseUrl: string; session: Session }>()
 
@@ -502,6 +561,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
     modelIdentityCache,
     pinnedRouters,
     manageModels,
+    openRunTrace,
     sessions,
     sse,
     readBody,
@@ -550,6 +610,9 @@ export const createServer = async (configPath?: string, options: ServerOptions =
       if (method === 'GET' && url.pathname.startsWith('/corpus/')) return void (await corpusDocument(routeCtx()))
 
       if (method === 'GET' && url.pathname === '/events') return void (await events(routeCtx()))
+
+      if (method === 'GET' && url.pathname === '/runs') return void (await runsList(routeCtx()))
+      if (method === 'GET' && url.pathname.startsWith('/runs/')) return void (await runsDocument(routeCtx()))
 
       if (method === 'POST' && url.pathname === '/route') return void (await routeRequest(routeCtx()))
 

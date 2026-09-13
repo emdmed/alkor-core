@@ -17,6 +17,10 @@ import { join } from 'node:path'
 import { loadPack } from '../src/core/pack.ts'
 import { listCorpus, readCorpusDocument, CorpusError } from '../src/core/corpus.ts'
 import { createServer as createAlkorServer } from '../src/server.ts'
+import { isolateTraces } from './traces.ts'
+
+// Every run this file drives is recorded; keep those files out of the operator's state dir.
+isolateTraces('corpus')
 
 /** A pack with two document kinds, one answer key, and a stray file in a corpus directory. */
 const makePack = (): { root: string; cleanup: () => void } => {

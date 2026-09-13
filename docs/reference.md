@@ -100,10 +100,15 @@ scripts/      model-manager.ts   start/stop/status llama-server per profile
 src/index.ts  the public API — what a profile is written against
 src/server.ts the interactive HTTP server: POST /pipeline, GET /events (SSE),
               GET /corpus (the packs' source documents, for driving a run by hand),
-              on-demand model lifecycle via LlamaManager
+              GET /runs (what has been recorded), on-demand model lifecycle
+              via LlamaManager
 src/core/corpus.ts
               the pack corpus enumerated for a reader, not for a run — reads here
               stay out of the pack's digest so browsing cannot enter a run's record
+src/core/runs.ts
+              the index over the trace directory: what has run, when, and how it
+              ended. Reads the traces and nothing else — a second record of what
+              ran is a second record that can disagree with the first
 src/monitor/  state.ts     pure reducer over the activity event stream (tested, Node 24)
               sse-core.ts  transport-agnostic SSE core — frames, dedup, refusal (tested, Node 24)
               source.ts    pure transitions for which backend owns the dashboard;

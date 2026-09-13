@@ -16,7 +16,8 @@ the browser:
 - **`node src/cli.ts`** — the front door for every verb (`doctor`, `extract`, `eval`, `agent`,
   `route`, `workflow`, `profiles`).
 - **`POST /pipeline`** on `node src/server.ts` — one request, one run id, back a verdict or a
-  refusal naming the step that stopped. curl, a script and a cron job are first-class callers.
+  refusal naming the step that stopped, and the path of the trace it was recorded to. curl, a
+  script and a cron job are first-class callers.
 
 The server's `GET /events` SSE stream is what the live surfaces read. Two UI surfaces sit on
 top, and they share the harness rather than reimplementing it:
@@ -103,7 +104,9 @@ production reads. Narrower on purpose.
   (`ggml-org/gemma-4-E4B-it-GGUF`, sha256 `a555b900…`, pinned in
   `packs/clinical/models.default.toml`) — run at ctx 32768, 1 slot, temperature 0, seed 0,
   sequential, `cache_prompt` on.
-- Runs write JSONL traces to `~/.local/state/alkor/traces/<pack>/`.
+- Runs write JSONL traces to `~/.local/state/alkor/traces/<profile>/`, the CLI and the server
+  alike — a run driven from the dashboard leaves the same record a CLI verb leaves, and
+  `GET /runs` is the index over them. `ALKOR_SERVER_TRACE=0` turns the server's half off.
 - Contract packs live under `packs/`; profiles under `src/profiles/`; results under
   `packs/<pack>/RESULTS.md`, which holds the rule that a result may never be a number the
   repository cannot reproduce.
@@ -141,7 +144,9 @@ production reads. Narrower on purpose.
   are load-bearing, not decorative.
 - Evals report a gate (pass/fail against a floor) plus sub-gates such as echo of primary
   findings and invented-finding count.
-- Observability: `GET /events` streams the run. The desktop dashboard (`localhost:5173`) draws
+- Observability: `GET /events` streams the run while it is in flight and `GET /runs` reads it
+  back afterwards — the feed is a bounded ring buffer, the traces are files, and a surface
+  that could only reach the first would lose every run older than the buffer. The desktop dashboard (`localhost:5173`) draws
   the stage tree live, with tool calls, HTTP traffic and a filterable, click-to-inspect log.
   **It observes, never drives** — and because the graph *is* the run, a stopped run is legible
   on sight. `report.html` is the standalone counterpart: no network requests, with the limits

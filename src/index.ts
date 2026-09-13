@@ -106,7 +106,16 @@ export {
 export { assembleDocument, truncateOnCharBoundary, type AssemblyRule } from './core/assemble.ts'
 
 // --- Tracing, with a per-profile redaction hook -------------------------------------
-export { nullTrace, openTrace, stateRoot, TRACE_SPEC, type Redactor, type Trace } from './core/trace.ts'
+export {
+  composeRedactors,
+  nullTrace,
+  openTrace,
+  stateRoot,
+  traceRoot,
+  TRACE_SPEC,
+  type Redactor,
+  type Trace,
+} from './core/trace.ts'
 export {
   eventOf,
   eventsOf,
@@ -116,6 +125,18 @@ export {
   type TraceEvent,
   type TraceFile,
 } from './core/trace-read.ts'
+
+// --- The traces already on disk, as an index over them --------------------------------
+export {
+  listRuns,
+  readRun,
+  RunError,
+  RUN_FOOTER_EVENT,
+  RUN_HEADER_EVENT,
+  type ListRunsOptions,
+  type RunOutcome,
+  type RunSummary,
+} from './core/runs.ts'
 
 // --- Activity: metadata-only operational events ---------------------------------------
 export {

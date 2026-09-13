@@ -12,6 +12,10 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer as createAlkorServer, sseWrite } from '../src/server.ts'
+import { isolateTraces } from './traces.ts'
+
+// Every run this file drives is recorded; keep those files out of the operator's state dir.
+isolateTraces('server-activity')
 
 process.env.MEDPROTOCOL_BIN = join(import.meta.dirname, 'fixtures', 'medprotocol.js')
 

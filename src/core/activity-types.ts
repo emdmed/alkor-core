@@ -166,6 +166,15 @@ export interface RunStartedEvent extends BaseActivityEvent {
   profile: string
   inputChars: number
   inputDigest: string
+  /**
+   * Where this run is being recorded, so a live surface can name the durable half of itself.
+   *
+   * A path, not content — the feed's rule is unchanged. It is here because the feed is a ring
+   * buffer and the file is not: a reader watching a run needs to know, while it is still on
+   * screen, where to look for it once it has scrolled off. `(not recorded)` when the server
+   * is running with ALKOR_SERVER_TRACE=0.
+   */
+  trace?: string
 }
 
 export interface RunCompletedEvent extends BaseActivityEvent {
