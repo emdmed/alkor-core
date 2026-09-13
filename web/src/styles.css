@@ -365,7 +365,6 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .eyebrow,
 .drawer-section-title,
 .graph-legend-title,
-.chat-target-label,
 .conn-pop-label {
   font-size: var(--t-label);
   font-weight: 600;
@@ -1896,27 +1895,6 @@ body.is-rail-resizing .rail { transition: none; }
   flex-wrap: wrap;
 }
 
-.chat-options { display: flex; flex-direction: column; gap: var(--s-2); }
-.chat-options-body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-3);
-  padding: var(--s-3);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  background: var(--surface-2);
-}
-
-.chat-select {
-  height: var(--h-control);
-  padding-inline: var(--s-2);
-  border: 1px solid var(--input);
-  border-radius: var(--r-md);
-  background: var(--surface);
-  color: var(--foreground);
-  font-size: var(--t-data);
-  cursor: pointer;
-}
 
 /* The empty state owns the column and sits in the middle of it. */
 .chat-empty {
@@ -1993,34 +1971,24 @@ body.is-rail-resizing .rail { transition: none; }
 .chat-preset.is-corpus:hover { background: var(--primary-soft); border-color: var(--primary); }
 .chat-preset.is-corpus svg { color: currentColor; }
 
-/* Routing disclosure: a <details>, so the marker and the summary need building by hand. */
-.chat-options > summary {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--s-2);
-  height: var(--h-control);
-  padding-inline: var(--s-3);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  background: var(--surface);
+/* Workflow picker: sits in the footer row beside Corpus, so it stays narrow
+   enough to leave Run in place and truncates rather than wrapping the row. */
+.chat-workflow-trigger {
+  max-width: 240px;
+  min-width: 0;
+}
+.chat-workflow-trigger > span,
+.chat-workflow-trigger { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Forcing a workflow is the off-nominal state; the border says so at a glance. */
+.chat-workflow-trigger.is-forced {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.chat-workflow-note {
   font-size: var(--t-data);
-  color: var(--secondary-foreground);
-  cursor: pointer;
-  list-style: none;
+  color: var(--muted-foreground);
   white-space: nowrap;
 }
-.chat-options > summary::-webkit-details-marker { display: none; }
-.chat-options > summary::before {
-  content: "";
-  width: 0; height: 0;
-  border-left: 4px solid currentColor;
-  border-top: 3.5px solid transparent;
-  border-bottom: 3.5px solid transparent;
-  color: var(--muted-foreground);
-  transition: transform 0.15s ease;
-}
-.chat-options[open] > summary::before { transform: rotate(90deg); }
-.chat-options > summary:hover { background: var(--muted); border-color: var(--border-strong); }
 
 /* Run-detail and run-log disclosures inside a message. */
 .chat-msg details > summary {

@@ -7,12 +7,18 @@
  * surface that feeds work into it.
  */
 import { memo, useEffect, useRef, useState } from 'react'
-import { FolderOpen, LoaderCircle, Send } from 'lucide-react'
+import { ChevronUp, FolderOpen, LoaderCircle, Send } from 'lucide-react'
 import {
   type WorkflowDefinition,
   type ProjectState,
 } from '../../../src/monitor/state.ts'
 import { Button } from './ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuCheckboxItem,
+} from './ui/dropdown-menu'
 import { CopyButton } from './CopyButton'
 import { CorpusPicker } from './CorpusPicker'
 import { formatRunLog } from '../lib/runlog.ts'
@@ -320,26 +326,42 @@ export const RunPanel = memo(({ state, run, serverUrl }: RunPanelProps) => {
           >
             <FolderOpen aria-hidden="true" />Corpus
           </button>
-          <details className="chat-options">
-            <summary>{forcedWorkflow ? `Forcing ${forcedWorkflow}` : 'Automatic routing'}</summary>
-            <div className="chat-options-body">
-              <label className="chat-target-label" htmlFor="run-workflow">Force workflow</label>
-              <select
-                id="run-workflow"
-                className="chat-select"
-                value={forcedWorkflow}
-                onChange={(e) => setForcedWorkflow(e.target.value)}
+          {/* One menu, inline: a disclosure around a single control only hid the
+              setting behind a copy of its own value. It opens upward — the footer
+              sits at the bottom of the rail, so there is no room below it. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn('chat-workflow-trigger', forcedWorkflow && 'is-forced')}
+                title={forcedWorkflow
+                  ? 'Forced workflow — bypasses the router. Diagnostics only.'
+                  : 'The router picks the workflow for each run.'}
               >
-                <option value="">Automatic routing</option>
-                {pipelines.map((workflow) => (
-                  <option key={workflow.name} value={workflow.name}>
-                    {workflow.name} ({workflow.steps.map((step) => step.profile).join(' → ')})
-                  </option>
-                ))}
-              </select>
-              <p>Diagnostics only — this bypasses the router.</p>
-            </div>
-          </details>
+                {forcedWorkflow || 'Workflow: automatic'}
+                <ChevronUp className="text-muted-foreground" aria-hidden="true" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="top" align="start" className="max-h-80 overflow-y-auto">
+              <DropdownMenuCheckboxItem
+                checked={!forcedWorkflow}
+                onCheckedChange={() => setForcedWorkflow('')}
+              >
+                Automatic — the router picks
+              </DropdownMenuCheckboxItem>
+              {pipelines.map((workflow) => (
+                <DropdownMenuCheckboxItem
+                  key={workflow.name}
+                  checked={workflow.name === forcedWorkflow}
+                  onCheckedChange={() => setForcedWorkflow(workflow.name)}
+                >
+                  {workflow.name} ({workflow.steps.map((step) => step.profile).join(' → ')})
+                </DropdownMenuCheckboxItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {forcedWorkflow && <span className="chat-workflow-note">bypasses the router</span>}
           <Button
             size="sm"
             onClick={handleSend}
