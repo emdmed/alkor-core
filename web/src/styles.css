@@ -2373,7 +2373,416 @@ body.is-rail-resizing .rail { transition: none; }
 .ev-detail-close:hover { background: var(--muted); color: var(--foreground); }
 
 /* ==========================================================================
-   14. Primitives
+   14. Settings
+   ========================================================================== */
+
+/*
+ * The settings panel is a READING surface that happens to accept writes, and it is laid out
+ * that way: a stack of fields, each one a label, a control, and a sentence saying what the
+ * current value means. The sentence is not help text to be skipped — for a boolean it is
+ * the only thing on the row that distinguishes "models start themselves" from "runs fail
+ * until you start one", and the audience for this dashboard is explicitly not an engineer
+ * who could infer that from the label.
+ *
+ * There are no cards here. Hairlines between sections carry the structure, which is what
+ * the rest of this system does, and boxing six settings would add five borders that mean
+ * nothing to a panel that is already inside a bordered rail.
+ */
+/*
+ * The settings VIEW: its own place, not a panel inside the workspace.
+ *
+ * It takes everything under the top bar, which stays because it describes the session rather
+ * than the page. Inside that, two columns — a section nav that does not scroll and a reading
+ * column that does. The column is capped at 68ch rather than filling a 1440px window: these
+ * are sentences, and a setting whose explanation runs the width of a desktop display is one
+ * nobody finishes reading.
+ */
+.settings-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--background);
+}
+
+/* The page's own bar, under the session's. Same height and hairline as the run bar it
+   stands in for, so the shell keeps its rhythm across the two views. */
+.settings-bar {
+  height: var(--h-stagebar);
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--s-5);
+  padding-inline: var(--s-5);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.settings-bar-title { display: flex; align-items: baseline; gap: var(--s-3); min-width: 0; }
+.settings-title { margin: 0; font-size: var(--t-body); font-weight: 600; color: var(--foreground); }
+.settings-host {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--t-data);
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-body { flex: 1; min-height: 0; display: flex; }
+
+.settings-nav {
+  width: 180px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s-6) var(--s-4);
+  border-right: 1px solid var(--border);
+}
+.settings-nav-item {
+  display: block;
+  width: 100%;
+  height: var(--h-control);
+  padding-inline: var(--s-3);
+  border: none;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: var(--t-body);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.settings-nav-item:hover { background: var(--muted); color: var(--foreground); }
+.settings-nav-item.is-on { background: var(--primary-soft); color: var(--primary); font-weight: 500; }
+
+.settings-scroll { flex: 1; min-width: 0; overflow-y: auto; scroll-behavior: smooth; }
+/*
+ * Left-aligned against the nav rather than centred in what is left over.
+ *
+ * Centring put 370px of empty page between a nav item and the section it selects, on a
+ * screen where the two are read together — the eye leaves the nav, crosses nothing, and
+ * arrives at the heading. The cap still holds the measure; it just holds it next to the
+ * thing that navigates it.
+ */
+.settings-column {
+  max-width: 68ch;
+  padding: var(--s-6) var(--s-6) var(--s-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-6);
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-scroll { scroll-behavior: auto; }
+}
+
+.settings-empty { display: flex; flex-direction: column; gap: var(--s-4); align-items: flex-start; }
+
+.settings-section { display: flex; flex-direction: column; gap: var(--s-5); scroll-margin-top: var(--s-6); }
+.settings-section + .settings-section { padding-top: var(--s-6); border-top: 1px solid var(--border); }
+
+/* More space above a heading than below it: the note belongs to the title, not to the gap. */
+.settings-section-title {
+  margin: 0;
+  font-size: var(--t-lead);
+  font-weight: 600;
+  color: var(--foreground);
+}
+.settings-section-note {
+  margin: calc(var(--s-3) * -1) 0 0;
+  font-size: var(--t-body);
+  line-height: 1.5;
+  color: var(--muted-foreground);
+  max-width: 62ch;
+}
+
+.settings-field { display: flex; flex-direction: column; gap: var(--s-2); }
+.settings-field-head { display: flex; align-items: center; gap: var(--s-3); min-height: 20px; }
+.settings-label { font-size: var(--t-body); font-weight: 500; color: var(--foreground); }
+/* The field stack breathes more here than it did in the rail: a reading column with four
+   fields per section needs the groups told apart, and 6px between a label and its control
+   reads as one thing while 6px between two fields does not. */
+.settings-section > .settings-field + .settings-field { margin-top: var(--s-2); }
+
+.settings-meaning {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  margin: 0;
+  font-size: var(--t-body);
+  line-height: 1.5;
+  color: var(--muted-foreground);
+  max-width: 62ch;
+}
+.settings-meaning svg { width: var(--sz-icon); height: var(--sz-icon); flex: none; margin-top: 1px; }
+.settings-meaning.is-caution { color: var(--warn); }
+
+/* Provenance, in the faintest ink the system has: present for reference, not read in
+   sequence. The override case is the one worth noticing, so it alone keeps body contrast. */
+.settings-source { margin: 0; font-size: var(--t-data); color: var(--faint-foreground); }
+.settings-source.is-override { color: var(--muted-foreground); }
+.settings-source code,
+.settings-note code {
+  font-family: var(--font-mono);
+  font-size: var(--t-data);
+  color: var(--foreground);
+}
+
+.settings-input { height: var(--h-control); font-size: var(--t-data); }
+.settings-input.is-rejected { border-color: var(--danger-border); }
+.settings-rejected { margin: 0; font-size: var(--t-body); line-height: 1.5; color: var(--danger); max-width: 62ch; }
+
+/*
+ * The budget range.
+ *
+ * A range input is one of the browser surfaces that arrives belonging to no design system at
+ * all — a platform track, a platform thumb, a platform focus ring — so all three are drawn
+ * here from the palette, in both themes. The filled portion is painted with a gradient off a
+ * `--fill` custom property the component sets, because neither pseudo-element that styles a
+ * track can see the input's value.
+ *
+ * The thumb is 16px against a 4px track: the track is a reading, the thumb is a target, and
+ * a thumb sized to the track would be a 4px grab handle.
+ */
+.settings-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 16px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.settings-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: linear-gradient(
+    to right,
+    var(--primary) 0 var(--fill, 0%),
+    var(--surface-sunken) var(--fill, 0%) 100%
+  );
+}
+.settings-range::-moz-range-track {
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: var(--surface-sunken);
+}
+.settings-range::-moz-range-progress {
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: var(--primary);
+}
+.settings-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -6px;
+  border: 1px solid var(--primary);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgb(16 24 40 / 0.05);
+  transition: box-shadow 0.12s ease;
+}
+.settings-range::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--primary);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgb(16 24 40 / 0.05);
+}
+.settings-range:hover::-webkit-slider-thumb { box-shadow: 0 0 0 4px var(--primary-soft); }
+.settings-range:hover::-moz-range-thumb { box-shadow: 0 0 0 4px var(--primary-soft); }
+.settings-range:focus-visible { outline: none; }
+.settings-range:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--ring); outline-offset: 2px; }
+.settings-range:focus-visible::-moz-range-thumb { outline: 2px solid var(--ring); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-range::-webkit-slider-thumb { transition: none; }
+}
+
+/* The budget in words, above the range it is set by. The figure is the decision; the share
+   of the host is the context that makes it one. */
+.settings-readout { display: flex; align-items: baseline; gap: var(--s-2); flex-wrap: wrap; }
+.settings-readout-value {
+  font-family: var(--font-mono);
+  font-size: var(--t-body);
+  font-variant-numeric: tabular-nums;
+  color: var(--foreground);
+}
+.settings-readout-of { font-size: var(--t-data); color: var(--muted-foreground); }
+
+/* The escape from the range: "no limit" is a mode, not a position on it. Set as a text
+   button rather than an outline one so it reads as the secondary path it is. */
+.settings-link {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: var(--t-data);
+  color: var(--primary);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.settings-link:hover { text-decoration-thickness: 2px; }
+.settings-link:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: var(--r-sm); }
+
+/* A value on a server that cannot be written: the reading, not a dead input box. An input
+   nobody can type in is a false affordance, and greying it out to say so is what costs the
+   contrast. */
+.settings-value {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--t-data);
+  color: var(--foreground);
+}
+
+.settings-measure { display: flex; align-items: center; gap: var(--s-3); }
+.settings-measure .settings-input { width: 96px; }
+.settings-unit { font-size: var(--t-data); color: var(--muted-foreground); }
+
+.settings-add { display: flex; align-items: center; gap: var(--s-2); }
+
+/* An origin list. Chips, because the unit being removed is one origin — see OriginField. */
+.settings-chips { display: flex; flex-wrap: wrap; gap: var(--s-2); margin: 0; padding: 0; list-style: none; }
+.settings-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  height: var(--h-control);
+  padding-inline: var(--s-2) var(--s-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+.settings-chip-text { font-family: var(--font-mono); font-size: var(--t-data); color: var(--foreground); }
+.settings-chip.is-open { border-color: var(--warn-border); background: var(--warn-soft); }
+.settings-chip.is-open .settings-chip-text { font-family: var(--font-ui); color: var(--warn); }
+.settings-chip-x {
+  width: 18px; height: 18px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: var(--r-sm);
+  background: transparent; color: var(--muted-foreground); cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.settings-chip-x:hover { background: var(--muted); color: var(--danger); }
+.settings-chip-x svg { width: 11px; height: 11px; }
+
+/*
+ * The switch. Hand-rolled because this system has no switch primitive, and built as a
+ * `role="switch"` button whose whole row is the hit target — the label is the thing people
+ * aim at, and a 28px track floating beside unclickable text is a smaller target for no
+ * reason. The check glyph inside the thumb is the Three-Signal State Rule: on is carried by
+ * position, by the indigo fill, and by a mark, never by colour alone.
+ */
+.settings-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+/*
+ * A read-only switch keeps its full contrast and simply stops responding.
+ *
+ * The obvious alternative — the 50% opacity every disabled control ships with — puts the
+ * label below the 4.5:1 floor this system holds in both themes, and it does so on the one
+ * screen an operator reads precisely BECAUSE they cannot change it. What a read-only server
+ * means is said once, in words, at the top of the panel; it does not need to be re-stated by
+ * making six rows harder to read.
+ */
+.settings-switch:disabled { cursor: default; }
+.settings-switch:disabled .settings-switch-track { border-style: dashed; }
+.settings-switch-track {
+  position: relative;
+  width: 30px; height: 18px;
+  flex: none;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-pill);
+  background: var(--muted);
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+.settings-switch-thumb {
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 12px; height: 12px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgb(16 24 40 / 0.05);
+  transition: transform 0.14s ease;
+}
+.settings-switch-thumb svg { width: 9px; height: 9px; color: var(--primary); }
+.settings-switch.is-on .settings-switch-track { background: var(--primary); border-color: var(--primary); }
+.settings-switch.is-on .settings-switch-thumb { transform: translateX(12px); }
+.settings-switch:hover:not(:disabled) .settings-switch-track { border-color: var(--primary); }
+.settings-switch:focus-visible { outline: none; }
+.settings-switch:focus-visible .settings-switch-track {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-switch-track,
+  .settings-switch-thumb { transition: none; }
+}
+
+/* Read-only host facts. A definition list because that is what it is: term, then value. */
+.settings-facts { display: flex; flex-direction: column; gap: var(--s-3); margin: 0; }
+.settings-fact { display: flex; flex-direction: column; gap: 2px; }
+.settings-fact dt { font-size: var(--t-data); color: var(--muted-foreground); }
+.settings-fact dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--t-data);
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+.settings-status,
+.settings-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  margin: 0;
+  font-size: var(--t-body);
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+.settings-status svg,
+.settings-note svg { width: var(--sz-icon); height: var(--sz-icon); flex: none; margin-top: 1px; }
+.settings-status.is-error { color: var(--danger); }
+
+.settings-note {
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+  color: var(--foreground);
+}
+
+.settings-saving {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  margin-left: auto;
+  font-size: var(--t-data);
+  color: var(--muted-foreground);
+}
+.settings-saving svg { width: var(--sz-icon-sm); height: var(--sz-icon-sm); }
+
+.settings-reset { display: flex; flex-direction: column; gap: var(--s-2); align-items: flex-start; }
+.settings-hint { margin: 0; font-size: var(--t-body); color: var(--muted-foreground); max-width: 62ch; }
+
+/* ==========================================================================
+   15. Primitives
    ========================================================================== */
 
 .is-confirming {
@@ -2392,3 +2801,8 @@ body.is-rail-resizing .rail { transition: none; }
 
 /* Theme toggle: one icon control, its two glyphs swapped by the resolved theme. */
 .theme-toggle svg { width: var(--sz-icon); height: var(--sz-icon); }
+
+/* The way into the settings panel. It reads as engaged while the rail is showing it, using
+   the same wash the active rail tab uses — this control IS the tab, standing somewhere else. */
+.settings-open svg { width: var(--sz-icon); height: var(--sz-icon); }
+.settings-open.is-on { background: var(--primary-soft); color: var(--primary); }

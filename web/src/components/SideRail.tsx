@@ -22,6 +22,14 @@ interface TabSpec {
   icon: LucideIcon
 }
 
+/**
+ * The rail's four destinations — the things you move between while a run is happening.
+ *
+ * Settings is not among them and is not in this rail at all: it is its own view, entered
+ * from the top bar, because what a server is configured to do is not something you consult
+ * beside a running graph. The rail answers "what is happening"; that view answers "what is
+ * this host set up to do", and the two are not read at the same time.
+ */
 const TABS: TabSpec[] = [
   { id: 'run', label: 'Run', icon: SendHorizonal },
   { id: 'activity', label: 'Activity', icon: Activity },

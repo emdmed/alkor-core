@@ -16,7 +16,7 @@ import { Logotype, StarPair } from './Logotype'
 import { Badge } from './ui/badge'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
-import { ChevronDown, CirclePause, CirclePlay, Eraser, Moon, PlugZap, Sun } from 'lucide-react'
+import { ChevronDown, CirclePause, CirclePlay, Eraser, Moon, PlugZap, Settings2, Sun } from 'lucide-react'
 import { useTheme } from '../hooks/useTheme.ts'
 
 export interface HeaderProps {
@@ -30,6 +30,17 @@ export interface HeaderProps {
   models: ModelHealth[]
   /** What the connected server is running. Absent until /health answers, or on an older server. */
   harness?: HarnessHealth
+  /**
+   * Enter or leave the settings view.
+   *
+   * The way in sits up here because this band is the one thing that stays put across both
+   * views, and because it already carries everything true of the SERVER rather than of a
+   * run — which host, which model, whether the feed is live. What that server is configured
+   * to do is the same kind of fact, one level down.
+   */
+  onToggleSettings: () => void
+  /** Whether the settings view is the one on screen, so the control reads as engaged. */
+  settingsOpen: boolean
 }
 
 const hostOf = (url: string): string => url.replace(/^https?:\/\//, '').replace(/\/+$/, '')
@@ -37,7 +48,7 @@ const hostOf = (url: string): string => url.replace(/^https?:\/\//, '').replace(
 const toneCls = (tone: 'ok' | 'warn' | 'err'): string =>
   tone === 'ok' ? 'tone-ok' : tone === 'warn' ? 'tone-warn' : 'tone-err'
 
-export const Header = memo(({ state, serverUrl, onServerUrlChange, onConnect, paused, onTogglePause, onClear, models, harness }: HeaderProps) => {
+export const Header = memo(({ state, serverUrl, onServerUrlChange, onConnect, paused, onTogglePause, onClear, models, harness, onToggleSettings, settingsOpen }: HeaderProps) => {
   const meta = connMeta(state.connection)
   const model = modelName(state.models)
   const refusedReason = state.connection.kind === 'refused' ? state.connection.reason : ''
@@ -130,6 +141,18 @@ export const Header = memo(({ state, serverUrl, onServerUrlChange, onConnect, pa
           {paused ? 'Resume' : 'Pause'}
         </Button>
         <ClearButton onClear={onClear} count={state.runs.size + state.eventLog.length} />
+        <Button
+          variant="ghost"
+          size="icon"
+          type="button"
+          className={`settings-open${settingsOpen ? ' is-on' : ''}`}
+          onClick={onToggleSettings}
+          aria-label={settingsOpen ? 'Close server settings' : 'Server settings'}
+          aria-pressed={settingsOpen}
+          title={settingsOpen ? 'Close server settings' : 'Server settings'}
+        >
+          <Settings2 aria-hidden="true" />
+        </Button>
         <ThemeToggle />
       </div>
     </header>

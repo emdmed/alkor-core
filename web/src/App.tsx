@@ -5,6 +5,7 @@ import { InspectorPanel } from './components/InspectorPanel.tsx'
 import { EventLog } from './components/EventLog.tsx'
 import { RunPanel } from './components/RunPanel.tsx'
 import { SideRail, readRailWidth, type RailTab } from './components/SideRail.tsx'
+import { SettingsView } from './components/SettingsView.tsx'
 import { useAlkor } from './hooks/useAlkor.ts'
 import type { GraphNodeData } from './lib/graph/index.ts'
 
@@ -45,6 +46,18 @@ export const App = () => {
   const { state, serverUrl, activeUrl, setServerUrl, connect, paused, setPaused, clear, run, models, harness } = useAlkor(DEFAULT_URL)
   const isNarrow = useMedia(NARROW)
 
+  /**
+   * Which of the two things this app is right now.
+   *
+   * The workspace and the settings view are not a panel and its host — they are separate
+   * places, and only one is on screen at a time. Settings began life as a rail tab and was
+   * wrong there: the rail is read WHILE a run is in flight, and what a server is configured
+   * to do is the opposite kind of question. Nothing about the workspace is unmounted by this
+   * — the graph, the feed and the run history are all held in `useAlkor` above, so leaving
+   * and coming back returns to the same board rather than a reconnected one.
+   */
+  const [view, setView] = useState<'workspace' | 'settings'>('workspace')
+
   const [railOpen, setRailOpen] = useState(() => typeof window === 'undefined' || !window.matchMedia(NARROW).matches)
   const [railTab, setRailTab] = useState<RailTab>('run')
   const [railWidth, setRailWidth] = useState(readRailWidth)
@@ -83,9 +96,23 @@ export const App = () => {
     void import('./components/graph/PipelineGraph.tsx')
   }, [])
 
+  const closeSettings = useCallback(() => setView('workspace'), [])
+
+  // Escape leaves the settings view, the same key that collapses the rail in the other one.
+  // Registered separately rather than folded into the handler below, because that one is
+  // conditional on the rail being open and the rail does not exist here.
+  useEffect(() => {
+    if (view !== 'settings') return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeSettings()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [view, closeSettings])
+
   // Escape collapses the rail and returns focus to whoever opened it.
   useEffect(() => {
-    if (!railOpen) return
+    if (!railOpen || view === 'settings') return
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       setRailOpen(false)
@@ -108,7 +135,12 @@ export const App = () => {
         onClear={clear}
         models={models}
         harness={harness}
+        settingsOpen={view === 'settings'}
+        onToggleSettings={useCallback(() => setView((v) => (v === 'settings' ? 'workspace' : 'settings')), [])}
       />
+      {view === 'settings' ? (
+        <SettingsView serverUrl={activeUrl} onClose={closeSettings} />
+      ) : (
       <main className={`workspace${isNarrow && railOpen ? ' is-rail-overlay' : ''}`}>
         <div className="stage">
           <Suspense fallback={<GraphLoadingSurface />}>
@@ -146,6 +178,7 @@ export const App = () => {
           )}
         </SideRail>
       </main>
+      )}
     </div>
   )
 }
