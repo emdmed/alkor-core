@@ -18,7 +18,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 usage() {
   cat <<'EOF'
-alkor — structured extraction from clinical notes
+alkor — local-model orchestration for medical workflows
 
   ./start          check, then run the server and the dashboard
   ./start --check  run the checks and change nothing
@@ -123,13 +123,14 @@ WEB_PORT="${WEB_PORT:-5173}"
 
 # The star pair and the wordmark are one lockup here exactly as they are in the topbar, and
 # it leads with the mark. `alkor` is a star nobody can read the product out of, so the
-# descriptor rides beside it — the same job it does on the web surface.
+# descriptor rides beside it — the same job it does on the web surface, and the same words:
+# the layer, not the one step inside it that extraction is.
 banner() {
   ((STYLE)) || return 0
   printf '\n  %s%s%s %s%salkor%s  %s%s%s\n\n' \
     "$ACCENT" "$G_STAR$G_STAR" "$OFF" \
     "$ACCENT" "$BOLD" "$OFF" \
-    "$DIM" "structured extraction from clinical notes" "$OFF"
+    "$DIM" "local-model orchestration for medical workflows" "$OFF"
   printf '\033]0;alkor\a'
 }
 banner
@@ -357,9 +358,9 @@ printf '  %s  %s  %s\n' "$EDGE" "$CONTENT" "$EDGE"
 printf '  %s%s%s%s%s\n\n' "$DIM" "$B_BL" "$(rule "$W")" "$B_BR" "$OFF"
 
 cat <<EOF
-  Models load on the first request, not now — if the weights are not cached yet, that first
-  request is also a ~4.6 GB download and will sit there a while. The server sweeps a backend
-  after 120s idle (ALKOR_IDLE_MS).
+  No model is loaded yet. The first request loads one, and if the weights are not cached
+  that request also downloads ~4.6 GB — so expect it to sit there a while. Idle backends
+  are stopped after 120s (ALKOR_IDLE_MS).
 
   ${DIM}Ctrl-C stops both.${OFF}
 
