@@ -7,6 +7,9 @@
  *
  * Endpoints:
  *   GET  /health                    — list loaded profiles, active sessions, and activity stats
+ *   GET  /config                    — effective settings, where each came from, and host facts
+ *   PATCH /config                   — change settings without a restart (ALKOR_CONFIG_WRITE=0 refuses)
+ *   DELETE /config                  — drop overrides, back to what the environment says
  *   GET  /events                    — SSE stream of activity events (metadata-only)
  *   GET  /runs                      — recorded runs, newest first
  *   GET  /runs/:id                  — one recorded run, by run id or by listed id
@@ -31,6 +34,9 @@ import { cancelRun } from './server/routes/cancel.ts'
 import { sessionCreate, sessionAction, sessionDelete } from './server/routes/session.ts'
 import { routeRequest } from './server/routes/route.ts'
 import { runPipeline } from './server/routes/pipeline.ts'
+import { configGet, configPatch, configReset } from './server/routes/config.ts'
+import { createSettingsStore } from './core/settings.ts'
+import { modelBudgetBytes, footprintBytesFor } from './core/budget.ts'
 import { createSseHub } from './server/sse.ts'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
@@ -93,84 +99,41 @@ export interface ServerOptions {
 }
 
 /**
- * How many bytes of model this host will hold resident at once.
- *
- * `ALKOR_MODEL_BUDGET` takes `6GiB`, `600MB`, a percentage of total RAM (`50%`), a
- * plain byte count, or `0` for the old unbounded behaviour. The default is 60% of total
- * RAM: the rest of the machine — the browser the dashboard is open in, the editor, the OS
- * — is not free, and a budget that assumed it was would be a budget that swaps.
+ * The budget parser and the footprint estimator now live in `core/budget.ts`, because the
+ * settings store has to reject a bad budget spec before persisting it and a core module
+ * cannot import the HTTP entry point. Re-exported here: they were part of this module's
+ * surface before they moved, and the tests and scripts that import them from here are
+ * asking a question this file is still the right place to answer.
  */
-export const modelBudgetBytes = (raw?: string, total: number = totalmem()): number => {
-  const spec = (raw ?? '').trim()
-  if (!spec) return Math.floor(total * 0.6)
-  const pct = /^(\d+(?:\.\d+)?)\s*%$/.exec(spec)
-  if (pct) return Math.floor((total * Number(pct[1])) / 100)
-  const size = /^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb|kib|mib|gib)?$/i.exec(spec)
-  if (!size) return Math.floor(total * 0.6)
-  const scale: Record<string, number> = {
-    b: 1,
-    kb: 1000,
-    mb: 1000 ** 2,
-    gb: 1000 ** 3,
-    kib: 1024,
-    mib: 1024 ** 2,
-    gib: 1024 ** 3,
-  }
-  return Math.floor(Number(size[1]) * (scale[(size[2] ?? 'b').toLowerCase()] ?? 1))
-}
-
-/**
- * What a backend is expected to cost while resident: the weights on disk, plus the KV cache
- * its context window implies.
- *
- * Both halves matter and the second is the one people forget — a 4B model quantised to 2.5
- * GB serves a 32k context out of a KV cache measured in GB of its own, so a budget counting
- * only file sizes would admit two models that cannot both run. The per-token figure is a
- * coarse average across the 3B-8B architectures this project targets rather than a
- * derivation from any one of them; a profile that knows better sets `footprint` itself.
- *
- * A model file that cannot be stat'd (not downloaded yet, wrong path) returns undefined
- * rather than zero. The distinction is the point: zero would mean "free", and the manager
- * would let it in beside anything.
- */
-const KV_BYTES_PER_TOKEN = 131_072
-
-export const footprintBytesFor = (
-  model?: string,
-  ctx?: number,
-  override?: string | number,
-): number | undefined => {
-  if (override !== undefined && override !== null && override !== '') {
-    const bytes = typeof override === 'number' ? Math.floor(override) : modelBudgetBytes(String(override), 0)
-    if (bytes > 0) return bytes
-  }
-  if (!model) return undefined
-  const expanded = model.startsWith('~/') ? join(homedir(), model.slice(2)) : model
-  let weights: number
-  try {
-    weights = statSync(isAbsolute(expanded) ? expanded : resolve(expanded)).size
-  } catch {
-    return undefined
-  }
-  return weights + (ctx ?? 4096) * KV_BYTES_PER_TOKEN
-}
+export { modelBudgetBytes, footprintBytesFor }
 
 export const createServer = async (configPath?: string, options: ServerOptions = {}): Promise<Server> => {
   const cfg = loadConfig(configPath)
   const activity = createActivity()
+
+  // --- What this server is configured to do ----------------------------------------------
+  // The knobs a caller may change while it runs: CORS policy, the model budget, the idle
+  // window, whether models are managed, whether runs are recorded. Read here at boot and
+  // re-read wherever the value is used, so a settings write takes effect without a restart.
+  // See `core/settings.ts` for why a persisted override outranks the environment.
+  const settings = createSettingsStore()
+  const booted = settings.current()
 
   // --- Managed llama-server lifecycle --------------------------------------------------
   // On-demand spawn + idle-stop, so an interactive host keeps in RAM only the models it is
   // actually using. This is server-only by construction: the CLI never imports this file.
   // ALKOR_MANAGE_MODELS=0 restores "start them yourself"; ALKOR_LLAMA_ARGS and
   // ALKOR_IDLE_MS tune the spawn flags and the idle window.
-  const manageModels = (process.env.ALKOR_MANAGE_MODELS ?? '1') !== '0'
-  const idleMs = Number(process.env.ALKOR_IDLE_MS ?? 120_000) || 120_000
+  const manageModels = booted.manageModels
+  const idleMs = booted.idleMs
+  // Spawn flags stay an environment-only fact. They are read once when a backend is started
+  // and a running llama-server cannot be re-flagged, so offering them as a live setting
+  // would mean a field that silently applies to some backends and not others.
   const spawnArgs = (process.env.ALKOR_LLAMA_ARGS ?? '--no-webui --parallel 1')
     .trim()
     .split(/\s+/)
     .filter(Boolean)
-  const budgetBytes = options.budgetBytes ?? modelBudgetBytes(process.env.ALKOR_MODEL_BUDGET)
+  const budgetBytes = options.budgetBytes ?? modelBudgetBytes(booted.modelBudget)
   // ALKOR_LLAMA_BIN names the engine for a machine that has it off PATH — a source build,
   // most often. `doctor` reports the same variable, so the check and the spawn agree about
   // which binary they are talking about instead of the check passing on one the spawn cannot find.
@@ -454,7 +417,11 @@ export const createServer = async (configPath?: string, options: ServerOptions =
   // That is the one place this server contradicted the rule that a result the repository
   // cannot reproduce is not a measurement. It records by default now; ALKOR_SERVER_TRACE=0
   // is for a deployment that wants the server to hold nothing.
-  const serverTrace = (process.env.ALKOR_SERVER_TRACE ?? '1') !== '0'
+  // Asked at the moment a run starts rather than captured at boot, so turning recording off
+  // takes effect on the next run instead of the next restart. The run in flight when the
+  // setting changed keeps the trace it already opened — a half-written file abandoned
+  // mid-run would be worse evidence than either choice made consistently.
+  const serverTrace = () => settings.current().serverTrace
 
   /**
    * The redaction hook for a trace opened under `profileName`, including its steps'.
@@ -503,7 +470,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
   const openRunTrace =
     options.openRunTrace ??
     (async (profileName: string, runId: string): Promise<Trace> =>
-      serverTrace ? openTrace(profileName, await runRedactor(profileName), runId) : nullTrace())
+      serverTrace() ? openTrace(profileName, await runRedactor(profileName), runId) : nullTrace())
 
   /**
    * Runs currently in flight, so one request can stop another's work.
@@ -550,13 +517,27 @@ export const createServer = async (configPath?: string, options: ServerOptions =
   // Idle sweep for managed llama-server backends. Runs on an unref'd timer so it never
   // keeps the process alive on its own; every backend is stopped hard on close. The 15s
   // cadence means an idle backend lingers at most one sweep past its timeout.
-  let sweepTimer: ReturnType<typeof setInterval> | null = null
-  if (manageModels) {
-    sweepTimer = setInterval(() => {
-      void manager.sweep()
-    }, 15_000)
-    if (typeof sweepTimer.unref === 'function') sweepTimer.unref()
-  }
+  // The timer runs whether or not models are managed at boot, because that is now a setting
+  // rather than a boot flag: a host started with management off can turn it on, and a sweep
+  // that had never been scheduled would leave those backends resident forever. It costs
+  // nothing when there is nothing to sweep — an unmanaged backend was never spawned here,
+  // so it is never in the running state the sweep looks for.
+  const sweepTimer: ReturnType<typeof setInterval> = setInterval(() => {
+    void manager.sweep()
+  }, 15_000)
+  if (typeof sweepTimer.unref === 'function') sweepTimer.unref()
+
+  // A settings write reaches the model lifecycle here. `reconfigure` applies the new policy
+  // forward — see its comment on why a lowered budget does not evict on the spot.
+  settings.onChange((next) => {
+    manager.reconfigure({
+      idleMs: next.idleMs,
+      enabled: next.manageModels,
+      // `options.budgetBytes` is a test seam that deliberately outranks configuration; a
+      // settings write must not quietly take it away from the test that set it.
+      ...(options.budgetBytes === undefined ? { budgetBytes: modelBudgetBytes(next.modelBudget) } : {}),
+    })
+  })
 
   const activityUnsub = activity.subscribe((event) => {
     for (const res of sse.clients) sse.send(res, event)
@@ -571,6 +552,8 @@ export const createServer = async (configPath?: string, options: ServerOptions =
    */
   const deps: ServerDeps = {
     cfg,
+    configPath,
+    settings,
     activity,
     manager,
     provider: wrappedProvider,
@@ -600,8 +583,10 @@ export const createServer = async (configPath?: string, options: ServerOptions =
     const url = new URL(req.url ?? '/', `http://localhost`)
     const method = req.method ?? 'GET'
 
-    // CORS policy is per-request: loopback origins by default (see the helpers above).
-    const cors = corsHeaders(corsAllowedOrigin(req.headers.origin))
+    // CORS policy is per-request, and per-request is now load-bearing rather than incidental:
+    // the allowlist can change while this server runs, so it is read from the settings store
+    // on every request instead of captured when the server was built.
+    const cors = corsHeaders(corsAllowedOrigin(req.headers.origin, settings.current().cors))
     // `extra` exists for one fact: the run id. An error that omits it tells a dashboard
     // that something failed but not WHICH run failed, so the feed cannot be searched for
     // what led up to it. Every refusal raised after a run id is minted carries it.
@@ -632,6 +617,16 @@ export const createServer = async (configPath?: string, options: ServerOptions =
 
     try {
       if (method === 'GET' && url.pathname === '/health') return void (await health(routeCtx()))
+
+      if (url.pathname === '/config') {
+        if (method === 'GET') return void (await configGet(routeCtx()))
+        // PATCH says what this is — a partial update of a resource that already exists —
+        // and POST is accepted beside it because a form, a curl and a fetch all reach for
+        // POST first and being right about the verb is not worth a 404 to find out.
+        if (method === 'PATCH' || method === 'POST') return void (await configPatch(routeCtx()))
+        if (method === 'DELETE') return void (await configReset(routeCtx()))
+      }
+
       if (method === 'GET' && url.pathname === '/corpus') return void (await corpusList(routeCtx()))
       if (method === 'GET' && url.pathname.startsWith('/corpus/')) return void (await corpusDocument(routeCtx()))
 
@@ -693,10 +688,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
   server.on('close', () => {
     activityUnsub()
     sse.shutdown()
-    if (sweepTimer) {
-      clearInterval(sweepTimer)
-      sweepTimer = null
-    }
+    clearInterval(sweepTimer)
     void manager.dispose()
   })
 

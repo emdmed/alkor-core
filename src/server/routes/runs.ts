@@ -49,7 +49,7 @@ export const runsList = async ({ url, reply, done }: RouteContext): Promise<void
   done(200)
 }
 
-export const runsDocument = async ({ req, url, reply, done }: RouteContext): Promise<void> => {
+export const runsDocument = async ({ req, url, reply, done, deps }: RouteContext): Promise<void> => {
   const id = decodeURIComponent(url.pathname.slice('/runs/'.length))
   // Opt-out rather than opt-in: the whole point of fetching one run is to read it, and a
   // caller that wants the summary alone is the unusual one.
@@ -59,11 +59,12 @@ export const runsDocument = async ({ req, url, reply, done }: RouteContext): Pro
   // Refused rather than silently returned without the events: a reader handed a run with an
   // empty `events` array would conclude the run recorded nothing, which is a lie about the
   // file. See `traceContentAllowed`.
-  if (events && !traceContentAllowed(origin)) {
+  if (events && !traceContentAllowed(origin, deps.settings.current().traceCors)) {
     reply.forbidden(
       `a browser page at ${origin} may read this run's metadata but not its contents — ` +
         'a trace holds what the model was asked and what it answered. Add the origin to ' +
-        "ALKOR_TRACE_CORS to allow it, or request ?events=0 for the summary alone.",
+        "ALKOR_TRACE_CORS (or the trace origins in Settings) to allow it, or request " +
+        '?events=0 for the summary alone.',
     )
     done(403)
     return

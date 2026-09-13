@@ -21,11 +21,23 @@ import type { loadConfig, requireProfile } from '../core/config.ts'
 import type { Session } from '../modes/session.ts'
 import type { Trace } from '../core/trace.ts'
 import type { LlamaManager } from '../core/llama-manager.ts'
+import type { SettingsStore } from '../core/settings.ts'
 import type { Reply } from './reply.ts'
 import type { SseHub } from './sse.ts'
 
 export interface ServerDeps {
   cfg: ReturnType<typeof loadConfig>
+  /** Where `cfg` was read from, which `/config` reports and nothing else needs. */
+  configPath?: string
+  /**
+   * The settings this server will let a caller change while it runs: CORS policy, the model
+   * budget, the idle window, whether it manages models, whether it records runs.
+   *
+   * Shared by reference like everything else here, and for a sharper reason than most: the
+   * CORS check runs per request, so a handler holding a snapshot would keep refusing an
+   * origin that had been added since it started.
+   */
+  settings: SettingsStore
   activity: Activity
   manager: LlamaManager
   /** The provider every model call goes through: touches the manager so idle-stop is honest. */

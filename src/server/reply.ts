@@ -12,15 +12,20 @@ import { ACTIVITY_INSTANCE_HEADER } from '../core/activity.ts'
 /**
  * CORS is loopback-only by default. A browser dashboard is cross-origin by definition
  * (`localhost:5173` vs `127.0.0.1:3000`), but opening the feed to every website would let
- * any page you visit read it. Only loopback origins are accepted unless ALKOR_CORS
- * names others, or is `*` for an explicit blanket.
+ * any page you visit read it. Only loopback origins are accepted unless `allowed` names
+ * others, or contains `*` for an explicit blanket.
+ *
+ * The list is a PARAMETER rather than a read of `ALKOR_CORS`, which is what keeps this file
+ * the pure thing its header claims. It also stopped being a boot-time fact: the settings
+ * store can change the allowlist while the server runs, and a helper that had cached the
+ * environment would keep refusing an origin the operator had just added.
  */
-export const corsAllowedOrigin = (rawOrigin: string | undefined): string | undefined => {
+export const corsAllowedOrigin = (
+  rawOrigin: string | undefined,
+  allowed: readonly string[] = [],
+): string | undefined => {
   if (!rawOrigin) return undefined
-  const configured = (process.env.ALKOR_CORS ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)
+  const configured = allowed.filter(Boolean)
   if (configured.includes('*')) return '*'
   if (configured.length > 0) return configured.includes(rawOrigin) ? rawOrigin : undefined
   try {
@@ -51,15 +56,16 @@ export const corsAllowedOrigin = (rawOrigin: string | undefined): string | undef
  *
  * So: a request with NO `Origin` is not a browser page — curl, a script, a cron job, all
  * first-class callers here — and is allowed. A request WITH one is a page, and must be named
- * in `ALKOR_TRACE_CORS` (or `*`) to read content. Metadata is unaffected: the listing and
- * `?events=0` answer any loopback origin, which is what a dashboard's run history needs.
+ * in `allowed` (from `ALKOR_TRACE_CORS` or the settings store) to read content. Metadata is
+ * unaffected: the listing and `?events=0` answer any loopback origin, which is what a
+ * dashboard's run history needs.
  */
-export const traceContentAllowed = (rawOrigin: string | undefined): boolean => {
+export const traceContentAllowed = (
+  rawOrigin: string | undefined,
+  allowed: readonly string[] = [],
+): boolean => {
   if (!rawOrigin) return true
-  const configured = (process.env.ALKOR_TRACE_CORS ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)
+  const configured = allowed.filter(Boolean)
   return configured.includes('*') || configured.includes(rawOrigin)
 }
 
@@ -67,7 +73,7 @@ export const corsHeaders = (origin: string | undefined): Record<string, string> 
   if (!origin) return {}
   return {
     'Access-Control-Allow-Origin': origin,
-    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': `Content-Type, Accept, Last-Event-ID, ${ACTIVITY_INSTANCE_HEADER}`,
     'Access-Control-Max-Age': '86400',
   }

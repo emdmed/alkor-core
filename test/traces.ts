@@ -26,6 +26,13 @@ import { join } from 'node:path'
 export const isolateTraces = (label: string): string => {
   const dir = mkdtempSync(join(tmpdir(), `alkor-traces-${label}-`))
   process.env.TRACE_DIR = dir
+  // The state root goes with it, and that is not housekeeping: the settings store persists
+  // overrides under `stateRoot()/alkor/settings.json`, and a server built in a test reads
+  // that file at construction. Left alone, every server test on this machine would inherit
+  // whatever the developer had last saved in the dashboard — a suite whose result depends
+  // on the host's configuration is a suite that passes or fails for reasons nobody can see.
+  // Setting it here reaches all of them, because every test that builds a server calls this.
+  process.env.XDG_STATE_HOME = dir
   process.on('exit', () => rmSync(dir, { recursive: true, force: true }))
   return dir
 }

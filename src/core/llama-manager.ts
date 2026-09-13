@@ -273,6 +273,26 @@ export class LlamaManager {
     return { budgetBytes: this.options.budgetBytes, residentBytes: this.residentBytes() }
   }
 
+  /**
+   * Change the lifecycle policy of a RUNNING manager, which is what makes these settings
+   * settings rather than boot flags.
+   *
+   * Applied forward, not retroactively, and the distinction matters for the budget: lowering
+   * it does not kill a resident model to get back under the new number. It is enforced at the
+   * next admission, where eviction already has the machinery to pick a victim that is not
+   * mid-request. Evicting on the settings write instead would let a form submission stop a
+   * model out from under a run that was using it, and the operator who typed a smaller
+   * number was expressing a preference about the next model, not asking to break this one.
+   *
+   * `idleMs` and `enabled` need no such care — the sweep and `canSpawn` read them on every
+   * pass, so the new value governs from here.
+   */
+  reconfigure(next: { idleMs?: number; budgetBytes?: number; enabled?: boolean }): void {
+    if (next.idleMs !== undefined) this.options.idleMs = next.idleMs
+    if (next.budgetBytes !== undefined) this.options.budgetBytes = next.budgetBytes
+    if (next.enabled !== undefined) this.options.enabled = next.enabled
+  }
+
   /** Feature description for the 503 message: why a backend could not come up. */
   describe(baseUrl: string): string {
     const e = this.entries.get(normalizeBaseUrl(baseUrl))
