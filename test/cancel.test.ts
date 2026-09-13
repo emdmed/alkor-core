@@ -12,7 +12,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer as nodeCreateServer, type Server } from 'node:http'
@@ -20,8 +20,8 @@ import { isolateTraces } from './traces.ts'
 import { CancelledError, withCancellation, type Provider } from '../src/core/client.ts'
 import { runWorkflow, buildWorkflow } from '../src/modes/workflow.ts'
 import { runAgent } from '../src/modes/agentic.ts'
-import { listRuns, RUN_FOOTER_EVENT } from '../src/core/runs.ts'
-import { nullTrace } from '../src/core/trace.ts'
+import { listRuns, RUN_FOOTER_EVENT, RUN_HEADER_EVENT } from '../src/core/runs.ts'
+import { nullTrace, type Trace } from '../src/core/trace.ts'
 import type { ProfileModule } from '../src/core/profile.ts'
 import { createServer as createAlkorServer } from '../src/server.ts'
 
@@ -483,6 +483,159 @@ test('a run that has finished is no longer cancellable', async () => {
     assert.match(String(((await cancel.json()) as any).error), /in flight/)
   } finally {
     await close()
+  }
+})
+
+test('a run that FAILED is no longer cancellable either', async () => {
+  // The `finally` removes the registration, so it has to survive the failure path as well
+  // as the success one. A stale entry is worse than a missing one: DELETE would report that
+  // it had stopped something.
+  const dir = mkdtempSync(join(tmpdir(), 'alkor-fail-reg-'))
+  const modulePath = join(dir, 'boom.mjs')
+  const tomlPath = join(dir, 'profiles.toml')
+  writeFileSync(tomlPath, `[boom]\nmode = "code"\nmodule = "${modulePath}"\n`)
+  writeFileSync(
+    modulePath,
+    "export const PROFILE = { name: 'boom', mode: 'code', needsPack: false, " +
+      "async review() { throw new Error('the rule table is empty') } }\n",
+  )
+
+  const server: Server = await createAlkorServer(tomlPath)
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const { port } = server.address() as { port: number }
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile: 'boom', input: 'anything' }),
+    })
+    assert.equal(res.status, 500)
+    const { runId } = (await res.json()) as any
+    const cancel = await fetch(`http://127.0.0.1:${port}/run/${runId}`, { method: 'DELETE' })
+    assert.equal(cancel.status, 404)
+  } finally {
+    server.closeAllConnections()
+    server.close()
+    await once(server, 'close')
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+/**
+ * A trace whose write fails at a chosen event, and nothing else.
+ *
+ * The recording-failure paths cannot be reached by filling a disk from a test, so the server
+ * takes an `openRunTrace` seam — the same device `sseBufferBytes` uses to reach the SSE
+ * overflow branch.
+ */
+const brittleTrace = (failOn: string): { trace: Trace; written: string[] } => {
+  const written: string[] = []
+  return {
+    written,
+    trace: {
+      path: '/dev/null/brittle.jsonl',
+      write(event) {
+        if (event.event === failOn) throw new Error(`ENOSPC: no space left on device, write '${failOn}'`)
+        written.push(String(event.event))
+      },
+      close() {},
+    },
+  }
+}
+
+test('a run whose HEADER cannot be written answers, and leaves nothing registered', async () => {
+  // The window this guards: registration used to sit outside the try that removes it, with
+  // the header write in between. A failure here left an entry in the map forever — and a
+  // later DELETE would report that it had stopped something.
+  const { trace } = brittleTrace(RUN_HEADER_EVENT)
+  const server: Server = await createAlkorServer(undefined, { openRunTrace: async () => trace })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const { port } = server.address() as { port: number }
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile: 'router', input: 'Patient BP 120/80, HR 72' }),
+    })
+    // The caller is answered rather than left hanging on a write they cannot see.
+    assert.equal(res.status, 500)
+    const { runId } = (await res.json()) as any
+    assert.ok(runId, 'the refusal must still name the run')
+    const cancel = await fetch(`http://127.0.0.1:${port}/run/${runId}`, { method: 'DELETE' })
+    assert.equal(cancel.status, 404, 'the run must not still be registered as in flight')
+  } finally {
+    server.closeAllConnections()
+    server.close()
+    await once(server, 'close')
+  }
+})
+
+test('a FOOTER that cannot be written does not cost the caller their answer', async () => {
+  const { trace, written } = brittleTrace(RUN_FOOTER_EVENT)
+  const server: Server = await createAlkorServer(undefined, { openRunTrace: async () => trace })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const { port } = server.address() as { port: number }
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile: 'router', input: 'Patient BP 120/80, HR 72' }),
+    })
+    // The run produced a reading; a disk that filled while recording it must not turn that
+    // into a failure. The file is left without a footer, which a reader correctly reads as
+    // "no outcome recorded".
+    assert.equal(res.status, 200)
+    assert.equal(((await res.json()) as any).ok, true)
+    assert.ok(written.includes(RUN_HEADER_EVENT))
+    assert.ok(!written.includes(RUN_FOOTER_EVENT))
+  } finally {
+    server.closeAllConnections()
+    server.close()
+    await once(server, 'close')
+  }
+})
+
+test('a run whose trace cannot be opened registers nothing to leak', async (t) => {
+  // The trace is opened BEFORE the run is registered, so a failure here must leave the map
+  // untouched rather than an entry nothing will ever remove. Proving it needs a directory
+  // the process cannot write to, which root does not have — skip rather than pass vacuously.
+  const readOnly = mkdtempSync(join(tmpdir(), 'alkor-ro-'))
+  chmodSync(readOnly, 0o500)
+  try {
+    writeFileSync(join(readOnly, 'probe'), 'x')
+    t.skip('this process can write to a read-only directory (running as root?)')
+    return
+  } catch {
+    // Good: the directory really is read-only.
+  }
+
+  const savedTraceDir = process.env.TRACE_DIR
+  process.env.TRACE_DIR = readOnly
+  const { url, release, close } = await slowServer()
+  try {
+    release()
+    const res = await fetch(`${url}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile: 'slow', input: 'anything' }),
+    })
+    // The run never started: it could not be recorded, and recording is not optional when
+    // it has been asked for.
+    assert.equal(res.status, 500)
+    const { runId } = (await res.json()) as any
+    if (runId) {
+      const cancel = await fetch(`${url}/run/${runId}`, { method: 'DELETE' })
+      assert.equal(cancel.status, 404, 'a run that never started must not be registered')
+    }
+  } finally {
+    await close()
+    if (savedTraceDir === undefined) delete process.env.TRACE_DIR
+    else process.env.TRACE_DIR = savedTraceDir
+    chmodSync(readOnly, 0o700)
+    rmSync(readOnly, { recursive: true, force: true })
   }
 })
 

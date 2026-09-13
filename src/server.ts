@@ -79,6 +79,17 @@ export interface ServerOptions {
   sseBufferBytes?: number
   /** Resident-model budget in bytes; overrides ALKOR_MODEL_BUDGET. 0 is unbounded. */
   budgetBytes?: number
+  /**
+   * Trace seam, so a test can reach the RECORDING-FAILURE paths deliberately.
+   *
+   * The same device as `sseBufferBytes` above and for the same reason: the interesting
+   * behaviour is what happens when a write fails, and there is no way to make one fail
+   * through the public surface — a full disk and a revoked handle are not things a test can
+   * arrange. Two properties depend on it and were otherwise correct only by inspection: a
+   * run whose header cannot be written must not leave itself registered as in-flight, and a
+   * footer that cannot be written must not also cost the caller their answer.
+   */
+  openRunTrace?(profileName: string, runId: string): Promise<Trace>
 }
 
 /**
@@ -489,8 +500,10 @@ export const createServer = async (configPath?: string, options: ServerOptions =
     return composeRedactors(...(await collect(profileName)))
   }
 
-  const openRunTrace = async (profileName: string, runId: string): Promise<Trace> =>
-    serverTrace ? openTrace(profileName, await runRedactor(profileName), runId) : nullTrace()
+  const openRunTrace =
+    options.openRunTrace ??
+    (async (profileName: string, runId: string): Promise<Trace> =>
+      serverTrace ? openTrace(profileName, await runRedactor(profileName), runId) : nullTrace())
 
   /**
    * Runs currently in flight, so one request can stop another's work.

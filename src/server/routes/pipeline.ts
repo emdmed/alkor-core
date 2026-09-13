@@ -244,39 +244,12 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
       res.on('close', () => {
         if (!res.writableFinished) cancel('disconnect')
       })
-      deps.inFlightRuns.set(runId, { profile: profileName, cancel })
       // Every model call this run makes now carries the signal, whoever makes it — including
       // an out-of-tree profile that has never heard of cancellation. See `withCancellation`.
       const provider = withCancellation(deps.provider, controller.signal)
 
       return withActivityScope({ runId }, async () => {
-        deps.activity.emit({
-          kind: 'run.started',
-          profile: profileName,
-          inputChars: input.length,
-          inputDigest: deps.inputDigest(input),
-          trace: trace.path,
-        })
-
         const runStartedAt = performance.now()
-
-        // The header is METADATA about the input, not the input. A digest and a length
-        // answer "was this the same text as run #3" without this server writing the
-        // caller's document into a file on its own authority — the profiles below write
-        // what they read, each under the redaction its own pack chose. `route` is here
-        // because the routing call happens before the run's profile is known and so
-        // cannot be traced into this file; recording the decision is what keeps the
-        // recording able to say why this workflow and not another.
-        trace.write({
-          event: RUN_HEADER_EVENT,
-          runId,
-          profile: profileName,
-          mode: profile.mode,
-          via: automatic ? '/pipeline' : '/run',
-          inputChars: input.length,
-          inputDigest: deps.inputDigest(input),
-          ...(automatic ? { workflow: profileName, route: pipelineRoute } : {}),
-        })
 
         // The footer, written once on every exit — including the ones that never reached a
         // model. A reader cannot tell an unfinished file from a failed one, so a run that
@@ -286,18 +259,27 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
         const settle = (ok: boolean, error?: string) => {
           if (settled) return
           settled = true
-          trace.write({
-            event: RUN_FOOTER_EVENT,
-            runId,
-            profile: profileName,
-            ok,
-            wallMs: performance.now() - runStartedAt,
-            ...(error ? { error } : {}),
-            // Read from the controller rather than passed in, so it is right on every exit
-            // path — including the ones that reach `settle` believing they failed, because
-            // a cancel lands as an ordinary error inside whatever was running at the time.
-            ...(cancelledBy ? { cancelled: true, cancelledBy } : {}),
-          })
+          try {
+            trace.write({
+              event: RUN_FOOTER_EVENT,
+              runId,
+              profile: profileName,
+              ok,
+              wallMs: performance.now() - runStartedAt,
+              ...(error ? { error } : {}),
+              // Read from the controller rather than passed in, so it is right on every exit
+              // path — including the ones that reach `settle` believing they failed, because
+              // a cancel lands as an ordinary error inside whatever was running at the time.
+              ...(cancelledBy ? { cancelled: true, cancelledBy } : {}),
+            })
+          } catch (e) {
+            // A footer that cannot be written leaves a run with no recorded outcome, which is
+            // what a reader will see and is the truth. It must not ALSO cost the caller their
+            // answer: `settle` is called from the refusal path, and a disk that has filled up
+            // between the header and here would otherwise throw out of the very handler
+            // trying to explain what went wrong.
+            console.error(`Run ${runId}: could not write the trace footer:`, e)
+          }
         }
 
         /**
@@ -329,6 +311,39 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
         }
 
         try {
+          // REGISTERED INSIDE THE TRY, because the `finally` below is what removes it. It
+          // used to sit above `withActivityScope`, with the run.started emit and the header
+          // write between the two — so a trace write that failed there left an entry in the
+          // map forever, in a process designed to run for weeks. A stale entry is worse than
+          // a missing one: `DELETE /run/:id` would report that it had stopped something.
+          deps.inFlightRuns.set(runId, { profile: profileName, cancel })
+
+          deps.activity.emit({
+            kind: 'run.started',
+            profile: profileName,
+            inputChars: input.length,
+            inputDigest: deps.inputDigest(input),
+            trace: trace.path,
+          })
+
+          // The header is METADATA about the input, not the input. A digest and a length
+          // answer "was this the same text as run #3" without this server writing the
+          // caller's document into a file on its own authority — the profiles below write
+          // what they read, each under the redaction its own pack chose. `route` is here
+          // because the routing call happens before the run's profile is known and so
+          // cannot be traced into this file; recording the decision is what keeps the
+          // recording able to say why this workflow and not another.
+          trace.write({
+            event: RUN_HEADER_EVENT,
+            runId,
+            profile: profileName,
+            mode: profile.mode,
+            via: automatic ? '/pipeline' : '/run',
+            inputChars: input.length,
+            inputDigest: deps.inputDigest(input),
+            ...(automatic ? { workflow: profileName, route: pipelineRoute } : {}),
+          })
+
           // Extract / router / code — one review call, three declared shapes.
           if (profile.mode === 'extract' || profile.mode === 'router' || profile.mode === 'code') {
             if (!profile.review) {
