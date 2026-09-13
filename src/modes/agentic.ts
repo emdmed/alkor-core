@@ -40,6 +40,14 @@ export interface AgenticOptions {
   maxProseReplies?: number
   baseUrl?: string
   trace?: Trace
+  /**
+   * Cancellation for the run, checked before each iteration.
+   *
+   * The provider carries the same signal into the model call itself; this is what stops the
+   * loop from executing another TOOL — a write to the workspace — on behalf of a run the
+   * operator has already stopped.
+   */
+  signal?: AbortSignal
   /** Transport seam, so the loop can be tested without a server. Defaults to the real one. */
   chat?: typeof toolChat
   /** A custom LLM provider; defaults to the built-in HTTP client. */
@@ -50,8 +58,15 @@ export interface AgenticOptions {
 
 export interface AgenticResult {
   answer?: string
-  /** Why the loop ended. Only 'done' is success; the CLI exits nonzero for the rest. */
-  stop: 'done' | 'iteration_cap' | 'no_tool_call' | 'error'
+  /**
+   * Why the loop ended. Only 'done' is success; the CLI exits nonzero for the rest.
+   *
+   * `cancelled` is its own outcome rather than an `error` with a message, because it is the
+   * one ending that says nothing about the model: an agent stopped at iteration 3 by an
+   * operator did not fail, and an eval counting it as a failure would be measuring who was
+   * watching rather than what ran.
+   */
+  stop: 'done' | 'iteration_cap' | 'no_tool_call' | 'error' | 'cancelled'
   iterations: number
   toolsUsed: string[]
   error?: string
@@ -91,6 +106,9 @@ export const runAgent = async (o: AgenticOptions): Promise<AgenticResult> => {
   let proseReplies = 0
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
+    if (o.signal?.aborted) {
+      return { stop: 'cancelled', iterations: iteration, toolsUsed, usage, contextTrail }
+    }
     let reply: { content: string | null; toolCalls: ToolCall[]; usage?: Usage }
     try {
       reply = await chat({ messages, tools: specs, baseUrl: o.baseUrl, label: `iteration-${iteration}` })

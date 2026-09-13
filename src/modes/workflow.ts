@@ -120,6 +120,16 @@ export interface WorkflowOptions {
    * because the context from previous steps must be loaded from disk.
    */
   runStep?: number
+  /**
+   * Cancellation for the run as a whole, checked at every step boundary.
+   *
+   * The provider carries the same signal into each model call, so a cancel that lands
+   * mid-generation stops that call. This is the other half: a cancel that lands during a
+   * code step — verify-derived and assess are milliseconds apiece and never see a provider
+   * — would otherwise go unnoticed until the next model call started, which on this
+   * hardware means loading a set of weights for a run nobody is waiting for.
+   */
+  signal?: AbortSignal
   /** A custom LLM provider; defaults to the built-in HTTP client. */
   provider?: Provider
   /** Activity bus for operational events. */
@@ -455,6 +465,22 @@ export const runWorkflow = async (o: WorkflowOptions): Promise<WorkflowResult> =
 
   for (let i = actualStart; i < endStep; i++) {
     const stepDef = o.steps[i]!
+    // Checked BEFORE the step is announced, so a cancelled run does not emit a
+    // `workflow.step.started` for a step that never begins — a dashboard drawing the graph
+    // from the feed would leave that node spinning forever. The recorded step says
+    // cancelled rather than failed, because those are different things and this is the
+    // only place that still knows which one happened.
+    if (o.signal?.aborted) {
+      results.push({
+        step: i,
+        name: stepDef.name,
+        profile: stepDef.profile,
+        ok: false,
+        error: 'run cancelled before this step started',
+        wallMs: 0,
+      })
+      return conclude(true)
+    }
     const stepStart = performance.now()
     const inputRef = stepDef.input ?? (i === 0 ? 'initial' : `step-${i - 1}.output`)
     const input = resolveInput(context, inputRef, stepDef.field)

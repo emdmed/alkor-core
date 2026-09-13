@@ -24,6 +24,7 @@ import { runAgent } from '../../modes/agentic.ts'
 import { runWorkflow, buildWorkflow } from '../../modes/workflow.ts'
 import { nullTrace, type Trace } from '../../core/trace.ts'
 import { RUN_HEADER_EVENT, RUN_FOOTER_EVENT } from '../../core/runs.ts'
+import { CancelledError, withCancellation } from '../../core/client.ts'
 import { callsModel } from '../../core/config.ts'
 import { withActivityScope, LLM_CALL_STAGE } from '../../core/activity.ts'
 import { EXTRACT_STAGES } from '../../modes/extract.ts'
@@ -220,6 +221,34 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
 
       trace = await deps.openRunTrace(profileName, runId)
 
+      // --- Cancellation ----------------------------------------------------------------
+      // Two ways a run stops early, one mechanism. The connection going away is the common
+      // one — a closed tab, an interrupted curl — and until now it stopped nothing: the
+      // workflow ran to completion writing into a socket nobody was reading, which on this
+      // hardware is minutes of a model the machine could only just afford. `DELETE /run/:id`
+      // is the deliberate one, and it exists because the operator who wants to stop a run is
+      // not always holding the connection that started it.
+      const controller = new AbortController()
+      let cancelledBy: 'disconnect' | 'request' | undefined
+      const cancel = (by: 'disconnect' | 'request') => {
+        if (controller.signal.aborted) return
+        cancelledBy = by
+        controller.abort()
+      }
+      // `writableFinished` distinguishes a disconnect from an ordinary end: 'close' fires on
+      // a response that finished normally too. It happens to be belt-and-braces as the code
+      // stands — the `finally` below has already settled the run by the time 'close' arrives,
+      // so a late `cancel()` would set a field nobody reads — and it stays because the
+      // ordering it relies on is not a property anything enforces. Without it, one
+      // rearrangement that let 'close' land first would mark every completed run cancelled.
+      res.on('close', () => {
+        if (!res.writableFinished) cancel('disconnect')
+      })
+      deps.inFlightRuns.set(runId, { profile: profileName, cancel })
+      // Every model call this run makes now carries the signal, whoever makes it — including
+      // an out-of-tree profile that has never heard of cancellation. See `withCancellation`.
+      const provider = withCancellation(deps.provider, controller.signal)
+
       return withActivityScope({ runId }, async () => {
         deps.activity.emit({
           kind: 'run.started',
@@ -264,7 +293,39 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
             ok,
             wallMs: performance.now() - runStartedAt,
             ...(error ? { error } : {}),
+            // Read from the controller rather than passed in, so it is right on every exit
+            // path — including the ones that reach `settle` believing they failed, because
+            // a cancel lands as an ordinary error inside whatever was running at the time.
+            ...(cancelledBy ? { cancelled: true, cancelledBy } : {}),
           })
+        }
+
+        /**
+         * The run stopped because it was asked to. Answers the request and reports true.
+         *
+         * One helper rather than a branch in each of the three modes, because each of them
+         * signals a cancel differently — an extract throws `CancelledError` out of the
+         * provider, a workflow returns normally with `stoppedEarly` after its step-boundary
+         * check, and an agent returns `stop: 'cancelled'`. What a reader needs is for all
+         * three to produce the same ending, and the fact they agree on is the controller.
+         */
+        const answerCancelled = (e?: unknown): boolean => {
+          if (!cancelledBy && !(e instanceof CancelledError)) return false
+          const by = cancelledBy ?? 'request'
+          deps.activity.emit({
+            kind: 'run.cancelled',
+            profile: profileName,
+            wallMs: performance.now() - runStartedAt,
+            by,
+          })
+          settle(false, `run cancelled (${by})`)
+          reply.cancelled(`run ${runId} was cancelled (${by})`, {
+            runId,
+            profile: profileName,
+            trace: trace.path,
+          })
+          done(499)
+          return true
         }
 
         try {
@@ -282,9 +343,10 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
               trace,
               input: { kind: 'text', text: input, label: 'server-input' },
               options,
-              provider: deps.provider,
+              provider,
               activity: deps.activity,
             })
+            if (answerCancelled()) return
             deps.activity.emit({
               kind: 'run.completed',
               profile: profileName,
@@ -315,9 +377,11 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
               maxIterations: Number(options.iterations ?? profile.maxIterations ?? 12),
               baseUrl,
               trace,
-              provider: deps.provider,
+              signal: controller.signal,
+              provider,
               activity: deps.activity,
             })
+            if (answerCancelled()) return
             deps.activity.emit({
               kind: 'run.completed',
               profile: profileName,
@@ -388,10 +452,12 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
               trace,
               contextDir: options.contextDir as string | undefined,
               runStep: options.step !== undefined ? Number(options.step) : undefined,
-              provider: deps.provider,
+              signal: controller.signal,
+              provider,
               activity: deps.activity,
               ensureBackend: async (stepBaseUrl) => ensureOrExplain(deps.backendFor(stepBaseUrl)),
             })
+            if (answerCancelled()) return
             deps.activity.emit({
               kind: 'run.completed',
               profile: profileName,
@@ -421,6 +487,11 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
           reply.serverError(`mode '${profile.mode}' is not supported by the server`, { runId })
           done(500)
         } catch (e) {
+          // Before the failure path, because a cancelled run is not a failed one and the
+          // console line below would file it as a server fault. `withCancellation` is what
+          // makes this distinguishable at all: without it the abort arrives as "cannot
+          // reach server at … — start one with scripts/llama-server.sh".
+          if (answerCancelled(e)) return
           deps.activity.emit({
             kind: 'run.failed',
             profile: profileName,
@@ -443,6 +514,10 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
           // died — a worse lie than any of the outcomes it could have recorded.
           settle(false, 'the run ended without recording an outcome')
           trace.close()
+          // The run is over one way or another, so it is no longer cancellable. Removed
+          // here rather than at each ending: a run id left in this map is a `DELETE` that
+          // reports success and stops nothing, which is worse than the 404 it should get.
+          deps.inFlightRuns.delete(runId)
         }
       })
 }

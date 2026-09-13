@@ -49,6 +49,15 @@ export interface RunOutcome {
   ok: boolean
   wallMs?: number
   error?: string
+  /**
+   * The run was stopped by whoever started it.
+   *
+   * Carried beside `ok` rather than folded into it: a cancelled run did not succeed, so `ok`
+   * is false, but it did not fail either — nothing about it is a statement about the model or
+   * the contract. A reader totting up failures needs to be able to leave these out, and
+   * before this field existed the only way to spot one was to recognise a message.
+   */
+  cancelled?: boolean
 }
 
 /** One recorded run, as its file and its footer describe it. */
@@ -127,6 +136,7 @@ const outcomeOf = (text: string): RunOutcome | undefined => {
       ok: parsed.ok === true,
       wallMs: typeof parsed.wallMs === 'number' ? parsed.wallMs : undefined,
       error: typeof parsed.error === 'string' ? parsed.error : undefined,
+      ...(parsed.cancelled === true ? { cancelled: true } : {}),
     }
   }
   return undefined

@@ -157,6 +157,7 @@ export {
 export {
   DEFAULT_URL,
   LLAMA_DEFAULT_URL,
+  CancelledError,
   ChatError,
   LlamaError,
   UNIDENTIFIED,
@@ -168,6 +169,7 @@ export {
   serverProps,
   streamChat,
   toolChat,
+  withCancellation,
   type ChatOptions,
   type Provider,
   type StreamChatOptions,

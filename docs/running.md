@@ -262,6 +262,42 @@ recorded on the `workflow.step.completed` lines of the same trace.
 nothing; `TRACE_DIR` moves the directory. `GET /runs` keeps working either way, because it
 reads the directory rather than a memory of what this process ran.
 
+### Stopping a run
+
+A run stops when the caller's connection goes away — a closed tab, an interrupted curl — or
+on request:
+
+```bash
+curl -s -XDELETE localhost:3000/run/<runId>
+```
+
+The `DELETE` answers the cancel, not the run: it says whether there was something in flight to
+stop. The request that started the run is the one that carries its ending, and that ending is
+**499** with `cancelled: true`. Not a 500, which would blame the harness for a button the
+operator pressed, and not a 200, which would claim a result nobody produced. A run that has
+already finished is a 404 — `GET /runs/:id` is where a finished run is looked up, and it
+answers from a file rather than from this process's memory.
+
+Cancellation reaches the model call through the **provider**, not through `ReviewContext`. That
+is what makes an out-of-tree profile cancellable without having heard of cancellation: a
+profile is stopped because of how it was called, not because it remembered to pass a signal on.
+The workflow and agent loops check at their own boundaries too, which is what stops a cancel
+landing during a code step from going unnoticed until the next model is loaded.
+
+**What a cancel does not interrupt.** It takes effect at the next model call or step boundary,
+and it cannot stop a profile's own work in between — a `code` step that sits in a loop for
+thirty seconds without touching the provider will finish those thirty seconds, and the run is
+recorded as cancelled when it does. This is a real limit and it is small in practice for the
+reason the [Operating Context](../PRODUCT.md) gives: in `clinical-verified`, the two long
+steps are model calls (19.5s and 8.1s) and the two code steps are 3ms and 1ms. A run is inside
+a cancellable call for essentially all of its life. A profile that does heavy work of its own
+between calls should take `signal` and check it.
+
+A cancelled run is recorded as cancelled — `cancelled: true` and `cancelledBy` in the footer,
+`outcome.cancelled` in a listing — and emits `run.cancelled` rather than `run.failed`. The
+distinction is the point: the operator pressing stop says nothing about the model, and a
+surface counting failures must be able to leave these out.
+
 See [Nomenclature](reference.md#nomenclature) for how these words nest, and `spec/nomenclature.md` for
 the full statement.
 

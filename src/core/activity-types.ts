@@ -190,6 +190,22 @@ export interface RunFailedEvent extends BaseActivityEvent {
   error: string
 }
 
+/**
+ * A run stopped by whoever started it, which is not a run that failed.
+ *
+ * Its own kind rather than a `run.failed` with a recognisable message: a surface counting
+ * failures would otherwise count the operator pressing stop, and the two belong in different
+ * columns. `by` says which way it was asked for — the caller's connection going away, or an
+ * explicit `DELETE /run/:id` — because those are different situations for a reader chasing
+ * why a run ended.
+ */
+export interface RunCancelledEvent extends BaseActivityEvent {
+  kind: 'run.cancelled'
+  profile: string
+  wallMs: number
+  by: 'disconnect' | 'request'
+}
+
 export interface WorkflowStartedEvent extends BaseActivityEvent {
   kind: 'workflow.started'
 }
@@ -301,6 +317,7 @@ export type ActivityEvent =
   | RunStartedEvent
   | RunCompletedEvent
   | RunFailedEvent
+  | RunCancelledEvent
   | WorkflowStartedEvent
   | WorkflowStepStartedEvent
   | WorkflowStepCompletedEvent

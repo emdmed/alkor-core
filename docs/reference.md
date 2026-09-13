@@ -100,8 +100,8 @@ scripts/      model-manager.ts   start/stop/status llama-server per profile
 src/index.ts  the public API — what a profile is written against
 src/server.ts the interactive HTTP server: POST /pipeline, GET /events (SSE),
               GET /corpus (the packs' source documents, for driving a run by hand),
-              GET /runs (what has been recorded), on-demand model lifecycle
-              via LlamaManager
+              GET /runs (what has been recorded), DELETE /run/:id (stop one
+              in flight), on-demand model lifecycle via LlamaManager
 src/core/corpus.ts
               the pack corpus enumerated for a reader, not for a run — reads here
               stay out of the pack's digest so browsing cannot enter a run's record

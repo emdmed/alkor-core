@@ -66,6 +66,17 @@ export interface Reply {
   notFound(message: string): void
   serverError(message: string, extra?: ErrorExtra): void
   serviceUnavailable(message: string, extra?: ErrorExtra): void
+  /**
+   * A run the CALLER stopped: 499, nginx's "client closed request".
+   *
+   * Non-standard, and chosen anyway because every standard alternative says something false.
+   * A 500 blames the harness for a button the operator pressed, a 200 claims a result that
+   * was never produced, and a 4xx in the registered range describes a request that was
+   * malformed — this one was fine, it simply did not get to finish. A log filtered for
+   * server faults must not surface these, and 499 is the one code readers already parse
+   * that way.
+   */
+  cancelled(message: string, extra?: ErrorExtra): void
   /** The resolved CORS headers, for the handlers that write their own head (SSE). */
   cors: Record<string, string>
 }
@@ -76,6 +87,7 @@ export const replyFor = (res: ServerResponse, cors: Record<string, string>): Rep
   notFound: (message) => json(res, 404, { error: message }, cors),
   serverError: (message, extra) => json(res, 500, { error: message, ...extra }, cors),
   serviceUnavailable: (message, extra) => json(res, 503, { error: message, ...extra }, cors),
+  cancelled: (message, extra) => json(res, 499, { error: message, cancelled: true, ...extra }, cors),
   cors,
 })
 

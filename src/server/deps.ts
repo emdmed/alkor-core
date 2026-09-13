@@ -55,6 +55,14 @@ export interface ServerDeps {
    * whether recording is on — it writes either way and one of the two writes goes nowhere.
    */
   openRunTrace(profileName: string, runId: string): Promise<Trace>
+  /**
+   * Runs in flight, keyed by run id, each able to stop itself.
+   *
+   * Mutable and shared for the same reason the SSE client set is: a handler holding a copy
+   * could register a run nobody can reach, and `DELETE /run/:id` would answer 404 for a run
+   * that is very much running.
+   */
+  inFlightRuns: Map<string, { profile: string; cancel(by: 'disconnect' | 'request'): void }>
   /** Live sessions, each remembering which profile and backend it was opened against. */
   sessions: Map<string, { profile: string; baseUrl: string; session: Session }>
   /** The SSE fan-out: mutable, shared, and the reason this is an object and not a copy. */

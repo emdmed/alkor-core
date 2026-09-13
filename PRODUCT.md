@@ -135,7 +135,10 @@ production reads. Narrower on purpose.
   not a level** — it is what a unit of work is called at any level, joined by `stageId`.
 - **The orchestrator knows nothing about medicine** — the domain lives entirely in packs and
   profiles, and the layer would run a non-medical contract unchanged.
-- A run ends in a verdict or a refusal that names the step that stopped it.
+- A run ends in a verdict, a refusal that names the step that stopped it, or a cancellation.
+  A run stops when its caller disconnects or on `DELETE /run/:id`, and **a cancelled run is
+  recorded as cancelled rather than failed** — the operator pressing stop says nothing about
+  the model, and a count of failures that included it would be measuring who was watching.
 - Reference workflow **`clinical-verified`**: extract (gemma-4-E4B, :8081, 19.5s) →
   verify-derived (code, no GPU, 3ms) → verify-source (second model, :8085, 8.1s) → assess
   (code, 1ms). **Two of the four steps decide by rule and never touch a GPU**, and the ending is

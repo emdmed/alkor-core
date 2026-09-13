@@ -10,6 +10,7 @@
  *   GET  /events                    — SSE stream of activity events (metadata-only)
  *   GET  /runs                      — recorded runs, newest first
  *   GET  /runs/:id                  — one recorded run, by run id or by listed id
+ *   DELETE /run/:id                 — stop a run that is still in flight
  *   POST /route                     — classify input (uses router mode directly)
  *   POST /pipeline                  — route to and execute one workflow
  *   POST /run                       — execute a profile against input
@@ -26,6 +27,7 @@ import { health } from './server/routes/health.ts'
 import { corpusList, corpusDocument } from './server/routes/corpus.ts'
 import { events } from './server/routes/events.ts'
 import { runsList, runsDocument } from './server/routes/runs.ts'
+import { cancelRun } from './server/routes/cancel.ts'
 import { sessionCreate, sessionAction, sessionDelete } from './server/routes/session.ts'
 import { routeRequest } from './server/routes/route.ts'
 import { runPipeline } from './server/routes/pipeline.ts'
@@ -490,6 +492,16 @@ export const createServer = async (configPath?: string, options: ServerOptions =
   const openRunTrace = async (profileName: string, runId: string): Promise<Trace> =>
     serverTrace ? openTrace(profileName, await runRedactor(profileName), runId) : nullTrace()
 
+  /**
+   * Runs currently in flight, so one request can stop another's work.
+   *
+   * A run outlives the handler that started it only in the sense that the handler is awaiting
+   * it; what it does NOT outlive is this map, which is why every entry is removed in a
+   * `finally`. Keyed by run id because that is the only name the caller has — it is what came
+   * back on the response and what `DELETE /run/:id` is spelled with.
+   */
+  const inFlightRuns = new Map<string, { profile: string; cancel(by: 'disconnect' | 'request'): void }>()
+
   // In-memory sessions
   const sessions = new Map<string, { profile: string; baseUrl: string; session: Session }>()
 
@@ -562,6 +574,7 @@ export const createServer = async (configPath?: string, options: ServerOptions =
     pinnedRouters,
     manageModels,
     openRunTrace,
+    inFlightRuns,
     sessions,
     sse,
     readBody,
@@ -631,6 +644,10 @@ export const createServer = async (configPath?: string, options: ServerOptions =
           return
         }
         return void (await sessionAction(routeCtx(), id, action))
+      }
+
+      if (method === 'DELETE' && url.pathname.startsWith('/run/')) {
+        return void (await cancelRun(routeCtx()))
       }
 
       if (method === 'DELETE' && url.pathname.match(/^\/session\/([^/]+)$/)) {

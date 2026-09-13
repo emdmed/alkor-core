@@ -30,7 +30,7 @@ Rules for a reader:
 | "model picks up a message left by another" | `workflow.step.started` carries the edge `{ step, name, profile, input:{ ref:'step-1', field:'report', fromProfile:'clinical' } }` |
 | HTTP envelope | `http.request` / `http.completed` |
 | routing | `route.decided` (profile, confidence, reason, rule-vs-model) |
-| run lifecycle | `run.started` / `run.completed` / `run.failed` (inputChars + digest; `run.started` also carries `trace`, the path the run is being recorded to, or `(not recorded)`) |
+| run lifecycle | `run.started` / `run.completed` / `run.failed` / `run.cancelled` (inputChars + digest; `run.started` also carries `trace`, the path the run is being recorded to, or `(not recorded)`; `run.cancelled` carries `by`, `disconnect` or `request`) |
 | workflow | `workflow.started` / `workflow.step.started` / `workflow.step.completed` / `workflow.completed` |
 | sessions | `session.created` / `turn.started` / `turn.completed` (stop, iterations, toolsUsed, usage) / `session.destroyed` |
 | tools | `tool.called` / `tool.completed` / `tool.declined` |

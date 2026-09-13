@@ -162,6 +162,18 @@ export interface ChatOptions {
 
 export class ChatError extends Error {}
 
+/**
+ * A call that did not finish because the RUN was cancelled, as distinct from one that failed.
+ *
+ * It needs its own type because the two are told apart nowhere else. An aborted `fetch`
+ * surfaces as a transport failure, and `chat` turns a transport failure into "cannot reach
+ * server at … — start one with scripts/llama-server.sh": true of a dark port, and a
+ * fabrication when the operator has just pressed stop. A run that reported a missing
+ * llama-server because somebody closed a browser tab would send the next reader to debug a
+ * server that was never down.
+ */
+export class CancelledError extends Error {}
+
 export { ChatError as LlamaError }
 
 // Re-exported through this module's own surface: a caller reading timings off a completion
@@ -236,6 +248,15 @@ export interface ToolChatOptions {
   baseUrl?: string
   model?: string
   label: string
+  /**
+   * The caller's own deadline, merged with the harness backstop rather than replacing it.
+   *
+   * Declared here rather than on `StreamChatOptions` alone, which is where it used to live:
+   * a run that can be cancelled must be cancellable at every call it makes, and a tool-
+   * calling step that ignored the signal would go on generating for a minute after the
+   * operator asked it to stop.
+   */
+  signal?: AbortSignal
 }
 
 /**
@@ -280,7 +301,11 @@ export const toolChat = async (
         messages: o.messages,
         ...toolFields(o.tools),
       }),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      // The caller's signal and the backstop, not one or the other: a run that was
+      // cancelled must stop now, and a run nobody cancelled must still have a deadline.
+      signal: o.signal
+        ? AbortSignal.any([o.signal, AbortSignal.timeout(TIMEOUT_MS)])
+        : AbortSignal.timeout(TIMEOUT_MS),
       dispatcher,
     })
   } catch (e) {
@@ -313,7 +338,6 @@ export interface StreamChatOptions extends ToolChatOptions {
   onToken?(text: string): void
   /** Reasoning fragments, when the server separates them (Qwen3 and friends). */
   onReasoning?(text: string): void
-  signal?: AbortSignal
   /**
    * Transport seam, so the SSE reader can be tested without a server — the same device
    * `runAgent` uses for the tool loop. It has to be explicit rather than a `globalThis`
@@ -795,4 +819,51 @@ export const defaultProvider: Provider = {
   toolChat,
   streamChat,
   identify: identifyServer,
+}
+
+/**
+ * A provider whose every call carries one run's cancellation signal.
+ *
+ * THE WRAPPER IS THE POINT. Cancellation could have been threaded through `ReviewContext`
+ * and down into each profile, and it would have reached exactly the profiles in this
+ * repository — an out-of-tree profile, which is the case the `Provider` seam exists for,
+ * would have gone on generating after the operator pressed stop. Wrapping the provider
+ * instead means a profile is cancellable because of how it was CALLED, not because of what
+ * it remembered to pass on.
+ *
+ * The caller's own signal is merged rather than replaced: a profile that set a deadline of
+ * its own keeps it, and gets the run's cancel on top.
+ *
+ * `identify` is deliberately not guarded. It is a cheap probe about a backend rather than
+ * work on behalf of the run, and refusing it mid-cancel would leave the identity cache with
+ * a hole that outlives the run that caused it.
+ */
+export const withCancellation = (provider: Provider, signal: AbortSignal): Provider => {
+  const merge = <T extends { signal?: AbortSignal }>(o: T): T =>
+    ({ ...o, signal: o.signal ? AbortSignal.any([o.signal, signal]) : signal })
+
+  /**
+   * One call, with the two moments a cancel can arrive.
+   *
+   * Before it starts: refuse rather than spend a minute of generation nobody is waiting
+   * for. During it: the abort surfaces from `fetch` as a transport error, which `chat`
+   * has already dressed up as a missing server — so the verdict is re-read from the signal
+   * here, where the truth is known, rather than believed from the message.
+   */
+  const guard = async <T>(label: string, call: () => Promise<T>): Promise<T> => {
+    if (signal.aborted) throw new CancelledError(`run cancelled before ${label}`)
+    try {
+      return await call()
+    } catch (e) {
+      if (signal.aborted) throw new CancelledError(`run cancelled during ${label}`)
+      throw e
+    }
+  }
+
+  return {
+    chat: (o) => guard(o.label, () => provider.chat(merge(o))),
+    toolChat: (o) => guard(o.label, () => provider.toolChat(merge(o))),
+    streamChat: (o) => guard(o.label, () => provider.streamChat(merge(o))),
+    identify: (baseUrl) => provider.identify(baseUrl),
+  }
 }
