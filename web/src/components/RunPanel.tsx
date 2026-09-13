@@ -202,8 +202,9 @@ export const RunPanel = memo(({ state, run, serverUrl }: RunPanelProps) => {
                 this is clinical evidence. PRODUCT.md requires the caveat to travel with the
                 output, and the empty state is the one place it costs the operator nothing. */}
             <p className="chat-presets-note">
-              Not a medical device, and not clinical decision support. The pack corpus contains
-              no patients — every case in it is synthetic.
+              <b>Research and educational use only.</b> Not a medical device, not clinical
+              decision support, and not to be used to make medical decisions. The pack corpus
+              contains no patients — every case in it is synthetic.
             </p>
           </div>
         </div>

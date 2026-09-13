@@ -60,6 +60,16 @@ export const Header = memo(({ state, serverUrl, onServerUrlChange, onConnect, pa
             beside it for the reader arriving cold. It is the first thing cut when the bar
             runs out of room — by then the operator knows what this is. */}
         <span className="brand-descriptor">structured extraction from clinical notes</span>
+        {/* The one claim that must never scroll away. The rail's note only stands in the
+            empty state, which is the exact moment nobody is reading a result — this sits in
+            the permanent band so it is on screen while the output is. Short enough to stay
+            out of the way, with the whole sentence in reach on hover. */}
+        <span
+          className="brand-disclaimer"
+          title="Research and educational tool only. Not a medical device, not clinical decision support, and not to be used to make medical decisions."
+        >
+          Research use only — not for medical decisions
+        </span>
         <ConnectionMenu
           serverUrl={serverUrl}
           onServerUrlChange={onServerUrlChange}

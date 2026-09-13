@@ -471,6 +471,27 @@ button, input, textarea, select { font: inherit; color: inherit; }
 
 @media (max-width: 1180px) { .brand-descriptor { display: none; } }
 
+/* The disclaimer is not a status, so it does not join the health badges on the right, and
+   it is not decoration, so it does not read as quietly as the descriptor it follows. A
+   hairline ring and the warn hue give it a body of its own at the smallest type in the
+   scale — present in peripheral vision, never competing with a run.
+
+   It has no hide rule. The descriptor can go when the bar runs out of room because by then
+   the operator knows what this is; what the tool must not be used for is true for every
+   reader at every width. */
+.brand-disclaimer {
+  flex: none;
+  font-size: var(--t-label);
+  letter-spacing: 0.01em;
+  color: var(--warn);
+  white-space: nowrap;
+  padding: 2px var(--s-2);
+  border: 1px solid var(--warn-border);
+  border-radius: var(--r-sm);
+  background: var(--warn-soft);
+  cursor: help;
+}
+
 .topbar-rack {
   display: flex;
   align-items: center;

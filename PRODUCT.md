@@ -92,7 +92,9 @@ reads. Narrower on purpose.
 - **The web dashboard is desktop-only.** It is operated beside a running server on the machine
   doing the work, so there is no mobile target and phone-width behavior is out of scope.
 - **Not a medical device**, not clinical decision support, not validation evidence for any
-  regulator.
+  regulator. A research and educational tool; its output is not to be used to make medical
+  decisions. The caveat travels with the output — it is resident in the dashboard header and
+  carried in every copied run log, not left to a surface a reader may never open.
 - **Not an inference server** and **not a generic eval framework**.
 - Status: pre-release.
 

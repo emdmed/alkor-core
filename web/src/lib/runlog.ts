@@ -107,6 +107,17 @@ const formatValue = (value: unknown): string => {
 const section = (title: string, body: string): string => `--- ${title} ---\n${body}\n`
 
 /**
+ * The caveat, carried by the log rather than by the screen it was copied from.
+ *
+ * A run log exists to be pasted somewhere else — a bug report, a ticket, a message to
+ * someone who never opened this dashboard. The header band says this at the top of the
+ * window; once the text leaves the window, this line is the only thing still saying it.
+ */
+const DISCLAIMER =
+  'Research and educational tool only. Not a medical device, not clinical decision support,\n' +
+  'and not to be used to make medical decisions.'
+
+/**
  * The whole run as copyable text.
  *
  * Ordered by what a reader needs first: the verdict, then the error if there was one, then
@@ -128,7 +139,7 @@ export const formatRunLog = (req: RunLogRequest, events: readonly ActivityEvent[
     durationMs != null && Number.isFinite(durationMs) ? `duration  ${(durationMs / 1000).toFixed(2)}s` : undefined,
   ].filter((line): line is string => line !== undefined)
 
-  const parts = [head.join('\n') + '\n']
+  const parts = [head.join('\n') + '\n', DISCLAIMER + '\n']
 
   if (req.error) parts.push(section('error', req.error))
 

@@ -20,6 +20,11 @@ node src/cli.ts eval    --profile clinical --constrain                        # 
 > in this repository, against weights named by sha256. See [Measured](docs/measured.md#measured) — including
 > what the result does *not* show.
 
+> **Research and educational tool only.** alkor is **not a medical device**, not clinical
+> decision support, and not validation evidence for any regulator. Its output is not to be
+> used to make medical decisions, diagnose, treat, or care for any patient. See
+> [What this is, and what it is not](#what-this-is-and-what-it-is-not).
+
 ## Quickstart
 
 You need **Node ≥ 24** and **`llama-server`** from
@@ -112,7 +117,8 @@ behind your back. The interactive server (`src/server.ts`) is the exception — 
 model lifecycles on demand, starting a backend on first request and sweeping it after idle.
 
 **It is not a medical device**, not clinical decision support, and not validation evidence
-for any regulator. What it measures is up to whoever points it.
+for any regulator. It is a research and educational tool, and nothing it outputs is to be
+used to make medical decisions. What it measures is up to whoever points it.
 
 ## What makes a small model produce a usable contract
 

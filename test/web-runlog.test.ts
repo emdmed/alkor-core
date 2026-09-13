@@ -88,6 +88,16 @@ test('a failed run leads with its error and still carries the events it managed 
   assert.doesNotMatch(log, /--- response ---/)
 })
 
+test('every log carries the disclaimer, because the text outlives the window it was copied from', () => {
+  for (const status of ['pending', 'done', 'error'] as const) {
+    const log = formatRunLog({ ...base, status }, [])
+    assert.match(log, /Research and educational tool only/)
+    assert.match(log, /not to be used to make medical decisions/)
+    // Above the payloads: a reader who stops at the first screen has still read it.
+    assert.ok(log.indexOf('Research and educational') < log.indexOf('--- events'), 'the disclaimer must lead')
+  }
+})
+
 test('an empty feed says why it is empty instead of reading as a clean run', () => {
   const pending = formatRunLog({ ...base, status: 'pending' }, [])
   assert.match(pending, /has not emitted an event/)
