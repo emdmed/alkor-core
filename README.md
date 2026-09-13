@@ -243,11 +243,10 @@ recover zero is more useful than retrying in production.
 
 ## Status
 
-**Alpha, released for testing.** The version carries the stage as a semver prerelease tag
-(`0.1.0-alpha.1`), so everything that reports it — the CLI banner, `--version`, the badge on
-the dashboard mark — reads one string and stops saying "alpha" the moment the tag is
-dropped. What that stage means here: the pieces marked done below are tested and usable, and
-the interfaces around them are not yet frozen.
+**First release.** The version is `0.1.1`, and everything that reports it — the CLI banner,
+`--version`, the badge on the dashboard mark — reads that one string. What that stage means
+here: the pieces marked done below are tested and usable, and the interfaces around them are
+not yet frozen.
 
 | | |
 |---|---|

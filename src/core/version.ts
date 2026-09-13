@@ -26,7 +26,8 @@ const read = (): string => {
 export const HARNESS_VERSION = read()
 
 /**
- * The release stage — `alpha` today — read off the version rather than declared beside it.
+ * The release stage — absent today, on a plain `0.1.1` — read off the version rather than
+ * declared beside it.
  *
  * Same reason the version is not a constant: a stage written down separately is a second
  * claim about the same thing, and the day the version is bumped out of alpha the banner
