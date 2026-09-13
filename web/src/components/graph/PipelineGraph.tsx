@@ -56,7 +56,7 @@ const widenToRows = (framed: GraphNode[], trail: GraphNode[]): GraphNode[] => {
 }
 
 const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspect }: PipelineGraphProps) => {
-  const { fitView, getNodes, getViewport, setViewport } = useReactFlow()
+  const { fitView, getNodes, getInternalNode, getViewport, setViewport } = useReactFlow()
   const canvasWidth = useStore((store) => store.width)
   const graphShellRef = useRef<HTMLDivElement>(null)
   // The run strip scrolls once the bar is full, and the chip most worth seeing is the one
@@ -190,6 +190,19 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
       const steps = (n.data.steps as CompactStepData[] | undefined) ?? []
       return {
         ...n,
+        // Hand back the size the canvas last measured for this card.
+        //
+        // Every feed event rebuilds this array from scratch, so each card arrives as a new
+        // object, and a node whose `measured` is absent is one React Flow treats as never
+        // measured: it renders it `visibility: hidden` and drops the edges that need its
+        // handles, until its ResizeObserver reports a size back. That recovery is a frame
+        // late, and it is lost entirely when a second rebuild lands inside the same commit —
+        // the node is hidden again without its measured flag ever changing, so no re-observe
+        // is scheduled and nothing ever reports the size again. The board then stays blank
+        // until the page is reloaded. Browsing the pack corpus is the ordinary way to hit
+        // this: listing it and reading a document are themselves feed events, so opening the
+        // picker and picking a note rebuild the board twice in quick succession.
+        measured: getInternalNode(n.id)?.measured ?? n.measured,
         data: {
           ...n.data,
           steps: steps.map((step) => ({
@@ -224,7 +237,7 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
       }
     })
     return { nodes, edges: graph.edges, title: graph.title, expanded: graph.expanded, disclosures: graph.disclosures }
-  }, [state, selected, compactExpanded, compactCollapsed, onInspect])
+  }, [state, selected, compactExpanded, compactCollapsed, onInspect, getInternalNode])
   const { nodes, edges, expanded } = graphView
 
   // Compact disclosure keys embed the workflow node identity and step number; when a
