@@ -230,6 +230,8 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
       // not always holding the connection that started it.
       const controller = new AbortController()
       let cancelledBy: 'disconnect' | 'request' | undefined
+      /** The cancel actually stopped this run, as opposed to arriving after it finished. */
+      let interrupted = false
       const cancel = (by: 'disconnect' | 'request') => {
         if (controller.signal.aborted) return
         cancelledBy = by
@@ -267,10 +269,13 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
               ok,
               wallMs: performance.now() - runStartedAt,
               ...(error ? { error } : {}),
-              // Read from the controller rather than passed in, so it is right on every exit
-              // path — including the ones that reach `settle` believing they failed, because
-              // a cancel lands as an ordinary error inside whatever was running at the time.
-              ...(cancelledBy ? { cancelled: true, cancelledBy } : {}),
+              // `interrupted`, not `cancelledBy`, because a cancel can arrive too late to
+              // stop anything. A run that finished before the abort landed is a completed
+              // run somebody also asked to stop, and filing it as cancelled would put
+              // finished work in the column a reader uses to discount unfinished work.
+              // Both facts are kept. They are not the same fact.
+              ...(interrupted ? { cancelled: true, cancelledBy } : {}),
+              ...(cancelledBy && !interrupted ? { cancelRequested: cancelledBy } : {}),
             })
           } catch (e) {
             // A footer that cannot be written leaves a run with no recorded outcome, which is
@@ -283,17 +288,30 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
         }
 
         /**
-         * The run stopped because it was asked to. Answers the request and reports true.
+         * The run was stopped by the cancel. Answers the request and reports true.
          *
-         * One helper rather than a branch in each of the three modes, because each of them
-         * signals a cancel differently — an extract throws `CancelledError` out of the
-         * provider, a workflow returns normally with `stoppedEarly` after its step-boundary
-         * check, and an agent returns `stop: 'cancelled'`. What a reader needs is for all
-         * three to produce the same ending, and the fact they agree on is the controller.
+         * One helper rather than a branch in each of the three modes, because each signals a
+         * cancel differently — an extract throws `CancelledError` out of the provider, a
+         * workflow returns normally carrying `cancelled`, and an agent returns
+         * `stop: 'cancelled'`. What a reader needs is for all three to end the same way.
+         *
+         * IT RETURNS WHAT THE RUN MANAGED TO PRODUCE. A workflow cancelled after step two
+         * has two steps' results, an ending its terminal step still rendered, and a `final`
+         * value; an agent has its iteration count and the tools it already ran, which is the
+         * only record that anything touched the workspace. Discarding all that because the
+         * run also reports a stop is the mistake `WorkflowResult.final` was written to
+         * prevent — "losing its produced value merely because the workflow also reports
+         * failure makes the response impossible to inspect" — and a cancel is the case where
+         * partial work is likeliest to be the whole point of having asked.
+         *
+         * Only the extract path has nothing to hand back: its cancel arrives as a throw from
+         * inside the one call it makes, so there is no half-finished reading to return. That
+         * is the absence of a result, not a decision to withhold one.
          */
-        const answerCancelled = (e?: unknown): boolean => {
+        const answerCancelled = (e?: unknown, produced?: { result: object; output: unknown }): boolean => {
           if (!cancelledBy && !(e instanceof CancelledError)) return false
           const by = cancelledBy ?? 'request'
+          interrupted = true
           deps.activity.emit({
             kind: 'run.cancelled',
             profile: profileName,
@@ -305,6 +323,11 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
             runId,
             profile: profileName,
             trace: trace.path,
+            // Spread under the same shape a completed run answers in, so a client parses one
+            // response format rather than two. `cancelled: true` on the envelope is what says
+            // not to read it as a finished run.
+            ...(produced ? deps.runResult(produced.result, produced.output) : {}),
+            ...(automatic ? { workflow: profileName, route: pipelineRoute } : {}),
           })
           done(499)
           return true
@@ -361,7 +384,11 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
               provider,
               activity: deps.activity,
             })
-            if (answerCancelled()) return
+            // No `answerCancelled` here. A cancel during this mode arrives as a throw from
+            // inside the one call it makes and is handled in the catch; reaching this line
+            // means the review RETURNED, so the reading is complete and a cancel that landed
+            // alongside it lost the race. Discarding a finished reading for a stop that did
+            // not stop it would be throwing away the work and the answer both.
             deps.activity.emit({
               kind: 'run.completed',
               profile: profileName,
@@ -396,7 +423,10 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
               provider,
               activity: deps.activity,
             })
-            if (answerCancelled()) return
+            // The agent says whether the loop was interrupted; `iterations` and `toolsUsed`
+            // go back either way, because they are the only record that something already
+            // ran against the workspace.
+            if (result.stop === 'cancelled' && answerCancelled(undefined, { result, output: result.answer ?? result })) return
             deps.activity.emit({
               kind: 'run.completed',
               profile: profileName,
@@ -472,20 +502,30 @@ export const runPipeline = async ({ req, res, url, reply, done, deps }: RouteCon
               activity: deps.activity,
               ensureBackend: async (stepBaseUrl) => ensureOrExplain(deps.backendFor(stepBaseUrl)),
             })
-            if (answerCancelled()) return
+            // The run's ending, named rather than left for a client to sniff out of the
+            // step list. A workflow with a terminal step has written the one part of the
+            // response meant for a person to read, and a client should not have to guess
+            // which step that was — nor fall back to shape-matching a report. Composed
+            // BEFORE the cancel is answered, because a cancelled run has an ending too: the
+            // terminal step runs on every exit, and its sentence is the most useful thing a
+            // stopped run can hand back.
+            const terminalIndex = workflowSteps.findIndex((step) => step.final)
+            const ending = terminalIndex === -1
+              ? undefined
+              : result.steps.find((step) => step.step === terminalIndex)?.text
+
+            // `result.cancelled` rather than `stoppedEarly`: the latter is set by any step
+            // returning not-ok and cannot tell a cancel from a verifier's refusal. Whatever
+            // the chain got through — the steps that ran, the ending, the last value
+            // produced — goes back with it.
+            if (result.cancelled && answerCancelled(undefined, { result: { ...result, ending }, output: result.final })) {
+              return
+            }
             deps.activity.emit({
               kind: 'run.completed',
               profile: profileName,
               wallMs: performance.now() - runStartedAt,
             })
-            // The run's ending, named rather than left for a client to sniff out of the
-            // step list. A workflow with a terminal step has written the one part of the
-            // response meant for a person to read, and a client should not have to guess
-            // which step that was — nor fall back to shape-matching a report.
-            const terminalIndex = workflowSteps.findIndex((step) => step.final)
-            const ending = terminalIndex === -1
-              ? undefined
-              : result.steps.find((step) => step.step === terminalIndex)?.text
             // `ok` here means THE CHAIN COMPLETED, and nothing stronger. `stoppedEarly` is
             // set by any step returning not-ok, which is the same signal for a step that
             // broke and for a verifier that refused a quote — the workflow level does not

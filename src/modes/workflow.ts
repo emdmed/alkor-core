@@ -224,6 +224,16 @@ export interface WorkflowResult {
   final?: unknown
   /** The workflow stopped early because a step failed. */
   stoppedEarly: boolean
+  /**
+   * The chain stopped because `signal` fired, not because a step went wrong.
+   *
+   * `stoppedEarly` cannot answer this: it is set by any step returning not-ok, which is the
+   * same signal for a step that broke, a verifier that refused a quote, and a run somebody
+   * cancelled. A caller distinguishing "stop, I asked for that" from "stop, something is
+   * wrong" would otherwise be reading the error strings, and this is the fact rather than a
+   * recognisable message.
+   */
+  cancelled?: boolean
   /** Total wall time for the workflow. */
   totalMs: number
 }
@@ -443,7 +453,16 @@ export const runWorkflow = async (o: WorkflowOptions): Promise<WorkflowResult> =
     const totalMs = performance.now() - startedAt
     rootDone(stoppedEarly, totalMs)
     if (announce && !stoppedEarly) o.activity?.emit({ kind: 'workflow.completed', stoppedEarly: false, totalMs })
-    return { steps: results, final: finalOutput(results), stoppedEarly, totalMs }
+    // Read from the signal rather than passed in, so it is right on every exit — a cancel
+    // that lands inside a step arrives as that step's error, and only the signal knows
+    // the difference between that and a step that genuinely broke.
+    return {
+      steps: results,
+      final: finalOutput(results),
+      stoppedEarly,
+      ...(o.signal?.aborted ? { cancelled: true } : {}),
+      totalMs,
+    }
   }
 
   const actualStart = o.runStep !== undefined ? o.runStep : startStep
@@ -456,7 +475,13 @@ export const runWorkflow = async (o: WorkflowOptions): Promise<WorkflowResult> =
     await runTerminal(o.steps[terminalIndex]!, terminalIndex, stoppedEarly)
     const totalMs = performance.now() - startedAt
     rootDone(stoppedEarly, totalMs)
-    return { steps: results, final: finalOutput(results), stoppedEarly, totalMs }
+    return {
+      steps: results,
+      final: finalOutput(results),
+      stoppedEarly,
+      ...(o.signal?.aborted ? { cancelled: true } : {}),
+      totalMs,
+    }
   }
 
   if (actualStart >= chainEnd) {

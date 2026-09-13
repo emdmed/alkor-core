@@ -255,7 +255,7 @@ const createStubServer = (): Server => {
 }
 
 /** A server whose one profile blocks until released, so a run can be caught in flight. */
-const slowServer = async (): Promise<{
+const slowServer = async (blockMs = 6000): Promise<{
   url: string
   release: () => void
   started: () => Promise<void>
@@ -265,8 +265,30 @@ const slowServer = async (): Promise<{
   const dir = mkdtempSync(join(tmpdir(), 'alkor-cancel-'))
   const modulePath = join(dir, 'slow.mjs')
   const tomlPath = join(dir, 'profiles.toml')
+  const afterPath = join(dir, 'after.mjs')
+  const wfPath = join(dir, 'wf.mjs')
   const gate = join(dir, 'release')
-  writeFileSync(tomlPath, `[slow]\nmode = "code"\nmodule = "${modulePath}"\n`)
+  // Two ways to drive the same blocking profile: on its own, where a cancel cannot reach it
+  // at all (a `code` review that ignores the provider runs to completion), and inside a
+  // workflow, where the step boundary is the seam the cancel lands on. The pair is what
+  // separates "the cancel stopped the run" from "the cancel arrived after it finished".
+  writeFileSync(
+    tomlPath,
+    `[slow]\nmode = "code"\nmodule = "${modulePath}"\n\n` +
+      `[after]\nmode = "code"\nmodule = "${afterPath}"\n\n` +
+      `[wf]\nmode = "workflow"\nmodule = "${wfPath}"\n` +
+      'steps = [{ name = "block", profile = "slow" }, { name = "after", profile = "after" }]\n',
+  )
+  writeFileSync(
+    afterPath,
+    "export const PROFILE = { name: 'after', mode: 'code', needsPack: false, " +
+      "async review() { return { ok: true, text: 'second step ran', report: { second: true } } } }\n",
+  )
+  writeFileSync(
+    wfPath,
+    "export const PROFILE = { name: 'wf', mode: 'workflow', needsPack: false, " +
+      "async review() { return { ok: true, text: 'never reached' } } }\n",
+  )
   // Polls a file rather than taking a callback: the profile is loaded in this process but
   // through a URL import, so it does not share module state with the test.
   writeFileSync(
@@ -277,11 +299,20 @@ const slowServer = async (): Promise<{
       "  name: 'slow', mode: 'code', needsPack: false,\n" +
       '  async review(ctx) {\n' +
       `    writeFileSync('${join(dir, 'started')}', '1')\n` +
-      `    for (let i = 0; i < 600 && !existsSync('${gate}'); i++) await sleep(10)\n` +
+      `    for (let i = 0; i < ${Math.ceil(blockMs / 10)} && !existsSync('${gate}'); i++) await sleep(10)\n` +
       "    return { ok: true, text: 'finished', report: { finished: true } }\n" +
       '  },\n' +
       '}\n',
   )
+
+  // A trace directory per server, not per file. Two tests that both drive `wf` would
+  // otherwise share one, and "the newest wf run" — which is how a test finds the id of a
+  // request still in flight — could resolve to the PREVIOUS test's run, which already has
+  // an outcome and the wrong `cancelledBy`. That is a real flake, seen roughly one run in
+  // three, and it is the listing being ambiguous rather than the server being wrong.
+  const traceDir = join(dir, 'traces')
+  const outerTraceDir = process.env.TRACE_DIR
+  process.env.TRACE_DIR = traceDir
 
   const server: Server = await createAlkorServer(tomlPath)
   server.listen(0, '127.0.0.1')
@@ -308,24 +339,26 @@ const slowServer = async (): Promise<{
       server.closeAllConnections()
       server.close()
       await once(server, 'close')
+      if (outerTraceDir === undefined) delete process.env.TRACE_DIR
+      else process.env.TRACE_DIR = outerTraceDir
       rmSync(dir, { recursive: true, force: true })
     },
   }
 }
 
-test('DELETE /run/:id stops a run in flight, and the run says cancelled', async () => {
+test('a cancelled workflow returns everything it got through', async () => {
   const { url, started, release, close } = await slowServer()
   try {
     const runPromise = fetch(`${url}/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile: 'slow', input: 'anything' }),
+      body: JSON.stringify({ profile: 'wf', input: 'anything' }),
     })
     await started()
 
     // The run id is not on the response yet — it is still open — so find it the way an
     // operator would: the run is the one in flight.
-    const listed = (await (await fetch(`${url}/runs?profile=slow&limit=1`)).json()) as any
+    const listed = (await (await fetch(`${url}/runs?profile=wf&limit=1`)).json()) as any
     const runId = listed.runs[0].runId as string
 
     const cancel = await fetch(`${url}/run/${runId}`, { method: 'DELETE' })
@@ -340,8 +373,23 @@ test('DELETE /run/:id stops a run in flight, and the run says cancelled', async 
     assert.equal(body.cancelled, true)
     assert.equal(body.runId, runId)
 
-    // And the recording says cancelled rather than failed, which is the distinction a
-    // listing has to be able to make.
+    // THE POINT: the work the run got through comes back with it. Step one finished before
+    // the cancel landed, and throwing that away because the run also reports a stop is the
+    // mistake `WorkflowResult.final` exists to prevent.
+    assert.ok(Array.isArray(body.steps), 'the steps that ran must come back')
+    assert.equal(body.steps[0].name, 'block')
+    assert.equal(body.steps[0].ok, true)
+    assert.ok(body.steps[0].report, 'the finished step keeps its output')
+    // The step the cancel PREVENTED is recorded too, as not-ok and saying why. Naming it is
+    // worth more than omitting it: a reader comparing this run to a complete one can see
+    // where the chain stopped rather than inferring it from a short list.
+    const blocked = body.steps.find((step: any) => step.name === 'after')
+    assert.ok(blocked, 'the step that never ran must still be named')
+    assert.equal(blocked.ok, false)
+    assert.match(String(blocked.error), /cancelled/)
+
+    // The recording says cancelled rather than failed, which is the distinction a listing
+    // has to be able to make.
     const foot = readFileSync(body.trace, 'utf8')
       .trim()
       .split('\n')
@@ -351,37 +399,79 @@ test('DELETE /run/:id stops a run in flight, and the run says cancelled', async 
     assert.equal(foot.cancelled, true)
     assert.equal(foot.cancelledBy, 'request')
 
-    const summary = listRuns({ profile: 'slow' }).find((r) => r.runId === runId)
+    const summary = listRuns({ profile: 'wf' }).find((r) => r.runId === runId)
     assert.equal(summary?.outcome?.cancelled, true)
   } finally {
     await close()
   }
 })
 
-test('a run whose caller disconnects cancels itself, and says so', async () => {
+test('a cancel that arrives too late does not discard a finished run', async () => {
   const { url, started, release, close } = await slowServer()
+  try {
+    // `slow` on its own is a `code` review that never consults the provider, so nothing can
+    // interrupt it — it runs to completion whatever the caller asks. That is the race, and
+    // the run that won it must come back as the finished run it is.
+    const runPromise = fetch(`${url}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile: 'slow', input: 'anything' }),
+    })
+    await started()
+    const listed = (await (await fetch(`${url}/runs?profile=slow&limit=1`)).json()) as any
+    const runId = listed.runs[0].runId as string
+    await fetch(`${url}/run/${runId}`, { method: 'DELETE' })
+    release()
+
+    const res = await runPromise
+    assert.equal(res.status, 200, 'a run that finished is a run that finished')
+    const body = (await res.json()) as any
+    assert.equal(body.ok, true)
+    assert.equal(body.text, 'finished')
+
+    // Both facts, and they are not the same fact: it completed, and a cancel was asked for.
+    const foot = readFileSync(body.trace, 'utf8')
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l))
+      .find((l) => l.event === RUN_FOOTER_EVENT)
+    assert.equal(foot.ok, true)
+    assert.equal(foot.cancelled, undefined, 'finished work must not be filed as cancelled')
+    assert.equal(foot.cancelRequested, 'request')
+  } finally {
+    await close()
+  }
+})
+
+test('a workflow whose caller disconnects cancels itself, and says so', async () => {
+  const { url, started, close } = await slowServer(1200)
   try {
     const abort = new AbortController()
     const runPromise = fetch(`${url}/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile: 'slow', input: 'anything' }),
+      body: JSON.stringify({ profile: 'wf', input: 'anything' }),
       signal: abort.signal,
     }).catch(() => undefined)
     await started()
 
-    const listed = (await (await fetch(`${url}/runs?profile=slow&limit=1`)).json()) as any
+    const listed = (await (await fetch(`${url}/runs?profile=wf&limit=1`)).json()) as any
     const runId = listed.runs[0].runId as string
     const tracePath = listed.runs[0].path as string
 
     // The tab closes. Nothing is waiting for this run any more.
+    //
+    // NOT followed by release(). A socket close has no observable event on this side, so
+    // releasing the gate immediately raced the server noticing the disconnect — the step
+    // finished first, the workflow completed, and the run was recorded as the successful
+    // run it had become. Letting the step's own budget expire instead makes the ordering a
+    // fact rather than a hope: the abort lands at once, the step ends a second later.
     abort.abort()
     await runPromise
-    release()
 
     // Wait for the server to finish unwinding the run it no longer has a caller for.
     for (let i = 0; i < 300; i++) {
-      const summary = listRuns({ profile: 'slow' }).find((r) => r.runId === runId)
+      const summary = listRuns({ profile: 'wf' }).find((r) => r.runId === runId)
       if (summary?.outcome) break
       await new Promise((r) => setTimeout(r, 10))
     }
@@ -602,6 +692,8 @@ test('a run whose trace cannot be opened registers nothing to leak', async (t) =
   // The trace is opened BEFORE the run is registered, so a failure here must leave the map
   // untouched rather than an entry nothing will ever remove. Proving it needs a directory
   // the process cannot write to, which root does not have — skip rather than pass vacuously.
+  // Deliberately NOT the slow fixture: that one owns TRACE_DIR for its own isolation and
+  // would quietly undo the read-only directory this test is built on.
   const readOnly = mkdtempSync(join(tmpdir(), 'alkor-ro-'))
   chmodSync(readOnly, 0o500)
   try {
@@ -614,24 +706,28 @@ test('a run whose trace cannot be opened registers nothing to leak', async (t) =
 
   const savedTraceDir = process.env.TRACE_DIR
   process.env.TRACE_DIR = readOnly
-  const { url, release, close } = await slowServer()
+  const server: Server = await createAlkorServer()
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const { port } = server.address() as { port: number }
   try {
-    release()
-    const res = await fetch(`${url}/run`, {
+    const res = await fetch(`http://127.0.0.1:${port}/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile: 'slow', input: 'anything' }),
+      body: JSON.stringify({ profile: 'router', input: 'Patient BP 120/80, HR 72' }),
     })
     // The run never started: it could not be recorded, and recording is not optional when
     // it has been asked for.
     assert.equal(res.status, 500)
     const { runId } = (await res.json()) as any
     if (runId) {
-      const cancel = await fetch(`${url}/run/${runId}`, { method: 'DELETE' })
+      const cancel = await fetch(`http://127.0.0.1:${port}/run/${runId}`, { method: 'DELETE' })
       assert.equal(cancel.status, 404, 'a run that never started must not be registered')
     }
   } finally {
-    await close()
+    server.closeAllConnections()
+    server.close()
+    await once(server, 'close')
     if (savedTraceDir === undefined) delete process.env.TRACE_DIR
     else process.env.TRACE_DIR = savedTraceDir
     chmodSync(readOnly, 0o700)

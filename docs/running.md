@@ -299,6 +299,32 @@ operator pressed, and not a 200, which would claim a result nobody produced. A r
 already finished is a 404 — `GET /runs/:id` is where a finished run is looked up, and it
 answers from a file rather than from this process's memory.
 
+**A cancelled run returns everything it got through.** The 499 body carries the same shape a
+completed run answers in — the steps that ran and what each produced, the last value, and the
+ending, because the terminal step runs on every exit and a stopped run is exactly when a
+caller most needs a sentence. Discarding that because the run also reports a stop is the
+mistake `WorkflowResult.final` was written to prevent: *losing its produced value merely
+because the workflow also reports failure makes the response impossible to inspect.* A
+workflow cancelled during its first step answers like this:
+
+```
+HTTP 499   cancelled: true   ending: "No verdict: the run did not complete."
+  0 extract  ok  step one read the note
+  1 verify   --  run cancelled before this step started
+  2 assess   ok  No verdict: the run did not complete.
+```
+
+The step the cancel prevented is named rather than omitted, so a reader can see where the
+chain stopped instead of inferring it from a short list. An agent returns its iteration count
+and the tools it already ran — the only record that something touched the workspace. Only an
+`extract` run has nothing to hand back: its cancel arrives as a throw from inside the single
+call it makes, so there is no half-finished reading to return.
+
+**A cancel can arrive too late.** A run that finished before the abort landed is answered
+**200** with its result, because it is a finished run; the trace records `cancelRequested`
+rather than `cancelled`. Both facts are kept and they are not the same fact — filing completed
+work as cancelled would put it in the column a reader uses to discount unfinished work.
+
 Cancellation reaches the model call through the **provider**, not through `ReviewContext`. That
 is what makes an out-of-tree profile cancellable without having heard of cancellation: a
 profile is stopped because of how it was called, not because it remembered to pass a signal on.
@@ -320,10 +346,10 @@ steps are model calls (19.5s and 8.1s) and the two code steps are 3ms and 1ms. A
 a cancellable call for essentially all of its life. A profile that does heavy work of its own
 between calls should take `signal` and check it.
 
-A cancelled run is recorded as cancelled — `cancelled: true` and `cancelledBy` in the footer,
-`outcome.cancelled` in a listing — and emits `run.cancelled` rather than `run.failed`. The
-distinction is the point: the operator pressing stop says nothing about the model, and a
-surface counting failures must be able to leave these out.
+A run the cancel actually stopped is recorded as cancelled — `cancelled: true` and
+`cancelledBy` in the footer, `outcome.cancelled` in a listing — and emits `run.cancelled`
+rather than `run.failed`. The distinction is the point: the operator pressing stop says
+nothing about the model, and a surface counting failures must be able to leave these out.
 
 See [Nomenclature](reference.md#nomenclature) for how these words nest, and `spec/nomenclature.md` for
 the full statement.
