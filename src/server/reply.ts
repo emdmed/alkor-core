@@ -32,6 +32,37 @@ export const corsAllowedOrigin = (rawOrigin: string | undefined): string | undef
   return undefined
 }
 
+/**
+ * Whether a browser page may read TRACE CONTENT, which is a stricter question than CORS.
+ *
+ * The activity feed is metadata-only by construction — `emit()` throws on a content-bearing
+ * key — so opening it to every loopback origin risks nothing but operational noise. A trace
+ * is the opposite: it holds what the model was asked and what it answered, and for an
+ * extraction that answer quotes the document verbatim. `GET /runs/:id` is therefore the first
+ * endpoint on this server that can hand a page real content, and the loopback default is too
+ * generous for it: *any* local dev server, Electron app or page on a localhost port counts as
+ * a loopback origin, and none of them are this operator's dashboard.
+ *
+ * The redaction hook still stands behind this, and for a pack that declares its corpus real
+ * it elides the completion before it ever reaches disk. But that hook was written to protect
+ * a file on your own machine; making it the only thing between a trace and a cross-origin
+ * reader is a bigger job than it was given, and only one profile in this repository supplies
+ * one at all.
+ *
+ * So: a request with NO `Origin` is not a browser page — curl, a script, a cron job, all
+ * first-class callers here — and is allowed. A request WITH one is a page, and must be named
+ * in `ALKOR_TRACE_CORS` (or `*`) to read content. Metadata is unaffected: the listing and
+ * `?events=0` answer any loopback origin, which is what a dashboard's run history needs.
+ */
+export const traceContentAllowed = (rawOrigin: string | undefined): boolean => {
+  if (!rawOrigin) return true
+  const configured = (process.env.ALKOR_TRACE_CORS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  return configured.includes('*') || configured.includes(rawOrigin)
+}
+
 export const corsHeaders = (origin: string | undefined): Record<string, string> => {
   if (!origin) return {}
   return {
@@ -64,6 +95,8 @@ export interface Reply {
   ok(data: unknown): void
   bad(message: string, extra?: ErrorExtra): void
   notFound(message: string): void
+  /** The caller is known and is not allowed this, as distinct from the thing not existing. */
+  forbidden(message: string): void
   serverError(message: string, extra?: ErrorExtra): void
   serviceUnavailable(message: string, extra?: ErrorExtra): void
   /**
@@ -85,6 +118,7 @@ export const replyFor = (res: ServerResponse, cors: Record<string, string>): Rep
   ok: (data) => json(res, 200, data, cors),
   bad: (message, extra) => json(res, 400, { error: message, ...extra }, cors),
   notFound: (message) => json(res, 404, { error: message }, cors),
+  forbidden: (message) => json(res, 403, { error: message }, cors),
   serverError: (message, extra) => json(res, 500, { error: message, ...extra }, cors),
   serviceUnavailable: (message, extra) => json(res, 503, { error: message, ...extra }, cors),
   cancelled: (message, extra) => json(res, 499, { error: message, cancelled: true, ...extra }, cors),

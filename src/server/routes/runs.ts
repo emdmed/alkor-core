@@ -12,9 +12,16 @@
  * The question a reader has is "what has been run on this machine", and a listing that hid
  * half the answer because a different process produced it would be answering a question about
  * this server rather than about the work.
+ *
+ * THE TWO ROUTES ARE NOT THE SAME KIND OF THING, and they are guarded differently. `/runs` is
+ * metadata — ids, times, outcomes — and answers any loopback origin, because that is what a
+ * dashboard's run history needs. `/runs/:id` hands back a trace's events, which is what the
+ * model was asked and what it answered, and a browser page needs naming in `ALKOR_TRACE_CORS`
+ * before it may read that. See `traceContentAllowed`.
  */
 import { listRuns, readRun, RunError } from '../../core/runs.ts'
 import { TraceError } from '../../core/trace-read.ts'
+import { traceContentAllowed } from '../reply.ts'
 import type { RouteContext } from '../deps.ts'
 
 /** How many runs a listing returns when the caller does not say. */
@@ -42,11 +49,25 @@ export const runsList = async ({ url, reply, done }: RouteContext): Promise<void
   done(200)
 }
 
-export const runsDocument = async ({ url, reply, done }: RouteContext): Promise<void> => {
+export const runsDocument = async ({ req, url, reply, done }: RouteContext): Promise<void> => {
   const id = decodeURIComponent(url.pathname.slice('/runs/'.length))
   // Opt-out rather than opt-in: the whole point of fetching one run is to read it, and a
   // caller that wants the summary alone is the unusual one.
   const events = url.searchParams.get('events') !== '0'
+  const origin = Array.isArray(req.headers.origin) ? req.headers.origin[0] : req.headers.origin
+  // Content, unlike the listing, is not for any page that happens to be on a local port.
+  // Refused rather than silently returned without the events: a reader handed a run with an
+  // empty `events` array would conclude the run recorded nothing, which is a lie about the
+  // file. See `traceContentAllowed`.
+  if (events && !traceContentAllowed(origin)) {
+    reply.forbidden(
+      `a browser page at ${origin} may read this run's metadata but not its contents — ` +
+        'a trace holds what the model was asked and what it answered. Add the origin to ' +
+        "ALKOR_TRACE_CORS to allow it, or request ?events=0 for the summary alone.",
+    )
+    done(403)
+    return
+  }
   try {
     const { summary, trace } = readRun(id, { events })
     reply.ok({

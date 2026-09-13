@@ -142,29 +142,46 @@ const outcomeOf = (text: string): RunOutcome | undefined => {
   return undefined
 }
 
-/** One trace file, described. Returns undefined if it vanished between listing and reading. */
-const summarize = (root: string, profile: string, file: string): RunSummary | undefined => {
-  const path = join(root, profile, file)
+/**
+ * Everything a trace's NAME says about it, with no I/O at all.
+ *
+ * Split out from `summarize` because identity and outcome cost different things. Which run a
+ * file is, is written in its name; how it ended is in its last line, and reaching that means
+ * opening it. A lookup only needs the first, and a lookup that paid for the second on every
+ * candidate would read the whole directory to answer a question about one file.
+ */
+interface RunIdentity {
+  id: string
+  runId?: string
+  profile: string
+  path: string
+  startedAt?: string
+}
+
+const identify = (root: string, profile: string, file: string): RunIdentity => {
   const stem = file.slice(0, -'.jsonl'.length)
   // `--` is the boundary `openTrace` writes; the stamp's own dashes are all single.
   const cut = stem.indexOf('--')
   const stamp = cut === -1 ? stem : stem.slice(0, cut)
   const runId = cut === -1 ? undefined : stem.slice(cut + 2)
-  let read: { text: string; size: number }
-  try {
-    read = tail(path, TAIL_BYTES)
-  } catch {
-    return undefined
-  }
   return {
     id: `${profile}/${stem}`,
     runId: runId || undefined,
     profile,
-    path,
+    path: join(root, profile, file),
     startedAt: startedAtOf(stamp),
-    bytes: read.size,
-    outcome: outcomeOf(read.text),
   }
+}
+
+/** One trace file, described. Returns undefined if it vanished between listing and reading. */
+const summarize = (identity: RunIdentity): RunSummary | undefined => {
+  let read: { text: string; size: number }
+  try {
+    read = tail(identity.path, TAIL_BYTES)
+  } catch {
+    return undefined
+  }
+  return { ...identity, bytes: read.size, outcome: outcomeOf(read.text) }
 }
 
 export interface ListRunsOptions {
@@ -187,7 +204,13 @@ export interface ListRunsOptions {
  * run anything is the ordinary case, and a dashboard asking what has run should be told
  * "nothing" rather than shown a failure.
  */
-export const listRuns = (options: ListRunsOptions = {}): RunSummary[] => {
+/**
+ * Every trace on disk, newest first, named but not yet opened.
+ *
+ * The whole directory, always — it is `readdir` and string work, and the callers differ in
+ * which ones they then pay to OPEN rather than in which ones they need to know about.
+ */
+const catalogue = (profile?: string): RunIdentity[] => {
   const root = traceRoot()
   let profiles: string[]
   try {
@@ -197,31 +220,37 @@ export const listRuns = (options: ListRunsOptions = {}): RunSummary[] => {
   } catch {
     return []
   }
-  if (options.profile) profiles = profiles.filter((name) => name === options.profile)
+  if (profile) profiles = profiles.filter((name) => name === profile)
 
-  const found: Array<{ profile: string; file: string }> = []
-  for (const profile of profiles) {
+  const found: RunIdentity[] = []
+  for (const name of profiles) {
     let files: string[]
     try {
-      files = readdirSync(join(root, profile))
+      files = readdirSync(join(root, name))
     } catch {
       continue
     }
     for (const file of files) {
-      if (file.endsWith('.jsonl')) found.push({ profile, file })
+      if (file.endsWith('.jsonl')) found.push(identify(root, name, file))
     }
   }
+  // Traces sort lexically because the stamp is fixed-width ISO, which is the reason it is
+  // written that way. Sorted on the id so the profile directory breaks a tie between two
+  // runs that started in the same millisecond.
+  return found.sort((a, b) => b.id.localeCompare(a.id))
+}
 
+export const listRuns = (options: ListRunsOptions = {}): RunSummary[] => {
+  const found = catalogue(options.profile)
   // Ordered before it is summarized, so a `limit` bounds the number of files OPENED and not
   // just the number returned. On a machine with a year of traces that is the difference
   // between a listing and a directory scan that reads every one of them.
-  found.sort((a, b) => b.file.localeCompare(a.file))
   const limit = options.limit !== undefined && options.limit >= 0 ? options.limit : found.length
 
   const runs: RunSummary[] = []
   for (const entry of found) {
     if (runs.length >= limit) break
-    const summary = summarize(root, entry.profile, entry.file)
+    const summary = summarize(entry)
     if (summary) runs.push(summary)
   }
   return runs
@@ -233,16 +262,25 @@ export const listRuns = (options: ListRunsOptions = {}): RunSummary[] => {
  * Resolved by ENUMERATING the runs and matching, never by joining the id onto a path — the
  * same rule `readCorpusDocument` follows and for the same reason. The id arrives over HTTP,
  * and a path built from it is a file read an outside caller chooses the target of. Matching
- * against the listing means the only readable files are ones this harness wrote.
+ * against the catalogue means the only readable files are ones this harness wrote.
+ *
+ * The match runs on NAMES, and only the file that matched is opened. Matching against
+ * `listRuns()` instead was the same enumeration with an `open`, an `fstat` and a 64 KiB read
+ * per candidate bolted on — a full directory scan to answer a question about one file, and
+ * exactly the cost `listRuns`'s own `limit` exists to avoid.
  *
  * `events` is opt-out because a clinical trace is large and a caller that only wants to know
- * whether a run passed should not have to parse megabytes of prompts to find out.
+ * whether a run passed should not have to parse megabytes of it to find out.
  */
 export const readRun = (
   id: string,
   options: { events?: boolean } = {},
 ): { summary: RunSummary; trace?: TraceFile } => {
-  const summary = listRuns().find((run) => run.id === id || run.runId === id)
+  const identity = catalogue().find((run) => run.id === id || run.runId === id)
+  if (!identity) throw new RunError(`no recorded run '${id}'`)
+  const summary = summarize(identity)
+  // Named in the catalogue a moment ago and unreadable now: deleted or rotated between the
+  // two, which from the caller's side is the same answer as never having existed.
   if (!summary) throw new RunError(`no recorded run '${id}'`)
   if (options.events === false) return { summary }
   return { summary, trace: readTrace(summary.path) }

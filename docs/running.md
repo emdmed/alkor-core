@@ -246,8 +246,29 @@ curl -s "localhost:3000/runs?profile=clinical-verified&limit=10"
 
 A run is fetched by the id its caller was handed, or by the `<profile>/<stem>` id the listing
 gives it — which is how a trace written by the CLI, with no run id in its name, is reachable
-too. Ids are matched against the listing rather than joined onto a path, so the only readable
-files are ones this harness wrote.
+too. Ids are matched against the catalogue rather than joined onto a path, so the only readable
+files are ones this harness wrote, and the match runs on names so a lookup opens one file
+rather than the directory.
+
+**The two routes are not the same kind of thing.** `/runs` is metadata — ids, times, outcomes
+— and answers any loopback origin, which is what a dashboard's run history needs. `/runs/:id`
+returns a trace's events, which is what the model was asked and what it answered; for an
+extraction that answer quotes the document verbatim. A **browser page** must be named in
+`ALKOR_TRACE_CORS` before it may read that:
+
+```bash
+ALKOR_TRACE_CORS=http://localhost:5173 npm run server
+```
+
+Without it a page gets 403 and the reason. A caller with no `Origin` header — curl, a script,
+a cron job, all first-class callers here — is not a page and is unaffected. The distinction
+matters because the loopback default is generous by design: *any* local dev server or app on
+a localhost port is a loopback origin, and none of them is your dashboard. The activity feed
+can be that generous because it is metadata-only by construction; a trace is not.
+
+The redaction hook still stands behind this and elides completions for a pack that declares
+its corpus real — but that hook was written to protect a file on your own machine, and only
+one profile in this repository supplies one at all.
 
 **An absent `outcome` is not a pass.** It means no footer was written: the run is in flight,
 its process died, or a CLI verb wrote the trace and never had an envelope to close.

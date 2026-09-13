@@ -179,6 +179,35 @@ test('an unknown run is a RunError rather than an empty answer', () => {
   assert.throws(() => readRun('99999999-9999-4999-8999-999999999999'), RunError)
 })
 
+test('a lookup resolves the oldest run in a busy directory without reading the rest', () => {
+  // Resolution runs on NAMES now; only the matched file is opened. The open COUNT is not
+  // assertable here — Node snapshots named imports from builtins, so `openSync` cannot be
+  // counted from a test — so this pins the behaviour that had to keep working when the
+  // reading moved out of the matching: the worst case for a newest-first catalogue is the
+  // oldest entry, and it must still resolve, footer and all.
+  const dir = join(TRACES, 'busy')
+  mkdirSync(dir, { recursive: true })
+  for (let i = 0; i < 40; i++) {
+    const stamp = new Date(Date.UTC(2026, 5, 1, 0, 0, i)).toISOString().replace(/[:.]/g, '-')
+    const runId = `${String(i).padStart(8, '0')}-0000-4000-8000-000000000000`
+    writeFileSync(
+      join(dir, `${stamp}--${runId}.jsonl`),
+      `${JSON.stringify(header(runId, 'busy'))}\n${JSON.stringify(footer(runId, i === 0))}\n`,
+    )
+  }
+
+  const oldest = readRun('00000000-0000-4000-8000-000000000000', { events: false })
+  assert.equal(oldest.summary.profile, 'busy')
+  assert.equal(oldest.summary.startedAt, '2026-06-01T00:00:00.000Z')
+  // The footer is still read for the one that matched, which is the half that moved.
+  assert.equal(oldest.summary.outcome?.ok, true)
+
+  const newest = readRun('00000039-0000-4000-8000-000000000000', { events: false })
+  assert.equal(newest.summary.outcome?.ok, false)
+  // And the listing over the same directory is still newest-first.
+  assert.equal(listRuns({ profile: 'busy', limit: 1 })[0]?.runId, '00000039-0000-4000-8000-000000000000')
+})
+
 // --- Writing --------------------------------------------------------------------------
 
 test('a trace opened with a run id carries it in the filename, on a boundary that parses', () => {
@@ -393,6 +422,69 @@ test('the listing endpoint refuses a limit that is not a count', async () => {
     assert.ok(String(data.error).includes('limit'))
   } finally {
     await close()
+  }
+})
+
+test('a browser page may read a run\'s metadata but not its contents', async () => {
+  const { url, close } = await startServer()
+  try {
+    const res = await fetch(`${url}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile: 'router', input: 'Patient BP 120/80, HR 72' }),
+    })
+    const { runId } = (await res.json()) as { runId: string }
+
+    // Any local port is a loopback origin, and none of them is this operator's dashboard.
+    const page = { Origin: 'http://localhost:1234' }
+
+    // The listing is metadata — a run history needs it and it carries no content.
+    const listed = await fetch(`${url}/runs?profile=router`, { headers: page })
+    assert.equal(listed.status, 200)
+    assert.equal(listed.headers.get('access-control-allow-origin'), 'http://localhost:1234')
+
+    // The summary alone is metadata too.
+    const summary = await fetch(`${url}/runs/${runId}?events=0`, { headers: page })
+    assert.equal(summary.status, 200)
+
+    // The events are not. Refused rather than emptied: a run returned with no events reads
+    // as a run that recorded nothing, which is a lie about the file.
+    const content = await fetch(`${url}/runs/${runId}`, { headers: page })
+    assert.equal(content.status, 403)
+    const body = (await content.json()) as { error: string; events?: unknown }
+    assert.equal(body.events, undefined)
+    assert.match(body.error, /ALKOR_TRACE_CORS/)
+
+    // A caller with no Origin is not a page — curl, a script, a cron job — and is allowed.
+    const script = await fetch(`${url}/runs/${runId}`)
+    assert.equal(script.status, 200)
+    assert.ok(Array.isArray(((await script.json()) as any).events))
+  } finally {
+    await close()
+  }
+})
+
+test('ALKOR_TRACE_CORS names the page that may read trace contents', async () => {
+  const saved = process.env.ALKOR_TRACE_CORS
+  process.env.ALKOR_TRACE_CORS = 'http://localhost:5173'
+  const { url, close } = await startServer()
+  try {
+    const res = await fetch(`${url}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile: 'router', input: 'Patient BP 120/80, HR 72' }),
+    })
+    const { runId } = (await res.json()) as { runId: string }
+
+    const allowed = await fetch(`${url}/runs/${runId}`, { headers: { Origin: 'http://localhost:5173' } })
+    assert.equal(allowed.status, 200)
+    // Naming one origin does not admit its neighbours.
+    const other = await fetch(`${url}/runs/${runId}`, { headers: { Origin: 'http://localhost:1234' } })
+    assert.equal(other.status, 403)
+  } finally {
+    await close()
+    if (saved === undefined) delete process.env.ALKOR_TRACE_CORS
+    else process.env.ALKOR_TRACE_CORS = saved
   }
 })
 
