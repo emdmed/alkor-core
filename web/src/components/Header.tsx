@@ -74,7 +74,7 @@ export const Header = memo(({ state, serverUrl, onServerUrlChange, onConnect, pa
         {/* The mark is a word nobody can read the product out of, so the descriptor rides
             beside it for the reader arriving cold. It is the first thing cut when the bar
             runs out of room — by then the operator knows what this is. */}
-        <span className="brand-descriptor">structured extraction from clinical notes</span>
+        <span className="brand-descriptor">local-model orchestration for medical workflows</span>
         {/* The one claim that must never scroll away. The rail's note only stands in the
             empty state, which is the exact moment nobody is reading a result — this sits in
             the permanent band so it is on screen while the output is. Short enough to stay
