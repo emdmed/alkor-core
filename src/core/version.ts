@@ -24,3 +24,22 @@ const read = (): string => {
 }
 
 export const HARNESS_VERSION = read()
+
+/**
+ * The release stage — `alpha` today — read off the version rather than declared beside it.
+ *
+ * Same reason the version is not a constant: a stage written down separately is a second
+ * claim about the same thing, and the day the version is bumped out of alpha the banner
+ * that says "alpha" keeps saying it. A semver prerelease tag already carries this, so the
+ * tag is the statement and everything that shows a stage reads it from here.
+ *
+ * `undefined` on a plain release version, which is what lets every caller render the badge
+ * conditionally without testing for a magic string.
+ */
+export const HARNESS_STAGE: string | undefined =
+  /^\d+\.\d+\.\d+-([0-9A-Za-z-]+)/.exec(HARNESS_VERSION)?.[1]
+
+/** What the stage means for the reader, in one sentence. Empty when there is no stage. */
+export const STAGE_NOTICE = HARNESS_STAGE
+  ? `alkor ${HARNESS_VERSION} — ${HARNESS_STAGE} software, released for testing. Interfaces, packs and measured numbers may change.`
+  : ''

@@ -99,6 +99,13 @@ test('health endpoint returns profiles and session count', async () => {
   assert.equal(verified.steps[2].profile, 'verifier')
   assert.equal(verified.steps[2].input, 'step-1.output')
   assert.equal(typeof (data as any).sessions, 'number')
+  // The dashboard can be pointed at any alkor, so the badge it draws has to come from the
+  // server that answers rather than from the build the page was served from.
+  const { HARNESS_STAGE, HARNESS_VERSION } = await import('../src/core/version.ts')
+  assert.equal((data as any).harness?.version, HARNESS_VERSION)
+  // Compared through the wire's own spelling: a release version carries no stage, and JSON
+  // drops the key rather than sending null.
+  assert.equal((data as any).harness?.stage ?? undefined, HARNESS_STAGE)
   await close()
 })
 

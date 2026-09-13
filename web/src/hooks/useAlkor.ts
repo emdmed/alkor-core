@@ -83,6 +83,15 @@ export interface UseAlkor {
   run: (input: string, workflow?: string) => Promise<unknown>
   /** Live backend status from /health, as the server reports it. */
   models: ModelHealth[]
+  /** What the connected server is running, and at what stage. Absent until /health answers. */
+  harness?: HarnessHealth
+}
+
+/** The server's own identity from /health — version, and the release stage it names. */
+export interface HarnessHealth {
+  version: string
+  /** `alpha`, `beta`, … Absent on a plain release version. */
+  stage?: string
 }
 
 /** One llama-server endpoint the server would talk to, as /health reports it. */
@@ -102,6 +111,7 @@ export const useAlkor = (initialUrl: string): UseAlkor => {
   const sourceRef = useRef(source)
   sourceRef.current = source
   const [models, setModels] = useState<ModelHealth[]>([])
+  const [harness, setHarness] = useState<HarnessHealth | undefined>(undefined)
   const [state, dispatch] = useReducer(reducer, undefined, emptyState)
 
   const activeUrl = source.activeUrl
@@ -155,9 +165,12 @@ export const useAlkor = (initialUrl: string): UseAlkor => {
     // for everything after. Best-effort: a server that is still starting has no topology.
     fetch(`${base}/health`, { cache: 'no-store' })
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
-      .then((data: { topology?: TopologySnapshot; models?: ModelHealth[] }) => {
+      .then((data: { topology?: TopologySnapshot; models?: ModelHealth[]; harness?: HarnessHealth }) => {
         if (!isCurrentGeneration(generation, sourceRef.current)) return
         if (Array.isArray(data.models)) setModels(data.models)
+        // An older server has no `harness` field; the badge simply says nothing rather
+        // than claiming a version this page happens to have been built at.
+        if (typeof data.harness?.version === 'string') setHarness(data.harness)
         if (data.topology?.profiles && data.topology?.workflows) {
           dispatch({ type: 'topology', topology: data.topology })
         }
@@ -231,5 +244,6 @@ export const useAlkor = (initialUrl: string): UseAlkor => {
     clear,
     run,
     models,
+    harness,
   }
 }

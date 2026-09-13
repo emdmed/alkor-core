@@ -96,7 +96,10 @@ reads. Narrower on purpose.
   decisions. The caveat travels with the output — it is resident in the dashboard header and
   carried in every copied run log, not left to a surface a reader may never open.
 - **Not an inference server** and **not a generic eval framework**.
-- Status: pre-release.
+- Status: alpha, released for testing. The stage is a semver prerelease tag on the package
+  version and is derived from it, never declared a second time — `src/core/version.ts` is the
+  one place that reads it, the CLI banner and the dashboard's badge both render what it says,
+  and both fall silent on a release version rather than going stale.
 
 ## Brand Commitments
 

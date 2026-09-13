@@ -459,6 +459,23 @@ button, input, textarea, select { font: inherit; color: inherit; }
   transform: translateY(1px);
 }
 
+/* The release stage, set on the mark like a version suffix rather than added to the row of
+   status badges on the right. It is a property of the product, not of the session: it does
+   not change while anyone is watching, so it must not read like something that might. Hence
+   the quietest treatment in the bar — small caps weight, muted, no fill. */
+.brand-stage {
+  align-self: center;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  padding: 1px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  cursor: help;
+}
+
 /* The mark is a word nobody can read the product out of, so the descriptor rides beside
    it. It is the first thing to go when the bar runs out of room. */
 .brand-descriptor {

@@ -42,7 +42,7 @@ const useMedia = (query: string) => {
  * the canvas can have the whole window without any of it becoming unreachable.
  */
 export const App = () => {
-  const { state, serverUrl, activeUrl, setServerUrl, connect, paused, setPaused, clear, run, models } = useAlkor(DEFAULT_URL)
+  const { state, serverUrl, activeUrl, setServerUrl, connect, paused, setPaused, clear, run, models, harness } = useAlkor(DEFAULT_URL)
   const isNarrow = useMedia(NARROW)
 
   const [railOpen, setRailOpen] = useState(() => typeof window === 'undefined' || !window.matchMedia(NARROW).matches)
@@ -107,6 +107,7 @@ export const App = () => {
         onTogglePause={useCallback(() => setPaused(!paused), [paused])}
         onClear={clear}
         models={models}
+        harness={harness}
       />
       <main className={`workspace${isNarrow && railOpen ? ' is-rail-overlay' : ''}`}>
         <div className="stage">

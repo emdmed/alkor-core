@@ -8,6 +8,7 @@
  * dark model port.
  */
 import type { RouteContext } from '../deps.ts'
+import { HARNESS_STAGE, HARNESS_VERSION } from '../../core/version.ts'
 
 export const health = async ({ reply, done, deps }: RouteContext): Promise<void> => {
   const { cfg, manager, activity, sessions, sse } = deps
@@ -23,6 +24,10 @@ export const health = async ({ reply, done, deps }: RouteContext): Promise<void>
     })),
   )
   reply.ok({
+    // What is answering, and what stage it is at. A dashboard can be pointed at any server,
+    // so the badge it shows must describe the host that did the work rather than the build
+    // the page was served from — those are the same thing only by coincidence.
+    harness: { version: HARNESS_VERSION, stage: HARNESS_STAGE },
     profiles: Object.keys(cfg.profiles),
     topology: {
       pipeline: cfg.pipeline,

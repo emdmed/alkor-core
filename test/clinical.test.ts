@@ -555,6 +555,19 @@ test('the harness names its own version', async () => {
   assert.match(HARNESS_VERSION, /^\d+\.\d+\.\d+/, 'a run record must name what produced it')
 })
 
+test('the release stage is read off the version, so it cannot outlive it', async () => {
+  const { HARNESS_STAGE, HARNESS_VERSION, STAGE_NOTICE } = await import('../src/core/version.ts')
+  const tagged = /^\d+\.\d+\.\d+-([0-9A-Za-z-]+)/.exec(HARNESS_VERSION)
+  assert.equal(HARNESS_STAGE, tagged?.[1])
+  // A stage with nothing that says what it means to the reader is a label, not a warning.
+  if (HARNESS_STAGE) {
+    assert.match(STAGE_NOTICE, new RegExp(HARNESS_STAGE))
+    assert.match(STAGE_NOTICE, /released for testing/)
+  } else {
+    assert.equal(STAGE_NOTICE, '')
+  }
+})
+
 /**
  * The task registry and the profile's dispatch tables, checked against each other.
  *

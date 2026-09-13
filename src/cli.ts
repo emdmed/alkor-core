@@ -30,8 +30,25 @@ import { runAgent } from './modes/agentic.ts'
 import { runWorkflow, buildWorkflow } from './modes/workflow.ts'
 import { nullTrace, openTrace } from './core/trace.ts'
 import { blocker, declaredWeights, preflight, report } from './core/preflight.ts'
+import { HARNESS_STAGE, HARNESS_VERSION, STAGE_NOTICE } from './core/version.ts'
+
+/**
+ * What this is and what it may not be used for, on stderr, once per invocation.
+ *
+ * stderr rather than stdout because `extract --json | jq` is the ordinary way to use this
+ * and a banner in the pipe would break it. It prints ahead of the work rather than after,
+ * so it is still on screen when a long eval finishes and scrolls the start away.
+ */
+const banner = (): void => {
+  if (STAGE_NOTICE) console.error(STAGE_NOTICE)
+  console.error('Research and educational tool only. Not a medical device, not clinical decision')
+  console.error('support, and not to be used to make medical decisions.')
+  console.error('')
+}
 
 const USAGE = [
+  `alkor ${HARNESS_VERSION}${HARNESS_STAGE ? ` (${HARNESS_STAGE} — released for testing)` : ''}`,
+  '',
   'usage:',
   '  node src/cli.ts extract --profile NAME (--note FILE | --case NAME | --note -) [--task NAME] [--constrain] [--repair] [--no-medication-pass] [--calculate] [--json] [--url URL] [--pack DIR]',
   '  node src/cli.ts eval    --profile NAME [--input "..."] [--runs N] [--constrain] [--task NAME] [--repair] [--difficulty N|N-M] [--no-cache-prompt] [--no-medication-pass] [--url URL] [--pack DIR]',
@@ -57,6 +74,9 @@ const { values } = (() => {
         // Asked for explicitly, so it prints to stdout and exits 0 — `--help | less` is a
         // thing people do, and a usage text on stderr behind exit 2 is not help, it is a refusal.
         help: { type: 'boolean', short: 'h', default: false },
+        // Answerable without a config file, like --help: what is installed, and what stage
+        // it is at. A bug report that names neither is a bug report about nothing.
+        version: { type: 'boolean', short: 'v', default: false },
         // `doctor` only. The caller spawns backends on demand, so a dark port is the normal
         // state rather than a fault — see BlockerOptions.managed.
         managed: { type: 'boolean', default: false },
@@ -125,6 +145,12 @@ const help = (): never => {
   process.exit(0)
 }
 
+/** `--version`: the one line a bug report should quote. */
+const version = (): never => {
+  console.log(`alkor ${HARNESS_VERSION}${HARNESS_STAGE ? ` (${HARNESS_STAGE})` : ''}`)
+  process.exit(0)
+}
+
 /** Config, pack and profile problems are setup mistakes, not crashes — report them plainly. */
 const die = (e: unknown): never => {
   if (e instanceof ConfigError || e instanceof PackError || e instanceof ProfileError || e instanceof TraceError) {
@@ -138,11 +164,17 @@ const [typed] = process.argv.slice(2).filter((a) => !a.startsWith('-'))
 // Before anything is loaded: help is answerable without a config file, and `--help` on a
 // machine whose profiles.toml is broken should still print rather than report the config.
 if (values.help || typed === 'help') help()
+if (values.version || typed === 'version') version()
 if (!typed) usage()
 // `pipeline` is the retired spelling of `workflow`, still accepted so existing scripts run.
 // See spec/nomenclature.md: the PIPELINE is the deployment's front door, and this command
 // runs one WORKFLOW directly.
 const command = typed === 'pipeline' ? 'workflow' : typed
+
+// Every invocation that goes on to do something says what it is first. Not on --help or
+// --version, which have just said it, and not on a usage error, where the mistake is the
+// only thing worth reading.
+banner()
 
 let cfg
 try {

@@ -10,7 +10,7 @@
 import { memo, useEffect, useId, useRef, useState } from 'react'
 import type { ProjectState } from '../../../src/monitor/state.ts'
 import { cacheHitRatio, failureRate, inFlightCount } from '../../../src/monitor/state.ts'
-import type { ModelHealth } from '../hooks/useAlkor.ts'
+import type { HarnessHealth, ModelHealth } from '../hooks/useAlkor.ts'
 import { connMeta, modelName } from '../lib/format.ts'
 import { Logotype, StarPair } from './Logotype'
 import { Badge } from './ui/badge'
@@ -28,6 +28,8 @@ export interface HeaderProps {
   onTogglePause: () => void
   onClear: () => void
   models: ModelHealth[]
+  /** What the connected server is running. Absent until /health answers, or on an older server. */
+  harness?: HarnessHealth
 }
 
 const hostOf = (url: string): string => url.replace(/^https?:\/\//, '').replace(/\/+$/, '')
@@ -35,7 +37,7 @@ const hostOf = (url: string): string => url.replace(/^https?:\/\//, '').replace(
 const toneCls = (tone: 'ok' | 'warn' | 'err'): string =>
   tone === 'ok' ? 'tone-ok' : tone === 'warn' ? 'tone-warn' : 'tone-err'
 
-export const Header = memo(({ state, serverUrl, onServerUrlChange, onConnect, paused, onTogglePause, onClear, models }: HeaderProps) => {
+export const Header = memo(({ state, serverUrl, onServerUrlChange, onConnect, paused, onTogglePause, onClear, models, harness }: HeaderProps) => {
   const meta = connMeta(state.connection)
   const model = modelName(state.models)
   const refusedReason = state.connection.kind === 'refused' ? state.connection.reason : ''
@@ -55,6 +57,19 @@ export const Header = memo(({ state, serverUrl, onServerUrlChange, onConnect, pa
         <span className="brand-lockup">
           <StarPair className="brand-stars" />
           <Logotype className="brand-mark" />
+          {/* The stage rides on the mark, where a reader already looks to learn what this is.
+              It reports the SERVER's stage, not this page's: the dashboard can be pointed at
+              any alkor, and a badge describing the build the page came from would be right
+              only by coincidence. Silent until /health answers, and silent on a release
+              version — an empty space is a truer claim than a stale one. */}
+          {harness?.stage && (
+            <span
+              className="brand-stage"
+              title={`alkor ${harness.version} — ${harness.stage} software, released for testing. Interfaces, packs and measured numbers may change.`}
+            >
+              {harness.stage}
+            </span>
+          )}
         </span>
         {/* The mark is a word nobody can read the product out of, so the descriptor rides
             beside it for the reader arriving cold. It is the first thing cut when the bar

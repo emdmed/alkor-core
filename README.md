@@ -15,10 +15,14 @@ node src/cli.ts extract --profile clinical --note your-note.txt --constrain   # 
 node src/cli.ts eval    --profile clinical --constrain                        # what it is worth
 ```
 
-> **Status: pre-release.** The harness, the pack format, the reference clinical pack and
-> its corpus are here and tested. Every number below was measured on the corpus that ships
-> in this repository, against weights named by sha256. See [Measured](docs/measured.md#measured) — including
-> what the result does *not* show.
+> **Status: alpha, released for testing.** The harness, the pack format, the reference
+> clinical pack and its corpus are here and tested. Interfaces, the pack format and the
+> measured numbers may still change between alpha versions. Every number below was measured
+> on the corpus that ships in this repository, against weights named by sha256. See
+> [Measured](docs/measured.md#measured) — including what the result does *not* show.
+>
+> `node src/cli.ts --version` names the build; the dashboard shows the stage of the server
+> it is connected to, beside the mark.
 
 > **Research and educational tool only.** alkor is **not a medical device**, not clinical
 > decision support, and not validation evidence for any regulator. Its output is not to be
@@ -175,6 +179,12 @@ retried — at temperature 0 the same request produces the same output, and meas
 30/30 cases recover zero is more useful than doing it in production.
 
 ## Status
+
+**Alpha, released for testing.** The version carries the stage as a semver prerelease tag
+(`0.1.0-alpha.1`), so everything that reports it — the CLI banner, `--version`, the badge on
+the dashboard mark — reads one string and stops saying "alpha" the moment the tag is dropped.
+What that stage means here: the pieces below marked done are tested and usable, and the
+interfaces around them are not yet frozen.
 
 | | |
 |---|---|
