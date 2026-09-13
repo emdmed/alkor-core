@@ -9,10 +9,17 @@ web
 ## Stack
 
 The harness is TypeScript on Node >= 24, run directly — no bundler, no framework, no build
-step. `node src/cli.ts` is the front door for every verb (`extract`, `eval`, `agent`, `route`,
-`workflow`, `profiles`); `node src/server.ts` is a local HTTP server over the same code, whose
-`GET /events` SSE stream is what the live surfaces read. Two UI surfaces sit on top, and they
-share the harness rather than reimplementing it:
+step. There are three ways in and they drive the same assembly; nothing is reimplemented for
+the browser:
+
+- **`./start`** — one command from a fresh clone to a running dashboard.
+- **`node src/cli.ts`** — the front door for every verb (`doctor`, `extract`, `eval`, `agent`,
+  `route`, `workflow`, `profiles`).
+- **`POST /pipeline`** on `node src/server.ts` — one request, one run id, back a verdict or a
+  refusal naming the step that stopped. curl, a script and a cron job are first-class callers.
+
+The server's `GET /events` SSE stream is what the live surfaces read. Two UI surfaces sit on
+top, and they share the harness rather than reimplementing it:
 
 - **`report.html`** — one standalone document at the repository root. No build step, no
   external network requests, every face and asset embedded.
@@ -42,28 +49,56 @@ Three audiences. Which one leads depends on the surface, and all three are real:
    asked to read JSON, SSE frames, or a contract pack to do so. The raw material stays
    reachable one level down; it is no longer the front door.
 
-The job in every case is the same: decide whether a small local model, wrapped in this
-harness, produces output good enough to ship for one specific extraction contract.
+The job in every case is the same: run a medical workflow on a small local model and know which
+parts of its output can be trusted.
 
 ## Product Purpose
 
-Pull structured medical data out of clinical notes using a model small enough to run where the
-notes are, and attach the gate that says whether the result is good enough to ship. The user
-writes a **contract pack** — prompts, JSON schemas, eval cases. `extract` runs that contract
-over a note and returns JSON; `eval` runs the same contract over a corpus and returns a gate,
-a trace, and a reproducible number. One assembly feeds both, so what was measured is what runs.
+**alkor is an orchestration layer that sits between your prompt and local inference.** Three
+things happen in that layer — **context management, model constraint, and tool calls** — and
+they are there for one purpose: *to make small local models better at medicine.*
+
+Everything else follows from where the layer sits. alkor runs an entire medical workflow on the
+user's own hardware — starting each `llama-server` a step needs and stopping it after — and
+checks every reading back against the note it came from. When a check fails, it reports nothing
+rather than something plausible.
+
+The premise is that **a 4B model is not a clinician**: a model small enough to run beside the
+notes will miss findings, invent plausible ones, and get arithmetic wrong, all in the same
+confident voice, and prompt wording does not fix that. alkor does not touch the weights. It
+makes output checkable and drops what fails.
+
+The user writes a **contract pack** — prompts, JSON schemas, eval cases — which is data, so the
+pack that runs in production is the one the eval grades. "Good enough" is therefore a gate with
+a floor rather than an impression.
 
 ## Positioning
 
-The pack is data, and the same files serve production runtime and measurement. Generic eval
-frameworks (promptfoo, Inspect, lm-eval) measure prompts against models across many tasks; the
-evals here exist to keep one contract honest, and that contract is the artifact production
-reads. Narrower on purpose.
+The layer earns its place because a small model fails in ways prompt wording cannot reach.
+Three answers to three failure modes — this is the mechanism a neighboring product could not
+truthfully copy:
+
+- **Invents findings** → every reading carries a verbatim quote, and a *second model* checks
+  those quotes against the note. An unquoted reading never reaches output.
+- **Cannot do arithmetic** → shock index, MAP and pulse pressure are recomputed in code from
+  quoted values. The model's own numbers are dropped, not reconciled.
+- **Will not say "I don't know"** → declining is scored, not excused. "Normal" and "nobody
+  looked" stay distinct.
+
+Around that: the pack is data, and the same files serve production runtime and measurement.
+Generic eval frameworks (promptfoo, Inspect, lm-eval) measure prompts against models across
+many tasks; the evals here exist to keep one contract honest, and that contract is the artifact
+production reads. Narrower on purpose.
 
 ## Operating Context
 
-- Local `llama-server` the user started themselves; the harness never starts one behind their
-  back, because a server's flags are part of a measurement.
+- Everything runs on the user's own hardware. Under the orchestrator, alkor starts each
+  `llama-server` a step needs and stops it after: `LlamaManager` spawns a backend on first
+  request, polls `/health` until ready, and sweeps it after idle, with in-flight counting so a
+  backend is never killed mid-generation. Pinned profiles (the router) are never swept. A step
+  may name its own port, so one workflow spans several models at once.
+- **For a measured eval the harness never starts a server**, because a server's flags are part
+  of a measurement. That asymmetry is deliberate, not an inconsistency.
 - Models named by sha256. The reference pack's default is **Gemma 4 E4B Q4_0**
   (`ggml-org/gemma-4-E4B-it-GGUF`, sha256 `a555b900…`, pinned in
   `packs/clinical/models.default.toml`) — run at ctx 32768, 1 slot, temperature 0, seed 0,
@@ -82,13 +117,35 @@ reads. Narrower on purpose.
 
 ## Capabilities and Constraints
 
+- **What the layer does, concretely — three jobs:**
+  - **Context management.** Every step is a fresh call with no conversation history; what
+    reaches the model is declared context, assembled per step from the pack and from prior
+    steps' output.
+  - **Model constraint.** The pack's JSON Schema is passed as `response_format.json_schema` and
+    the server compiles it into a GBNF grammar, so invalid JSON is physically impossible to
+    emit. The shape of the answer is decided before generation, not repaired after.
+  - **Tool calls.** `toolChat()` carries `tools` and `tool_choice: "auto"` for agentic steps —
+    a separate transport function rather than a flag, so it cannot be reached from eval by
+    accident.
+- **Nomenclature, one name per level: Run › Pipeline › Workflow › Step › Profile › Task→Pass.**
+  This is the vocabulary every surface uses and the terms are not interchangeable. **"Stage" is
+  not a level** — it is what a unit of work is called at any level, joined by `stageId`.
+- **The orchestrator knows nothing about medicine** — the domain lives entirely in packs and
+  profiles, and the layer would run a non-medical contract unchanged.
+- A run ends in a verdict or a refusal that names the step that stopped it.
+- Reference workflow **`clinical-verified`**: extract (gemma-4-E4B, :8081, 19.5s) →
+  verify-derived (code, no GPU, 3ms) → verify-source (second model, :8085, 8.1s) → assess
+  (code, 1ms). **Two of the four steps decide by rule and never touch a GPU**, and the ending is
+  graded and renders to the same bytes every time.
 - Constrained decoding against the pack's JSON Schema; schema property order and `maxItems`
   are load-bearing, not decorative.
 - Evals report a gate (pass/fail against a floor) plus sub-gates such as echo of primary
   findings and invented-finding count.
-- Both live dashboards read the server's SSE feed and show the same thing: sessions, the
-  execution graph of stages and routes, tool calls, HTTP traffic, and a filterable event log
-  with click-to-inspect. Neither one drives a run; they observe one.
+- Observability: `GET /events` streams the run. The desktop dashboard (`localhost:5173`) draws
+  the stage tree live, with tool calls, HTTP traffic and a filterable, click-to-inspect log.
+  **It observes, never drives** — and because the graph *is* the run, a stopped run is legible
+  on sight. `report.html` is the standalone counterpart: no network requests, with the limits
+  stated beside each figure.
 - **The web dashboard is desktop-only.** It is operated beside a running server on the machine
   doing the work, so there is no mobile target and phone-width behavior is out of scope.
 - **Not a medical device**, not clinical decision support, not validation evidence for any
@@ -106,10 +163,12 @@ reads. Narrower on purpose.
 - Name is lowercase `alkor`. Capitalised only where a platform forces it: the `ALKOR_*`
   environment variables and TypeScript identifiers (`useAlkor`, `createAlkorServer`).
 - **The name does not describe the product, so it never travels alone on a first mention.**
-  Pair it with a descriptor — "alkor — structured extraction from clinical notes" — in every
-  page title, README heading and result document. The previous name carried the description
-  inside the word and this one does not; the reader arriving cold is the one who pays for
-  that difference, and they are audience #1.
+  Pair it with a descriptor — "alkor — small local-model orchestration for medical workflows"
+  — in every page title, README heading and result document. The hero line, confirmed
+  2026-09-13, is **"Small local models better at medicine."** Descriptors that narrow the
+  product to extraction alone are stale and are not to be reintroduced. The previous name
+  carried the description inside the word and this one does not; the reader arriving cold is
+  the one who pays for that difference, and they are audience #1.
 - Provenance, for anyone writing copy: Alkor is the faint companion of Mizar in Ursa Major,
   and for centuries a test of eyesight — whether you could resolve it told you whether your
   instrument was good enough. A corpus of cases that discriminate does the same job, so the
@@ -152,11 +211,14 @@ reads. Narrower on purpose.
 
 ## Product Principles
 
-1. What was measured is what runs — one assembly feeds both eval and production.
-2. A number ships with what it does not show attached to it.
-3. A result the repository cannot reproduce is evidence, not a measurement.
-4. Restraint is a measured property: declining to answer is scored, not excused.
-5. The honest baseline is always on the table, including when it beats the model.
+1. When a check fails, report nothing rather than something plausible.
+2. Don't fix the model, make its output checkable — quote what it claims, recompute what it
+   calculates, and drop what does not survive.
+3. What was measured is what runs — one assembly feeds both eval and production.
+4. A number ships with what it does not show attached to it, and a result the repository cannot
+   reproduce is evidence, not a measurement.
+5. Restraint is a measured property: declining to answer is scored, not excused.
+6. The honest baseline is always on the table, including when it beats the model.
 
 ## Accessibility & Inclusion
 
