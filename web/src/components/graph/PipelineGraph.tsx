@@ -447,8 +447,8 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
 
         {nodes.length === 0 && (
           <div className="graph-empty">
-            <div>No execution path</div>
-            <div className="text-muted-foreground text-xs">Waiting for the pipeline workflow catalogue.</div>
+            <div>Nothing to draw</div>
+            <div className="text-muted-foreground text-xs">Waiting for this server to send the workflows it can run.</div>
           </div>
         )}
       </div>

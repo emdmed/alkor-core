@@ -256,7 +256,7 @@ export const SettingsView = memo(({ serverUrl, onClose }: SettingsViewProps) => 
           onSave={save}
           disabled={!writable}
           onMeaning={`Traces are written to ${config.runtime.traceDir}.`}
-          offMeaning="Runs leave no record; the activity feed is all that remains, and it is a bounded buffer."
+          offMeaning="Runs leave no record. The activity feed is all that remains, and it keeps only the most recent events."
         />
       </Section>
 
@@ -604,7 +604,7 @@ const BudgetField = ({
       <p className="settings-meaning">
         {unbounded
           ? 'Every backend a run needs is started and kept, however many that is. On a host that cannot hold them all at once, this is what swaps.'
-          : 'A model that does not fit inside this evicts the least recently used one. The rest of the machine — this browser, your editor, the OS — is not free, which is what the share is weighed against.'}
+          : 'A model that does not fit inside this evicts the least recently used one. Weigh the share against the rest of the machine — this browser, your editor, the OS all want memory too.'}
         {resources.residentBytes > 0 && ` ${fmtBytes(resources.residentBytes)} is resident now.`}
       </p>
 

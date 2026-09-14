@@ -47,7 +47,7 @@ export const InspectorPanel = memo(({ state }: { state: ProjectState }) => {
       ))}
 
       <h3 className="drawer-section-title">Tools</h3>
-      {tools.length === 0 && <div className="drawer-empty">No tool calls observed.</div>}
+      {tools.length === 0 && <div className="drawer-empty">No tool calls yet.</div>}
       <div className="drawer-badges">
         {tools.map((tool, i) => {
           const status: NodeState = tool.status === 'called' ? 'active' : tool.status === 'declined' ? 'failed' : 'done'
@@ -60,7 +60,7 @@ export const InspectorPanel = memo(({ state }: { state: ProjectState }) => {
       </div>
 
       <h3 className="drawer-section-title">Routes</h3>
-      {routes.length === 0 && <div className="drawer-empty">No routing decisions observed.</div>}
+      {routes.length === 0 && <div className="drawer-empty">No routing decisions yet. A forced workflow skips the router.</div>}
       {routes.map((route, i) => (
         <div key={i} className="drawer-data-row">
           {/* Decided-by-model versus decided-by-rule is a TAXONOMY, and a taxonomy never takes
@@ -71,7 +71,7 @@ export const InspectorPanel = memo(({ state }: { state: ProjectState }) => {
       ))}
 
       <h3 className="drawer-section-title">HTTP</h3>
-      {http.length === 0 && <div className="drawer-empty">No local HTTP traffic observed.</div>}
+      {http.length === 0 && <div className="drawer-empty">No requests to this server yet.</div>}
       {http.map((req, i) => (
         <div key={i} className="drawer-data-row">
           <span>{req.method}</span> <b>{req.path}</b>

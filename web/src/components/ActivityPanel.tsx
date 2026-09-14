@@ -34,8 +34,8 @@ export const ActivityPanel = memo(({ state }: { state: ProjectState }) => {
       <h3 className="drawer-section-title">Recent runs</h3>
       {state.runs.size === 0 && (
         <div className="text-sm text-foreground">
-          <div>No runs have arrived yet.</div>
-          <div className="text-muted-foreground text-xs">Completed work will stay visible here.</div>
+          <div>No runs yet.</div>
+          <div className="text-muted-foreground text-xs">The six most recent stay here once they finish.</div>
         </div>
       )}
       {runs.map((run) => {
@@ -57,7 +57,7 @@ export const ActivityPanel = memo(({ state }: { state: ProjectState }) => {
       <Separator className="my-3" />
 
       <h3 className="drawer-section-title">Model requests</h3>
-      {state.llmRequests.size === 0 && <div className="drawer-empty">No model requests observed.</div>}
+      {state.llmRequests.size === 0 && <div className="drawer-empty">No model requests yet.</div>}
       {requests.map((request) => {
         const status = request.status === 'in-flight' ? 'active' : request.status === 'error' ? 'failed' : 'done'
         const tps = request.status === 'completed' ? tokPerSec(request) : undefined
