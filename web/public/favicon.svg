@@ -5,24 +5,27 @@
     of the canvas, which is as full as the disc can sit without the crescent touching
     the edge.
 
-    Indigo here rather than ink. The One Accent Rule governs the product surface, where
-    an indigo mark would read as a control next to the run chips; the tab strip is outside
-    that surface, and an ink favicon would be a grey dot among other sites' colour.
+    TWO COLOURS, AS IN THE PRODUCT. Mizar is the accent and Alcor is the counter — the
+    same two roles the lockup uses, so the tab icon and the top bar are the same mark
+    rather than two drawings of it. The companion used to be the accent again at 54%
+    alpha, which is the treatment the product itself dropped: the faintness belongs to
+    occlusion, not to opacity, and an alpha crescent is the one thing that does not
+    survive being flattened.
 
-    The value follows the tab strip, not the document: a browser in dark mode paints the
-    strip dark, and #4f46e5 on it is dim enough to lose the mark. The dark value is the
-    same primary the dashboard switches to. Chrome and Firefox honour this query on SVG
-    favicons; Safari falls back to favicon.png below, which carries the light value only.
+    #e2542a is one value in both themes — the accent does not have a dark variant, which
+    is why there is no colour query on it. What DOES follow the tab strip is Alcor: the
+    counter is white on a dark strip and black on a light one, exactly as in the app,
+    because it is the crescent's separation from the disc that has to hold at 16px.
 
-    Alcor keeps its 54% alpha. SVG and PNG both hold it; the stencil case the mark's own
-    comment warns about is a monochrome ICO, which this does not ship.
+    Safari falls back to favicon.png below, which carries the light values only.
   -->
   <style>
-    .mark { fill: #4f46e5 }
+    .mizar { fill: #e2542a }
+    .alcor { fill: #000000 }
     @media (prefers-color-scheme: dark) {
-      .mark { fill: #7c7ff2 }
+      .alcor { fill: #ffffff }
     }
   </style>
-  <circle class="mark" cx="25.38" cy="-11.83" r="14.70" opacity="0.54" />
-  <circle class="mark" cx="0" cy="0" r="30" />
+  <circle class="alcor" cx="25.38" cy="-11.83" r="14.70" />
+  <circle class="mizar" cx="0" cy="0" r="30" />
 </svg>

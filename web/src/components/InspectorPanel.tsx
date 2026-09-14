@@ -5,8 +5,7 @@ import { fmtSec, type NodeState } from '../lib/format.ts'
 import { Badge } from './ui/badge'
 import { Check, Circle, LoaderCircle, X } from 'lucide-react'
 
-const nodeVariant = (s: NodeState): 'default' | 'secondary' | 'destructive' =>
-  s === 'active' ? 'default' : s === 'failed' ? 'destructive' : 'secondary'
+const nodeVariant = (s: NodeState) => s
 
 const StatusGlyph = ({ status }: { status: NodeState }) =>
   status === 'active' ? <LoaderCircle className="status-spin" /> : status === 'done' ? <Check /> : status === 'failed' ? <X /> : <Circle />
@@ -26,7 +25,7 @@ export const InspectorPanel = memo(({ state }: { state: ProjectState }) => {
       {sessions.map((session) => (
         <div key={session.sessionId} className="drawer-item">
           <div className="drawer-item-row">
-            <Badge variant={session.destroyed ? 'secondary' : 'default'}>
+            <Badge variant={session.destroyed ? 'idle' : 'active'}>
               {session.destroyed ? <X /> : <Circle />}
             </Badge>
             <span className="drawer-item-name">{session.profile}</span>
@@ -64,7 +63,9 @@ export const InspectorPanel = memo(({ state }: { state: ProjectState }) => {
       {routes.length === 0 && <div className="drawer-empty">No routing decisions observed.</div>}
       {routes.map((route, i) => (
         <div key={i} className="drawer-data-row">
-          <span className={route.ruleVsModel === 'model' ? 'text-primary' : 'text-foreground'}>{route.profile}</span>
+          {/* Decided-by-model versus decided-by-rule is a TAXONOMY, and a taxonomy never takes
+              a reserved hue or the accent — it is classified by the word beside it. */}
+          <span className="text-foreground">{route.profile}</span>
           <span>{Math.round(route.confidence * 100)}% · {route.ruleVsModel} · {route.reason}</span>
         </div>
       ))}
@@ -74,7 +75,8 @@ export const InspectorPanel = memo(({ state }: { state: ProjectState }) => {
       {http.map((req, i) => (
         <div key={i} className="drawer-data-row">
           <span>{req.method}</span> <b>{req.path}</b>
-          {req.status != null && <span className={req.status >= 400 ? 'text-destructive' : 'text-primary'}> {req.status}</span>}
+          {/* An HTTP status is a measured value: ink unless it is actually a failure. */}
+          {req.status != null && <span className={req.status >= 400 ? 'text-danger' : 'text-foreground'}> {req.status}</span>}
           {req.wallMs != null && <span>· {fmtSec(req.wallMs)}</span>}
         </div>
       ))}

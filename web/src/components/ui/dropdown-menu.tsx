@@ -65,7 +65,7 @@ function DropdownMenuCheckboxItem({
     >
       <span className="absolute left-1.5 flex size-4 items-center justify-center">
         <DropdownMenuPrimitive.ItemIndicator>
-          <Check className="size-3.5 text-primary" />
+          <Check className="size-3.5 mark-accent" />
         </DropdownMenuPrimitive.ItemIndicator>
       </span>
       {children}

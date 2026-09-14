@@ -360,7 +360,7 @@ const GraphView = ({ state, selectedWorkflow, onSelectedWorkflowChange, onInspec
                 onSelectedWorkflowChange(run.profile)
                 setViewportPinned(false)
               }} title={run.runId} aria-pressed={on}>
-                <span className={on ? 'text-primary' : 'text-muted-foreground'}><RunStatusIcon status={run.status === 'started' ? 'active' : run.status === 'failed' ? 'failed' : 'done'} /></span>
+                <span className={on ? 'mark-accent' : 'text-muted-foreground'}><RunStatusIcon status={run.status === 'started' ? 'active' : run.status === 'failed' ? 'failed' : 'done'} /></span>
                 <span>{run.profile}</span>
                 <span className="run-chip-id">{shortId(run.runId)}</span>
               </button>

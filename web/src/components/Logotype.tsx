@@ -49,15 +49,27 @@ export const Logotype = ({ className }: { className?: string }) => (
  * holds, and reads there as a companion dot rather than a crescent. Below about 11px it
  * closes into the edge.
  *
- * That 54% is the mark's one cost: it carries the pair in alpha, so any medium that
- * flattens to a single value (a stencil, a two-colour favicon) loses the companion. Screens
- * are the only target today; a gapped variant is the fallback if that ever changes.
+ * TWO COLOURS, NOT ONE AT TWO ALPHAS. The pair used to be drawn in a single `currentColor`
+ * with the companion held at 54%, which carried the faintness in alpha — and cost the mark
+ * every medium that flattens to one value. The alkor ledger world names the two roles
+ * instead: Mizar, the bright one, is `--color-action`, and it is the one place identity is
+ * allowed to spend the accent. Alcor is `--color-mark-counter`, the single pure black/white
+ * in the palette, and it earns that exception by being about 3px deep at topbar size, where
+ * every bit of edge separation counts. Against the page ground it reads at 18.9:1 on dark and
+ * 18.5:1 on light, with the accent along one edge at 3.79:1 and 5.54:1.
  *
- * Ink only inside the product. An indigo mark reads as a control next to the run chips,
- * which is exactly what the One Accent Rule exists to prevent (DESIGN.md); the accent is
- * permitted on the app icon and favicon, which are outside that rule's reach.
+ * The faintness is now carried by OCCLUSION rather than by alpha, which is what the story was
+ * always about: only the crescent that escapes the disc is visible.
  *
- * It accompanies the wordmark and is never a bullet or a section ornament (DESIGN.md).
+ * PAINT ORDER IS LOAD-BEARING. Alcor first, Mizar over it. Reverse these two lines and Alcor
+ * becomes a dot sitting on top of the disc rather than the faint one you resolve at its edge
+ * — a one-line regression that still looks deliberate, so it is worth checking on sight.
+ *
+ * The accent stops at the disc. It never touches the wordmark beside it, because that is a
+ * word, and on the light ground the accent measures 3.33:1 — a fill and a mark colour, never
+ * language.
+ *
+ * It accompanies the wordmark and is never a bullet or a section ornament.
  * `aria-hidden` because the mark beside it already carries the accessible name — a
  * screen reader announcing "alkor, two circles" is worse than one announcing "alkor".
  */
@@ -68,7 +80,7 @@ export const StarPair = ({ className }: { className?: string }) => (
     aria-hidden="true"
     focusable="false"
   >
-    <circle cx="25.38" cy="-11.83" r="14.70" fill="currentColor" opacity="0.54" />
-    <circle cx="0" cy="0" r="30" fill="currentColor" />
+    <circle className="alk-brand__alcor" cx="25.38" cy="-11.83" r="14.70" />
+    <circle className="alk-brand__mizar" cx="0" cy="0" r="30" />
   </svg>
 )

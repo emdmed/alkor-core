@@ -1,0 +1,538 @@
+/*
+ * alkor ledger — the design system distilled from the landing page (index.html).
+ *
+ * Drop this beside your Tailwind entry and import it after Tailwind:
+ *
+ *     @import "tailwindcss";
+ *     @import "./alkor-ledger.css";
+ *
+ * WHAT THIS WORLD IS. A ledger, not a dashboard chrome kit. Structure is drawn by 1px rules
+ * and space — there are no shadows, no tinted panels and no second surface colour. The only
+ * filled object in a view is its one primary action, and it carries the one accent.
+ *
+ * FOUR RESERVED ROLES, never confused for each other:
+ *   - --color-action (#e2542a) is identity and interaction: Mizar in the lockup, the primary
+ *     button's fill, the focus ring, the current-item mark. Nothing else, never decoration.
+ *   - --color-ok / --color-warn / --color-danger mean run state, and nothing else.
+ * The accent sits at hue 14°, where a salmon "failed" state would otherwise live, so danger is
+ * rose at 346°: 28° of hue and CIELab dE 45.6 away, the distance --color-warn already holds.
+ *
+ * THE ACCENT FILLS AND MARKS; IT IS NEVER TEXT. On the light ground it measures 3.33:1: enough
+ * for a fill or a 1px mark, not enough for a word. The marketing page takes one exception — a
+ * single headline figure at display size, where 3:1 is the bar it has to clear — and that
+ * exception does not survive the 20px cap on this surface. Here the accent never letters a
+ * digit; see .alk-meter.
+ *
+ * WHAT TRANSFERS FROM THE MARKETING PAGE, AND WHAT DOES NOT. The page is a Persuade surface;
+ * this is an Operate surface. The palette, the rules, the mono discipline, the square corners
+ * and the state hues transfer unchanged. The display ramp does not: the page tops out at 88px,
+ * and a panel of live readings tops out at 20px. The 96px band rhythm does not either — the
+ * rungs here are dense. Reaching for --text-display in an app view is the one way to make this
+ * system look like a landing page wearing an app's clothes.
+ *
+ * TWO FLOORS, NON-NEGOTIABLE IN BOTH THEMES.
+ *   - A measured value never renders below 12px, and always on tabular figures.
+ *   - Body text holds 4.5:1 and state-bearing marks 3:1. Every value below is measured against
+ *     the darkest ground it lands on, not against white.
+ */
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* ==========================================================================
+   Tokens
+   ========================================================================== */
+
+@theme {
+  /* Faces. Archivo carries language; Spline Sans Mono carries anything a reader compares
+     character by character — identifiers, ports, digests, durations, counts, measured values,
+     code. Mono is never a costume for "technical". */
+  --font-sans: "Archivo", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Spline Sans Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* The Operate ramp. It stops at 20px on purpose — see the header. --text-display exists for
+     the marketing surface only and is deliberately absent here. */
+  --text-mono-sm: 0.75rem;   --text-mono-sm--line-height: 1.45;
+  --text-meta:    0.8125rem; --text-meta--line-height: 1.5;
+  --text-body:    0.9375rem; --text-body--line-height: 1.6;
+  --text-lead:    1.0625rem; --text-lead--line-height: 1.55;
+  --text-title:   1.1875rem; --text-title--line-height: 1.3;
+  --text-h:       1.25rem;   --text-h--line-height: 1.25;
+
+  /* Square is this world's corner language. A pill is a 2px rectangle here, not a 999px lozenge. */
+  --radius-sq: 2px;
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Dark is the default: this surface is read at a desk beside a terminal, next to a run that
+     takes minutes. The ground is warm rather than blue-black so the cream sits on it as ink on
+     stock rather than as light on glass.
+
+     THE RAMP IS A TEMPERATURE GRADIENT, NOT A GREY SCALE. Every rung is derived from the
+     accent in OKLCH and the hue walks with the role: text at 66-72 deg, ground at 44-46,
+     structure at 38-42, the accent itself at 36.5. Chroma climbs with the rung, 0.012 at the
+     ground to 0.185 at the accent. Nothing here is a neutral — everything is the accent at
+     some distance, which is what keeps a mostly-text surface from reading as monochrome. */
+  --color-ground: #16100d;  /* the page */
+  --color-veil:   #130804;  /* the recessed surface: code, log panes, embedded mocks. It
+                               SINKS — 1.05:1 from the ground. Lift it or add chroma and it
+                               stops reading as a screen and starts reading as a card. */
+
+  --color-rule:        #362721;  /* minor divisions: ledger columns, list rows */
+  --color-rule-strong: #4f362d;  /* emphasis inside a block, and browser chrome */
+  --color-rule-accent: #6b3727;  /* MAJOR divisions only — see the hierarchy rule */
+
+  --color-ink:         #efe5d8;  /* 15.1:1 */
+  --color-ink-2:       #b1a395;  /* 7.7:1 — secondary prose, sub-lines */
+  --color-ink-3:       #948474;  /* 5.2:1 on the ground, 5.5:1 on the veil — dimmest allowed */
+
+  --color-action:       #e2542a;  /* the one filled object in a view, and the one accent */
+  --color-action-ink:   #16100d;  /* 4.97:1 on the fill */
+  --color-action-hover: #f0603b;
+  --color-action-mute:  #af5136;  /* 3.6:1 — the accent at mark strength: borders, never text */
+
+  /* Syntax. Two more rungs of the accent family at text strength. They exist because the state
+     hues used to do this job, which printed a clinical verdict in the pass colour and a zero
+     count as a warning. A run's output is not a run's state — see the rule in README.md. */
+  --color-syn-str: #c8aa96;  /* 9.1:1 on the veil */
+  --color-syn-num: #e08b74;  /* 7.6:1 on the veil */
+
+  /* Alcor's colour in the lockup, and the one pure value in this palette. Only the crescent
+     outside Mizar shows, so it reads against the page ground (18.9:1) with the accent along
+     one edge (3.79:1). Pure rather than the cream ink because that crescent is ~3px deep at
+     topbar size and every bit of edge separation counts. */
+  --color-mark-counter: #ffffff;
+
+  /* Reserved. These three mean run state. They never carry emphasis, branding or decoration,
+     and state is never signalled by colour alone — every dot ships beside a word. They share
+     one L/C band (L 0.72, C 0.115) so only hue tells them apart and they read as siblings
+     rather than three borrowed colours, and each clears CIELab dE 45.6 from the accent. */
+  --color-ok:     #80b66e;  /* 7.9:1, H 138, dE 88.3 — done, verified, passing */
+  --color-warn:   #c1a147;  /* 7.6:1, H  90, dE 53.4 — running, pending, unverified */
+  --color-danger: #e1859b;  /* 7.2:1, H   5, dE 51.7 — failed, refused */
+}
+
+/* The light twin. Warm paper, not white; the action block inverts to near-black. Utilities emit
+   var(--color-*), so redefining the same custom properties re-themes every one of them. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-ground: #f7f1e8;
+  --color-veil:   #efe4dd;
+
+  --color-rule:        #e8d2c5;
+  --color-rule-strong: #d7b6a6;
+  --color-rule-accent: #d19983;
+
+  --color-ink:         #201810;  /* 15.6:1 */
+  --color-ink-2:       #625448;  /* 6.5:1 */
+  --color-ink-3:       #706052;  /* 5.4:1 on the ground, 4.8:1 on the veil */
+
+  --color-action:       #e2542a;  /* the accent is one value in both themes */
+  --color-action-ink:   #201810;  /* 4.61:1 */
+  --color-action-hover: #f0603b;
+  --color-action-mute:  #c95a37;  /* 3.7:1 as a mark */
+  --color-syn-str: #6f5443;  /* 5.6:1 on the veil */
+  --color-syn-num: #8e412c;  /* 5.7:1 on the veil */
+  --color-mark-counter: #000000;  /* 18.5:1 on paper, 5.54:1 against the disc edge */
+
+  --color-ok:     #397421;  /* 5.1:1, H 138, dE 90.3 */
+  --color-warn:   #805e00;  /* 5.3:1, H  90, dE 48.7 */
+  --color-danger: #9d3d59;  /* 5.8:1, H   5, dE 50.9 */
+}
+
+:root { color-scheme: dark; }
+
+/* ==========================================================================
+   Base — including the browser surfaces this system also owns
+   ========================================================================== */
+
+@layer base {
+  body {
+    background: var(--color-ground);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* The parts you did not draw still carry the design. Shipping these on browser defaults is
+     the cheapest tell that an app was assembled rather than built. */
+  ::selection { background: color-mix(in srgb, var(--color-ink) 18%, transparent); color: var(--color-ink); }
+
+  :root {
+    scrollbar-color: var(--color-rule-strong) var(--color-ground);
+    scrollbar-width: thin;
+    caret-color: var(--color-ink);
+  }
+  ::-webkit-scrollbar { width: 11px; height: 11px; }
+  ::-webkit-scrollbar-track { background: var(--color-ground); }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-rule-strong);
+    border: 3px solid var(--color-ground);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--color-ink-3); }
+
+  :focus-visible {
+    outline: 2px solid var(--color-action);
+    outline-offset: 3px;
+    border-radius: 1px;
+  }
+
+  code, pre, kbd, samp {
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Emphasis is a rule under the words, never a highlight behind them. */
+  em { font-style: normal; box-shadow: inset 0 -1px 0 var(--color-rule-strong); }
+}
+
+/* ==========================================================================
+   Primitives — the seven shapes that actually repeat
+   ========================================================================== */
+
+@layer components {
+
+  /* ---- runhead: a label and a real datum, seated ON a rule -----------------
+     The system's panel header. The left half names the region; the right half carries a fact
+     about it — a count, a port, an interval, a build. The weight sits on the datum, because a
+     label that restates the heading beside it is a kicker, and this is not one. Never ship a
+     runhead whose right half is empty: with nothing to say it is decoration, and a plain
+     heading is the better element. */
+  .alk-runhead {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    border-top: 1px solid var(--color-rule-accent);
+    padding-top: 0.75rem;
+    font-family: var(--font-mono);
+    font-size: var(--text-mono-sm);
+    letter-spacing: 0.04em;
+    font-variant-numeric: tabular-nums;
+  }
+  .alk-runhead > :first-child { color: var(--color-ink-3); }
+  .alk-runhead > :last-child  { color: var(--color-ink-2); }
+  .alk-runhead b { font-weight: 500; color: var(--color-ink); }
+
+  /* ---- ledger: columns divided by rules, not cards ------------------------
+     This is the system's answer to the card grid, and the reason nothing here needs a card.
+     Set the column count with --alk-cols. Below 600px it stacks and the dividers become top
+     rules, so reading order survives without a second component. */
+  .alk-ledger {
+    display: grid;
+    grid-template-columns: repeat(var(--alk-cols, 3), minmax(0, 1fr));
+    border-top: 1px solid var(--color-rule);
+  }
+  .alk-ledger > * {
+    padding: 1.5rem 1.5rem 0.5rem;
+    border-left: 1px solid var(--color-rule);
+  }
+  .alk-ledger > :first-child { border-left: 0; padding-left: 0; }
+  @media (max-width: 900px) {
+    .alk-ledger { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 1.5rem; }
+    .alk-ledger > :nth-child(3) { border-left: 0; padding-left: 0; }
+  }
+  @media (max-width: 600px) {
+    .alk-ledger { grid-template-columns: minmax(0, 1fr); row-gap: 0; }
+    .alk-ledger > * {
+      border-left: 0; padding: 1rem 0;
+      border-top: 1px solid var(--color-rule);
+    }
+    .alk-ledger > :first-child { border-top: 0; }
+  }
+
+  /* ---- row: one unit of work, read as a ledger line ------------------------
+     The densest and most-used shape in the app: a state dot, a name, its state word on the
+     right, and under them the thing it ran on and the time it took. Two lines, one rule, no
+     box. Compose it as:
+       <li class="alk-row">
+         <span class="alk-dot alk-dot--ok"></span>
+         <span class="alk-row__name">extract</span>
+         <span class="alk-row__state">done</span>
+         <span class="alk-row__sub">clinical · :8081</span>
+         <span class="alk-row__value">19.5s</span>
+       </li> */
+  .alk-row {
+    display: grid;
+    grid-template-columns: 10px minmax(0, 1fr) auto;
+    align-items: baseline;
+    column-gap: 0.75rem;
+    row-gap: 2px;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid var(--color-rule);
+  }
+  .alk-row__name  { font-weight: 550; letter-spacing: -0.01em; }
+  .alk-row__state {
+    grid-column: 3;
+    font-family: var(--font-mono);
+    font-size: var(--text-mono-sm);
+    letter-spacing: 0.04em;
+    color: var(--color-ink-2);
+  }
+  .alk-row__sub {
+    grid-column: 2;
+    font-family: var(--font-mono);
+    font-size: var(--text-mono-sm);
+    font-variant-numeric: tabular-nums;
+    color: var(--color-ink-3);
+  }
+  .alk-row__value {
+    grid-column: 3;
+    justify-self: end;
+    font-family: var(--font-mono);
+    font-size: var(--text-mono-sm);
+    font-variant-numeric: tabular-nums;
+    color: var(--color-ink-2);
+  }
+  .alk-row[data-state="ok"]     .alk-row__state { color: var(--color-ok); }
+  .alk-row[data-state="run"]    .alk-row__state { color: var(--color-warn); }
+  .alk-row[data-state="failed"] .alk-row__state { color: var(--color-danger); }
+
+  /* ---- dot: state, never decoration ---------------------------------------
+     Always beside a word. Colour is the second signal, never the only one. */
+  .alk-dot {
+    width: 5px; height: 5px; border-radius: 50%;
+    flex: none; align-self: center; justify-self: center;
+    background: var(--color-ink-3);
+  }
+  .alk-dot--ok     { background: var(--color-ok); }
+  .alk-dot--run    { background: var(--color-warn); }
+  .alk-dot--failed { background: var(--color-danger); }
+
+  /* A taxonomy is not a state. Anything that classifies rather than reports outcome gets a
+     shape, not a hue — filled disc vs hollow ring — which also survives colourblindness. */
+  .alk-dot--kind-a, .alk-dot--kind-b { width: 7px; height: 7px; background: var(--color-ink-2); }
+  .alk-dot--kind-b { background: transparent; border: 1.5px solid var(--color-ink-2); }
+
+  /* ---- meter: a rate, and the length that lets you compare it -------------
+     The seventh shape, and the newest: it arrived when the landing page had to put three runs
+     of one model beside each other. Use it wherever a figure is only meaningful against its
+     siblings — gate scores, pass rates, a profile's agreement with its answer key. Drop one
+     into each cell of an .alk-ledger and the rules already divide them:
+
+       <article class="alk-meter" data-shipped="true">
+         <p class="alk-meter__k">run 1 · what alkor ships</p>
+         <h3 class="alk-meter__name">With alkor</h3>
+         <p class="alk-meter__v">100%</p>
+         <div class="alk-meter__bar"><i style="--alk-fill: 100%"></i></div>
+         <p class="alk-meter__n">20 of 20 <span class="alk-pill alk-pill--pass">pass</span></p>
+       </article>
+
+     THE TRACK CARRIES THE COMPARISON, NOT A COLOUR. The marketing page sets the winning figure
+     in the accent because it is display size, where 3:1 is the bar. That exception does not
+     survive the 20px cap here: at --text-h the accent would be a word, and a word it may not
+     be. So on this surface every figure is --color-ink and only the track differs — the
+     shipped row's fill in --color-action-mute at mark strength, the rest in --color-ink-3.
+     Never tint a losing figure with --color-danger: a lower number is not a failed run. The
+     verdict pill beside it is the thing that carries run state, and it says a word too. */
+  .alk-meter { display: grid; gap: 0.5rem; align-content: start; }
+  .alk-meter__k {
+    font-family: var(--font-mono);
+    font-size: var(--text-mono-sm);
+    letter-spacing: 0.04em;
+    color: var(--color-ink-3);
+  }
+  .alk-meter__name { font-size: var(--text-title); font-weight: 600; letter-spacing: -0.018em; margin: 0; }
+  .alk-meter__v {
+    font-size: var(--text-h);
+    font-weight: 300;
+    line-height: 1;
+    letter-spacing: -0.03em;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-ink);
+  }
+  .alk-meter__bar { height: 4px; background: var(--color-rule); }
+  .alk-meter__bar > i { display: block; height: 100%; width: var(--alk-fill, 0%); background: var(--color-ink-3); }
+  .alk-meter[data-shipped="true"] .alk-meter__bar > i { background: var(--color-action-mute); }
+  .alk-meter__n {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-family: var(--font-mono);
+    font-size: var(--text-mono-sm);
+    font-variant-numeric: tabular-nums;
+    color: var(--color-ink-2);
+  }
+
+  /* ---- note: the aside, ruled rather than boxed ---------------------------
+     Replaces the callout. A mono key in a fixed left column, prose on the right, one heavier
+     rule above and one lighter below. No fill, no left border, no icon tile. */
+  .alk-note {
+    display: grid;
+    grid-template-columns: minmax(0, 220px) minmax(0, 1fr);
+    gap: 2.5rem;
+    border-top: 1px solid var(--color-rule-accent);
+    border-bottom: 1px solid var(--color-rule);
+    padding-block: 1.5rem;
+  }
+  .alk-note__k {
+    font-family: var(--font-mono);
+    font-size: var(--text-mono-sm);
+    color: var(--color-ink);
+    letter-spacing: -0.01em;
+  }
+  .alk-note__body { color: var(--color-ink-2); max-width: 70ch; display: grid; gap: 0.75rem; }
+  .alk-note__body strong { color: var(--color-ink); }
+  @media (max-width: 720px) {
+    .alk-note { grid-template-columns: minmax(0, 1fr); gap: 0.75rem; }
+  }
+
+  /* ---- subhead: a second rank inside a region, without a second heading ----
+     A region that needs to restart mid-scroll takes a mono label at measured size rather than
+     a smaller sans heading: a second heading rank under an .alk-runhead competes with it, and
+     the ledger below already draws the rule that separates them. */
+  .alk-subhead {
+    font-family: var(--font-mono);
+    font-size: var(--text-mono-sm);
+    letter-spacing: 0.02em;
+    color: var(--color-ink);
+  }
+
+  /* ---- code: the one recessed surface in the system ------------------------
+     The veil is allowed here, in log panes and in embedded mocks, and nowhere else. The fade is lit
+     by script only when the block actually scrolls, and dropped at the end of the scroll — see
+     alk-overflow.ts in the README. A code block that hides content without saying so is the
+     one place this system leaks. */
+  .alk-code {
+    position: relative;
+    border: 1px solid var(--color-rule-strong);
+    border-radius: var(--radius-sq);
+    background: var(--color-veil);
+  }
+  .alk-code pre {
+    margin: 0;
+    padding: 1rem;
+    overflow-x: auto;
+    white-space: pre;
+    tab-size: 2;
+    font-size: var(--text-mono-sm);
+    line-height: 1.75;
+    color: var(--color-ink);
+  }
+  .alk-code::after {
+    content: "";
+    position: absolute;
+    inset: 1px 1px 1px auto;
+    width: 40px;
+    pointer-events: none;
+    opacity: 0;
+    background: linear-gradient(to right, transparent, var(--color-veil));
+    transition: opacity 0.2s var(--ease-out-expo);
+  }
+  .alk-code[data-more="true"]::after { opacity: 1; }
+
+  /* Token colours for a run's own output, from the accent family — never the state hues. That
+     mistake printed a clinical verdict in the pass colour and a zero count as a warning. */
+  .alk-code .tok-prompt { color: var(--color-ink-3); user-select: none; }
+  .alk-code .tok-str    { color: var(--color-syn-str); }
+  .alk-code .tok-key    { color: var(--color-ink); }
+  .alk-code .tok-num    { color: var(--color-syn-num); }
+  .alk-code .tok-punc   { color: var(--color-ink-3); }
+
+  /* ---- pill: a mono tag, square ------------------------------------------- */
+  .alk-pill {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: var(--text-mono-sm);
+    letter-spacing: 0.05em;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-ink-2);
+    border: 1px solid var(--color-rule-strong);
+    border-radius: var(--radius-sq);
+    padding: 1px 7px;
+  }
+  /* The only pills allowed a hue, and only because a gate verdict is run state. The word is
+     already there; the colour is the second signal, never the first. */
+  .alk-pill--pass { color: var(--color-ok); border-color: var(--color-ok); }
+  .alk-pill--fail { color: var(--color-danger); border-color: var(--color-danger); }
+
+
+  /* ---- buttons: one filled, one ruled --------------------------------------
+     There is exactly one .alk-btn in a view. Everything else is .alk-btn-plain or a link. A
+     second filled block is how this world stops reading as a ledger. */
+  .alk-btn, .alk-btn-plain {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-size: var(--text-body);
+    font-weight: 550;
+    letter-spacing: -0.01em;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background-color 0.18s var(--ease-out-expo), color 0.18s var(--ease-out-expo);
+  }
+  .alk-btn {
+    background: var(--color-action);
+    color: var(--color-action-ink);
+    border-radius: var(--radius-sq);
+    padding: 0.625rem 1.25rem;
+  }
+  .alk-btn:hover:not(:disabled) { background: var(--color-action-hover); }
+  .alk-btn:disabled {
+    background: transparent;
+    color: var(--color-ink-3);
+    border-color: var(--color-rule);
+    cursor: not-allowed;
+  }
+  .alk-btn-plain {
+    background: none;
+    color: var(--color-ink-2);
+    padding: 0.625rem 2px;
+    box-shadow: inset 0 -1px 0 var(--color-rule-strong);
+  }
+  .alk-btn-plain:hover:not(:disabled) { color: var(--color-ink); box-shadow: inset 0 -1px 0 currentColor; }
+  .alk-btn-plain:disabled { color: var(--color-ink-3); box-shadow: none; cursor: not-allowed; }
+
+  /* ---- node: the execution graph, in the same grammar ----------------------
+     For @xyflow/react. The graph is the run, so its nodes are rows with a border, not widgets:
+     same 1px rule, same 2px corner, same mono, same state dot. Edges take --color-rule-strong
+     at 1px; only the edge into the running node animates, and only its dash offset. */
+  .alk-node {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid var(--color-rule);
+    border-radius: var(--radius-sq);
+    padding: 5px 9px;
+    background: var(--color-ground);
+    font-family: var(--font-mono);
+    font-size: var(--text-mono-sm);
+    font-variant-numeric: tabular-nums;
+    color: var(--color-ink-3);
+  }
+  .alk-node[data-state="ok"]     { color: var(--color-ink-2); }
+  .alk-node[data-state="run"]    { color: var(--color-ink); border-color: var(--color-ink-3); }
+  .alk-node[data-state="failed"] { color: var(--color-ink); border-color: var(--color-danger); }
+  .alk-node.is-selected          { border-color: var(--color-ink); }
+
+  /* ---- the lockup ---------------------------------------------------------
+     The wordmark and its Mizar/Alcor star pair carry across from the superseded worlds
+     (PRODUCT.md), so they are the one piece of identity this system does not invent. Mizar,
+     the bright one, is the accent disc, and it obscures its companion. Alcor's centre is 28
+     units from Mizar's against a radius of 30, so drawn first and covered, what survives is
+     the crescent between 30 and 42.7 — a little under half the companion, emerging from
+     behind the disc's upper-right. Paint order is load-bearing and this is the direction that
+     carries the metaphor: Alcor first, Mizar over it. Flip it and Alcor becomes a dot sitting
+     on the disc instead of the faint one you resolve at its edge. The accent never touches
+     the wordmark; that is a word. */
+  .alk-brand__mizar { fill: var(--color-action); }
+  .alk-brand__alcor { fill: var(--color-mark-counter); }
+}
+
+/* ==========================================================================
+   Motion — one authored moment per view, on an already-visible default
+   ========================================================================== */
+
+@layer components {
+  /* A run takes minutes on this hardware, so motion's job is to say a thing changed, not to
+     entertain during the wait. Exponential ease-out, short, and nothing that hides content
+     while it plays. */
+  @keyframes alk-row-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .alk-row--arriving { animation: alk-row-in 0.5s var(--ease-out-expo) both; }
+  }
+}
