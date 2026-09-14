@@ -114,7 +114,7 @@ export const Header = memo(({ state, serverUrl, onServerUrlChange, onConnect, pa
           {model && <span className="topbar-model" title={model}>{model}</span>}
           {allBackendsDown && unmanagedDown.length > 0 && (
             <Badge
-              variant="destructive"
+              variant="failed"
               className="health-chip"
               title={`no model backend reachable (${models.map((m) => m.baseUrl).join(', ')})`}
             >
@@ -123,7 +123,7 @@ export const Header = memo(({ state, serverUrl, onServerUrlChange, onConnect, pa
           )}
           {allBackendsDown && anyDormant && unmanagedDown.length === 0 && (
             <Badge
-              variant="secondary"
+              variant="idle"
               className="health-chip"
               title="managed backends are dormant — they spawn on the next run that needs one"
             >

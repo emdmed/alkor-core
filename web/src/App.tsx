@@ -188,7 +188,7 @@ const GraphLoadingSurface = () => (
   <div className="graph-loading-surface" role="status" aria-live="polite" aria-label="Loading graph">
     <div className="graph-loading-copy">
       <span className="graph-loading-title">Loading workflow graph</span>
-      <span className="graph-loading-note">rendering topology…</span>
+      <span className="graph-loading-note">first open only — the canvas is a separate bundle</span>
     </div>
   </div>
 )

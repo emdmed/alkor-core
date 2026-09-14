@@ -1,0 +1,1439 @@
+<title>How alkor works — one patient, end to end</title>
+
+<style>
+  /* ---------------------------------------------------------------------------
+     Tokens, straight from DESIGN.md. The deck is a view of the product, so it
+     does not get a palette of its own. Indigo is the only accent (the One Accent
+     Rule); state-ok / state-warn are reserved for verdict state and nothing else.
+     --------------------------------------------------------------------------- */
+  :root {
+    --ink: #16181c;
+    --muted-ink: #686f7c;
+    --faint-ink: #70767d;
+    --canvas: #f1f3f5;
+    --app: #f8f9fa;
+    --surface: #ffffff;
+    --raised: #fcfcfd;
+    --hairline: #dee2e6;
+    --hairline-strong: #ced4da;
+    --indigo: #4f46e5;
+    --indigo-soft: #eef2ff;
+    --indigo-border: #858cdf;
+    --ok: #0f7b4f;
+    --ok-soft: #e7f6ee;
+    --ok-border: #5c9a76;
+    --warn: #a35a00;
+    --warn-soft: #fdf3e3;
+    --warn-border: #b5821f;
+    --danger: #c02626;
+
+    --sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+    --r-sm: 5px; --r-md: 6px; --r-lg: 8px; --r-xl: 10px; --r-pill: 999px;
+
+    --fs: clamp(13px, 0.62vw + 0.52vh, 19px);
+    --gutter: clamp(20px, 3.2vw, 64px);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #f0f2f5;
+      --muted-ink: #9aa2ad;
+      --faint-ink: #7c848f;
+      --canvas: #0c0e11;
+      --app: #101215;
+      --surface: #16181d;
+      --raised: #191c22;
+      --hairline: #2e333c;
+      --hairline-strong: #3a404a;
+      --indigo: #7c7ff2;
+      --indigo-soft: #21223a;
+      --indigo-border: #6266c4;
+      --ok: #4ade80;
+      --ok-soft: #12261c;
+      --ok-border: #448569;
+      --warn: #fbbf24;
+      --warn-soft: #2a2113;
+      --warn-border: #9d7830;
+      --danger: #f87171;
+    }
+  }
+
+  /* The viewer's toggle must win over the media query in both directions. */
+  :root[data-theme="light"] {
+    --ink: #16181c; --muted-ink: #686f7c; --faint-ink: #70767d;
+    --canvas: #f1f3f5; --app: #f8f9fa; --surface: #ffffff; --raised: #fcfcfd;
+    --hairline: #dee2e6; --hairline-strong: #ced4da;
+    --indigo: #4f46e5; --indigo-soft: #eef2ff; --indigo-border: #858cdf;
+    --ok: #0f7b4f; --ok-soft: #e7f6ee; --ok-border: #5c9a76;
+    --warn: #a35a00; --warn-soft: #fdf3e3; --warn-border: #b5821f;
+    --danger: #c02626;
+  }
+  :root[data-theme="dark"] {
+    --ink: #f0f2f5; --muted-ink: #9aa2ad; --faint-ink: #7c848f;
+    --canvas: #0c0e11; --app: #101215; --surface: #16181d; --raised: #191c22;
+    --hairline: #2e333c; --hairline-strong: #3a404a;
+    --indigo: #7c7ff2; --indigo-soft: #21223a; --indigo-border: #6266c4;
+    --ok: #4ade80; --ok-soft: #12261c; --ok-border: #448569;
+    --warn: #fbbf24; --warn-soft: #2a2113; --warn-border: #9d7830;
+    --danger: #f87171;
+  }
+
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--canvas);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: var(--fs);
+    line-height: 1.5;
+    font-feature-settings: "cv05" 1, "ss01" 1;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+
+  /* --- Chrome ------------------------------------------------------------- */
+
+  .deck { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
+
+  .chrome {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: calc(var(--fs) * 1.1);
+    padding: calc(var(--fs) * 0.66) var(--gutter);
+    background: var(--app);
+    border-bottom: 1px solid var(--hairline);
+  }
+  .chrome--foot {
+    border-bottom: none;
+    border-top: 1px solid var(--hairline);
+    justify-content: space-between;
+    color: var(--faint-ink);
+    font-size: calc(var(--fs) * 0.72);
+  }
+
+  .lockup { display: flex; align-items: center; gap: calc(var(--fs) * 0.42); color: var(--ink); }
+  .lockup svg { display: block; }
+  .lockup .mark { height: calc(var(--fs) * 0.86); width: auto; }
+  .lockup .star { height: calc(var(--fs) * 0.62); width: auto; }
+
+  .badge {
+    font-family: var(--mono);
+    font-size: calc(var(--fs) * 0.66);
+    color: var(--muted-ink);
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-pill);
+    padding: 0 calc(var(--fs) * 0.46);
+    line-height: 1.7;
+    white-space: nowrap;
+  }
+
+  /* The run strip. Four pips, one per workflow step, tracking where the deck is
+     in the actual pipeline. Slides that are not inside the run leave it dim. */
+  .runstrip { display: flex; align-items: center; gap: calc(var(--fs) * 0.3); margin-left: auto; }
+  .pip {
+    display: flex; align-items: center; gap: calc(var(--fs) * 0.3);
+    font-family: var(--mono);
+    font-size: calc(var(--fs) * 0.64);
+    color: var(--faint-ink);
+    opacity: 0.5;
+    transition: opacity .25s ease, color .25s ease;
+  }
+  .pip::before {
+    content: "";
+    width: calc(var(--fs) * 0.4); height: calc(var(--fs) * 0.4);
+    border-radius: 50%;
+    border: 1px solid currentColor;
+    flex: none;
+  }
+  .pip + .pip::after { content: none; }
+  .pip.done { opacity: 0.85; color: var(--muted-ink); }
+  .pip.done::before { background: currentColor; }
+  .pip.live { opacity: 1; color: var(--indigo); font-weight: 600; }
+  .pip.live::before { background: currentColor; box-shadow: 0 0 0 3px var(--indigo-soft); }
+  .counter { font-family: var(--mono); font-size: calc(var(--fs) * 0.7); color: var(--muted-ink); font-variant-numeric: tabular-nums; }
+
+  /* --- Depth -------------------------------------------------------------- */
+  /* One deck, two depths. Every fact lives in exactly one place; the mode only
+     decides whether it is revealed. Core is the argument; detail is the evidence. */
+
+  .modeswitch {
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+    background: var(--canvas);
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-md);
+  }
+  .modebtn {
+    appearance: none;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--muted-ink);
+    font: inherit;
+    font-size: calc(var(--fs) * 0.66);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    padding: calc(var(--fs) * 0.12) calc(var(--fs) * 0.5);
+    border-radius: calc(var(--r-md) - 1px);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .modebtn:hover { color: var(--ink); }
+  .modebtn:focus-visible { outline: 2px solid var(--indigo); outline-offset: 1px; }
+  .modebtn[aria-pressed="true"] {
+    background: var(--surface);
+    border-color: var(--hairline-strong);
+    color: var(--ink);
+  }
+
+  .deck[data-mode="core"] .detail-only { display: none; }
+  .deck[data-mode="detail"] .core-only { display: none; }
+  .deck[data-mode="core"] .slide[data-depth="detail"] { display: none; }
+
+  /* --- Stage -------------------------------------------------------------- */
+
+  .stage { flex: 1 1 auto; position: relative; min-height: 0; }
+
+  .slide {
+    position: absolute; inset: 0;
+    display: none;
+    flex-direction: column;
+    justify-content: center;
+    gap: calc(var(--fs) * 0.9);
+    padding: calc(var(--fs) * 1.4) var(--gutter);
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  .slide.is-current { display: flex; animation: rise .28s ease both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    .slide.is-current { animation: none; }
+    .pip { transition: none; }
+  }
+
+  .wrap { width: 100%; max-width: 1180px; margin: 0 auto; }
+
+  /* --- Type --------------------------------------------------------------- */
+
+  .eyebrow {
+    font-size: calc(var(--fs) * 0.68);
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted-ink);
+  }
+  h1 {
+    margin: 0;
+    font-size: calc(var(--fs) * 2.45);
+    font-weight: 600;
+    line-height: 1.14;
+    letter-spacing: -0.022em;
+    text-wrap: balance;
+  }
+  h2 {
+    margin: 0;
+    font-size: calc(var(--fs) * 1.62);
+    font-weight: 600;
+    line-height: 1.2;
+    letter-spacing: -0.018em;
+    text-wrap: balance;
+  }
+  .lede {
+    margin: 0;
+    font-size: calc(var(--fs) * 1.02);
+    color: var(--muted-ink);
+    max-width: 62ch;
+    text-wrap: pretty;
+  }
+  p { margin: 0; text-wrap: pretty; }
+  .note { font-size: calc(var(--fs) * 0.8); color: var(--faint-ink); max-width: 82ch; }
+  strong { font-weight: 600; }
+  em { font-style: normal; color: var(--ink); font-weight: 600; }
+
+  /* The deck's one typographic rule: mono is the machine's words, sans is ours. */
+  .mono, code, pre { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  .stack { display: flex; flex-direction: column; gap: calc(var(--fs) * 0.85); }
+  .stack--tight { gap: calc(var(--fs) * 0.45); }
+
+  /* --- Surfaces ----------------------------------------------------------- */
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-xl);
+    padding: calc(var(--fs) * 0.9) calc(var(--fs) * 1.05);
+    min-width: 0;
+  }
+  .card > .cardhead {
+    display: flex; align-items: baseline; gap: calc(var(--fs) * 0.5);
+    margin-bottom: calc(var(--fs) * 0.55);
+  }
+  .cardhead .t {
+    font-family: var(--mono);
+    font-size: calc(var(--fs) * 0.72);
+    color: var(--ink);
+    font-weight: 500;
+  }
+  .cardhead .s {
+    font-size: calc(var(--fs) * 0.68);
+    color: var(--faint-ink);
+    margin-left: auto;
+    white-space: nowrap;
+  }
+
+  pre.code {
+    margin: 0;
+    font-size: calc(var(--fs) * 0.74);
+    line-height: 1.62;
+    color: var(--ink);
+    white-space: pre;
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: 46vh;
+  }
+  .quote-doc {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: calc(var(--fs) * 0.86);
+    line-height: 1.75;
+    white-space: pre-wrap;
+    color: var(--ink);
+  }
+
+  .cols { display: grid; gap: calc(var(--fs) * 0.8); align-items: start; }
+  .cols--2 { grid-template-columns: 1fr 1fr; }
+  .cols--2u { grid-template-columns: 0.86fr 1.14fr; }
+  .cols--3 { grid-template-columns: repeat(3, 1fr); }
+
+  /* --- Semantic marks ----------------------------------------------------- */
+
+  mark.hit {
+    background: var(--indigo-soft);
+    color: var(--ink);
+    border-radius: var(--r-sm);
+    padding: 0.08em 0.22em;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+  }
+  mark.gap {
+    background: var(--warn-soft);
+    color: var(--ink);
+    border-bottom: 1px solid var(--warn-border);
+    border-radius: var(--r-sm) var(--r-sm) 0 0;
+    padding: 0.08em 0.22em;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+  }
+
+  .chip {
+    display: inline-flex; align-items: center; gap: calc(var(--fs) * 0.3);
+    font-family: var(--mono);
+    font-size: calc(var(--fs) * 0.66);
+    border-radius: var(--r-md);
+    padding: calc(var(--fs) * 0.1) calc(var(--fs) * 0.42);
+    border: 1px solid var(--hairline);
+    color: var(--muted-ink);
+    background: var(--app);
+    white-space: nowrap;
+  }
+  .chip--ok { color: var(--ok); background: var(--ok-soft); border-color: var(--ok-border); }
+  .chip--warn { color: var(--warn); background: var(--warn-soft); border-color: var(--warn-border); }
+  .chip--model { color: var(--indigo); background: var(--indigo-soft); border-color: var(--indigo-border); }
+
+  /* --- The workflow map --------------------------------------------------- */
+
+  .flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: calc(var(--fs) * 0.55); }
+  .node {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-lg);
+    padding: calc(var(--fs) * 0.7) calc(var(--fs) * 0.8);
+    display: flex; flex-direction: column; gap: calc(var(--fs) * 0.34);
+    position: relative;
+  }
+  .node + .node::before {
+    content: "";
+    position: absolute;
+    left: calc(var(--fs) * -0.55); top: 50%;
+    width: calc(var(--fs) * 0.55); height: 1px;
+    background: var(--hairline-strong);
+  }
+  .node .n {
+    font-family: var(--mono);
+    font-size: calc(var(--fs) * 0.78);
+    font-weight: 500;
+  }
+  .node .who { font-size: calc(var(--fs) * 0.7); color: var(--muted-ink); }
+  .node .ms {
+    font-family: var(--mono);
+    font-size: calc(var(--fs) * 0.72);
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+  .node .chip { align-self: flex-start; }
+  .node--model { border-color: var(--indigo-border); }
+  .node--model .ms { color: var(--indigo); }
+  .node--code { background: var(--app); }
+
+  /* --- The 2x2 ------------------------------------------------------------ */
+
+  .grid2 { border-collapse: collapse; font-size: calc(var(--fs) * 0.8); width: 100%; }
+  .grid2 th, .grid2 td {
+    border: 1px solid var(--hairline);
+    padding: calc(var(--fs) * 0.55) calc(var(--fs) * 0.6);
+    text-align: left;
+    vertical-align: middle;
+  }
+  .grid2 th {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: calc(var(--fs) * 0.72);
+    color: var(--muted-ink);
+    background: var(--app);
+  }
+  .grid2 td { font-family: var(--mono); color: var(--ink); background: var(--surface); }
+  .grid2 td.lit {
+    background: var(--ok-soft);
+    color: var(--ok);
+    font-weight: 600;
+    outline: 1px solid var(--ok-border);
+    outline-offset: -1px;
+  }
+  .grid2 td.ind { color: var(--faint-ink); }
+
+  /* --- Plain tables ------------------------------------------------------- */
+
+  .tbl { width: 100%; border-collapse: collapse; font-size: calc(var(--fs) * 0.82); }
+  .tbl th {
+    text-align: left;
+    font-size: calc(var(--fs) * 0.68);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted-ink);
+    padding: 0 calc(var(--fs) * 0.6) calc(var(--fs) * 0.4) 0;
+    border-bottom: 1px solid var(--hairline-strong);
+  }
+  .tbl td {
+    padding: calc(var(--fs) * 0.48) calc(var(--fs) * 0.6) calc(var(--fs) * 0.48) 0;
+    border-bottom: 1px solid var(--hairline);
+    vertical-align: top;
+  }
+  .tbl tr:last-child td { border-bottom: none; }
+  .tbl td.k { font-family: var(--mono); color: var(--ink); white-space: nowrap; }
+  .tbl td.v { color: var(--muted-ink); }
+  .scroll { overflow-x: auto; }
+
+  /* --- Callout ------------------------------------------------------------ */
+
+  .callout {
+    border-left: 2px solid var(--indigo);
+    padding-left: calc(var(--fs) * 0.8);
+    color: var(--ink);
+    font-size: calc(var(--fs) * 1.02);
+    max-width: 64ch;
+    text-wrap: pretty;
+  }
+  .callout--ok { border-left-color: var(--ok-border); }
+  .callout--warn { border-left-color: var(--warn-border); }
+
+  .kicker {
+    font-size: calc(var(--fs) * 1.18);
+    font-weight: 600;
+    letter-spacing: -0.012em;
+    text-wrap: balance;
+  }
+
+  .dl { display: grid; grid-template-columns: max-content 1fr; gap: calc(var(--fs) * 0.34) calc(var(--fs) * 0.8); font-size: calc(var(--fs) * 0.82); }
+  .dl dt { font-family: var(--mono); font-size: calc(var(--fs) * 0.74); color: var(--muted-ink); white-space: nowrap; }
+  .dl dd { margin: 0; color: var(--ink); }
+
+  .hint { font-family: var(--mono); font-size: calc(var(--fs) * 0.68); color: var(--faint-ink); }
+  kbd {
+    font-family: var(--mono);
+    font-size: 0.92em;
+    border: 1px solid var(--hairline-strong);
+    border-bottom-width: 2px;
+    border-radius: var(--r-sm);
+    padding: 0.06em 0.34em;
+    color: var(--muted-ink);
+  }
+
+  .navbtn {
+    appearance: none;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--r-md);
+    color: var(--faint-ink);
+    font: inherit;
+    font-size: calc(var(--fs) * 0.72);
+    padding: calc(var(--fs) * 0.1) calc(var(--fs) * 0.42);
+    cursor: pointer;
+  }
+  .navbtn:hover { color: var(--ink); border-color: var(--hairline); }
+  .navbtn:focus-visible { outline: 2px solid var(--indigo); outline-offset: 2px; }
+
+  .caveat-text { max-width: 78ch; }
+
+  /* Slide 1 wants the mark large and alone. */
+  .hero-lockup { display: flex; align-items: center; gap: calc(var(--fs) * 0.8); color: var(--ink); }
+  .hero-lockup .mark { height: calc(var(--fs) * 2.6); width: auto; }
+  .hero-lockup .star { height: calc(var(--fs) * 1.8); width: auto; }
+
+  @media (max-width: 900px) {
+    .cols--2, .cols--2u, .cols--3 { grid-template-columns: 1fr; }
+    .flow { grid-template-columns: 1fr 1fr; }
+    .node + .node::before { content: none; }
+  }
+</style>
+
+<div class="deck" data-mode="core">
+
+  <header class="chrome">
+    <span class="lockup">
+      <svg class="mark" viewBox="63 -1490 4382 1514" role="img" aria-label="alkor" focusable="false"><path fill="currentColor" d="M520 21Q382 21 279 -48Q176 -117 120 -240Q63 -364 63 -529Q63 -691 120 -814Q177 -938 280 -1008Q383 -1077 518 -1077Q621 -1077 705 -1035Q789 -993 838 -909L842 -909L842 -1056L1089 -1056L1089 0L842 0L842 -159L839 -159Q789 -69 706 -24Q623 21 520 21ZM579 -190Q703 -190 778 -282Q852 -375 852 -529Q852 -683 778 -776Q703 -868 579 -868Q462 -868 390 -780Q318 -692 318 -529Q318 -365 390 -278Q462 -190 579 -190ZM1569 0Q1400 0 1326 -62Q1252 -125 1252 -270L1252 -1490L1504 -1490L1504 -295Q1504 -239 1524 -219Q1545 -199 1600 -199L1642 -199L1642 0L1569 0ZM1719 0L1719 -1490L1971 -1490L1971 -628L1974 -628L2385 -1056L2688 -1056L2259 -600L2714 0L2413 0L2067 -452L1971 -353L1971 0L1719 0ZM3228 24Q3072 24 2955 -46Q2838 -115 2772 -239Q2707 -363 2707 -527Q2707 -691 2772 -816Q2838 -940 2955 -1010Q3072 -1080 3228 -1080Q3383 -1080 3500 -1010Q3618 -940 3683 -816Q3749 -691 3749 -527Q3749 -363 3683 -239Q3618 -115 3500 -46Q3383 24 3228 24ZM3228 -187Q3349 -187 3421 -278Q3493 -369 3493 -527Q3493 -685 3421 -777Q3349 -869 3228 -869Q3106 -869 3034 -778Q2962 -686 2962 -527Q2962 -369 3034 -278Q3106 -187 3228 -187ZM3861 0L3861 -1056L4104 -1056L4104 -881L4107 -881Q4136 -971 4199 -1018Q4261 -1066 4363 -1066Q4389 -1066 4410 -1064Q4430 -1063 4445 -1062L4445 -838Q4431 -840 4397 -843Q4363 -846 4326 -846Q4236 -846 4175 -784Q4113 -722 4113 -598L4113 0L3861 0Z"/></svg>
+      <svg class="star" viewBox="-30.60 -30.60 71.28 61.20" aria-hidden="true" focusable="false"><circle cx="25.38" cy="-11.83" r="14.70" fill="currentColor" opacity="0.54"/><circle cx="0" cy="0" r="30" fill="currentColor"/></svg>
+    </span>
+    <span class="badge">0.1.2 alpha</span>
+
+    <div class="modeswitch" role="group" aria-label="Level of detail">
+      <button type="button" class="modebtn" data-set-mode="core" aria-pressed="true">Core concepts</button>
+      <button type="button" class="modebtn" data-set-mode="detail" aria-pressed="false">Detailed</button>
+    </div>
+
+    <nav class="runstrip" aria-label="Position in the pipeline run">
+      <span class="pip" data-pip="extract">extract</span>
+      <span class="pip" data-pip="verify-derived">verify-derived</span>
+      <span class="pip" data-pip="verify-source">verify-source</span>
+      <span class="pip" data-pip="assess">assess</span>
+    </nav>
+    <span class="counter"><span id="cur">1</span>/<span id="tot">12</span></span>
+  </header>
+
+  <main class="stage" id="stage">
+
+    <!-- 1 ------------------------------------------------------- -->
+    <section class="slide" data-step="">
+      <div class="wrap stack">
+        <div class="hero-lockup">
+          <svg class="mark" viewBox="63 -1490 4382 1514" role="img" aria-label="alkor" focusable="false"><path fill="currentColor" d="M520 21Q382 21 279 -48Q176 -117 120 -240Q63 -364 63 -529Q63 -691 120 -814Q177 -938 280 -1008Q383 -1077 518 -1077Q621 -1077 705 -1035Q789 -993 838 -909L842 -909L842 -1056L1089 -1056L1089 0L842 0L842 -159L839 -159Q789 -69 706 -24Q623 21 520 21ZM579 -190Q703 -190 778 -282Q852 -375 852 -529Q852 -683 778 -776Q703 -868 579 -868Q462 -868 390 -780Q318 -692 318 -529Q318 -365 390 -278Q462 -190 579 -190ZM1569 0Q1400 0 1326 -62Q1252 -125 1252 -270L1252 -1490L1504 -1490L1504 -295Q1504 -239 1524 -219Q1545 -199 1600 -199L1642 -199L1642 0L1569 0ZM1719 0L1719 -1490L1971 -1490L1971 -628L1974 -628L2385 -1056L2688 -1056L2259 -600L2714 0L2413 0L2067 -452L1971 -353L1971 0L1719 0ZM3228 24Q3072 24 2955 -46Q2838 -115 2772 -239Q2707 -363 2707 -527Q2707 -691 2772 -816Q2838 -940 2955 -1010Q3072 -1080 3228 -1080Q3383 -1080 3500 -1010Q3618 -940 3683 -816Q3749 -691 3749 -527Q3749 -363 3683 -239Q3618 -115 3500 -46Q3383 24 3228 24ZM3228 -187Q3349 -187 3421 -278Q3493 -369 3493 -527Q3493 -685 3421 -777Q3349 -869 3228 -869Q3106 -869 3034 -778Q2962 -686 2962 -527Q2962 -369 3034 -278Q3106 -187 3228 -187ZM3861 0L3861 -1056L4104 -1056L4104 -881L4107 -881Q4136 -971 4199 -1018Q4261 -1066 4363 -1066Q4389 -1066 4410 -1064Q4430 -1063 4445 -1062L4445 -838Q4431 -840 4397 -843Q4363 -846 4326 -846Q4236 -846 4175 -784Q4113 -722 4113 -598L4113 0L3861 0Z"/></svg>
+          <svg class="star" viewBox="-30.60 -30.60 71.28 61.20" aria-hidden="true" focusable="false"><circle cx="25.38" cy="-11.83" r="14.70" fill="currentColor" opacity="0.54"/><circle cx="0" cy="0" r="30" fill="currentColor"/></svg>
+        </div>
+        <h1>Small local models better at medicine.</h1>
+        <p class="lede core-only">
+          A small AI model — small enough to run on your own laptop — is not reliable enough to
+          read medical notes on its own. alkor is the layer that makes it reliable enough to be
+          useful.
+        </p>
+        <p class="lede detail-only">
+          An orchestration layer between your prompt and local inference. It manages context,
+          constrains the model, and checks its work.
+        </p>
+        <p class="lede">
+          <span class="mono">One patient</span>, start to finish. Everything that follows is
+          output from a real run on this machine.
+        </p>
+        <p class="note" style="margin-top:calc(var(--fs) * 0.6)">
+          Alkor is the faint companion of Mizar. For centuries, resolving the pair was a test of
+          eyesight — it told you whether your instrument was good enough. A corpus of cases that
+          discriminate does the same job.
+        </p>
+      </div>
+    </section>
+
+    <!-- 2 ------------------------------------------------------- -->
+    <section class="slide" data-step="">
+      <div class="wrap stack">
+        <span class="eyebrow">The premise</span>
+        <h2 class="core-only">The model is the weakest part. Build around it.</h2>
+        <h2 class="detail-only">A 4B model is not a clinician. You cannot fix that by explaining more.</h2>
+        <p class="lede core-only">
+          Small models fail in four predictable ways. Each one has a fix that does not involve
+          trusting the model.
+        </p>
+        <p class="lede detail-only">
+          It will miss findings, invent them, and get arithmetic wrong — all in the same confident
+          voice. The instinct is to write a longer prompt. That is the one move that reliably makes
+          it worse.
+        </p>
+
+        <div class="scroll core-only" style="margin-top:calc(var(--fs) * 0.4)">
+          <table class="tbl">
+            <thead>
+              <tr><th style="width:36%">What goes wrong</th><th>What alkor does about it</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="k">it makes things up</td>
+                <td class="v">Every fact has to quote the note. No quote, no output.</td>
+              </tr>
+              <tr>
+                <td class="k">it is bad at arithmetic</td>
+                <td class="v">The maths is done in code. The model's own numbers are thrown away.</td>
+              </tr>
+              <tr>
+                <td class="k">it will not admit doubt</td>
+                <td class="v">"Nobody checked" is an answer it is allowed to give — and is scored on.</td>
+              </tr>
+              <tr>
+                <td class="k">it gets lost in long instructions</td>
+                <td class="v">It is asked one short question at a time, never everything at once.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="scroll detail-only" style="margin-top:calc(var(--fs) * 0.4)">
+          <table class="tbl">
+            <thead>
+              <tr><th style="width:32%">The model…</th><th>alkor's answer</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="k">invents findings</td>
+                <td class="v">Every reading carries a verbatim quote, checked by a second model.
+                  <strong style="color:var(--ink)">Unquoted readings never reach output.</strong></td>
+              </tr>
+              <tr>
+                <td class="k">cannot do arithmetic</td>
+                <td class="v">Shock index, MAP and pulse pressure are recomputed in code. The model's
+                  own numbers are <strong style="color:var(--ink)">dropped, not reconciled</strong>.</td>
+              </tr>
+              <tr>
+                <td class="k">will not say "I don't know"</td>
+                <td class="v"><strong style="color:var(--ink)">"Normal" and "nobody looked" stay
+                  distinct.</strong> Declining is scored, not excused.</td>
+              </tr>
+              <tr>
+                <td class="k">has a short attention span</td>
+                <td class="v">Every instruction competes with the patient for the same window. So
+                  <strong style="color:var(--ink)">no call is asked more than one question.</strong></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="callout core-only" style="margin-top:calc(var(--fs) * 0.5)">
+          None of this makes the model smarter. It makes the model's answers checkable — and throws
+          away the ones that fail the check.
+        </p>
+        <p class="callout detail-only" style="margin-top:calc(var(--fs) * 0.5)">
+          alkor does not change the weights, and it does not write a bigger prompt. It keeps each
+          context small, makes the output checkable, and reports nothing rather than something
+          plausible.
+        </p>
+      </div>
+    </section>
+
+    <!-- 3 ------------------------------------------------------- -->
+    <section class="slide" data-step="">
+      <div class="wrap stack">
+        <div style="display:flex; align-items:baseline; gap:calc(var(--fs) * 0.6); flex-wrap:wrap">
+          <span class="eyebrow">The patient</span>
+          <span class="chip chip--warn">synthetic</span>
+          <span class="hint detail-only">packs/clinical/notes/sh-01-septic-classic.note.txt</span>
+        </div>
+        <h2>Eight sentences, no structure, no labels.</h2>
+
+        <div class="card">
+          <p class="quote-doc">62-year-old male, hypotensive for 90 minutes. BP 78/38. Heart rate 118 bpm. Warm peripheries. Jugular venous pressure normal to low. Capillary refill brisk. Bounding pulse. <mark class="gap">Lung examination not performed.</mark></p>
+        </div>
+
+        <div class="cols cols--2" style="margin-top:calc(var(--fs) * 0.3)">
+          <p class="note core-only">
+            This patient is not real. The note was written for testing — no record was copied,
+            edited or paraphrased to make it.
+          </p>
+          <p class="note detail-only">
+            Written for the corpus, not derived from any real record. The pack directory is the
+            likeliest place for patient data to reach a public repository, and there the mistake
+            cannot be taken back.
+          </p>
+          <p class="note">
+            Hold on to the last sentence. <em>Lung examination not performed</em> is not a finding —
+            it is the absence of one. Watch where it ends up.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4 ------------------------------------------------------- -->
+    <section class="slide" data-step="">
+      <div class="wrap stack">
+        <span class="eyebrow">The map</span>
+        <h2 class="core-only">Four steps. Only two of them use AI.</h2>
+        <h2 class="detail-only">One run, four steps — and two of them never touch a GPU.</h2>
+
+        <div class="flow core-only" style="margin-top:calc(var(--fs) * 0.3)">
+          <div class="node node--model">
+            <span class="n">read the note</span>
+            <span class="who">pulls the facts out of the prose</span>
+            <span class="chip chip--model">AI</span>
+          </div>
+          <div class="node node--code">
+            <span class="n">check the numbers</span>
+            <span class="who">recomputes the maths, checks each quote</span>
+            <span class="chip">code</span>
+          </div>
+          <div class="node node--model">
+            <span class="n">re-read the quotes</span>
+            <span class="who">a second AI, to catch invented findings</span>
+            <span class="chip chip--model">AI</span>
+          </div>
+          <div class="node node--code">
+            <span class="n">write the summary</span>
+            <span class="who">prints only what survived</span>
+            <span class="chip">code</span>
+          </div>
+        </div>
+
+        <div class="flow detail-only" style="margin-top:calc(var(--fs) * 0.3)">
+          <div class="node node--model">
+            <span class="n">extract</span>
+            <span class="who">gemma-4-E4B · port 8081</span>
+            <span class="ms">260 s</span>
+            <span class="chip chip--model">model</span>
+          </div>
+          <div class="node node--code">
+            <span class="n">verify-derived</span>
+            <span class="who">code · no GPU</span>
+            <span class="ms">250 ms</span>
+            <span class="chip">rule</span>
+          </div>
+          <div class="node node--model">
+            <span class="n">verify-source</span>
+            <span class="who">a second model · port 8085</span>
+            <span class="ms">121 s</span>
+            <span class="chip chip--model">model</span>
+          </div>
+          <div class="node node--code">
+            <span class="n">assess</span>
+            <span class="who">code · renders the ending</span>
+            <span class="ms">0.6 ms</span>
+            <span class="chip">rule</span>
+          </div>
+        </div>
+        <p class="hint detail-only">
+          this run, on a 12-core Ryzen 5 5500U with no GPU offload
+        </p>
+
+        <p class="callout core-only" style="margin-top:calc(var(--fs) * 0.4)">
+          The two code steps take milliseconds and cannot invent anything. The two AI steps are
+          where the time goes — and where the risk is, which is why each one is checked by
+          something that is not an AI.
+        </p>
+        <p class="note core-only">
+          If a check fails, the run stops and names the step that stopped it. It never prints a
+          verdict over a failed check.
+        </p>
+
+        <div class="cols cols--2u detail-only" style="margin-top:calc(var(--fs) * 0.5)">
+          <div class="stack stack--tight">
+            <p class="kicker">The vocabulary, in full.</p>
+            <dl class="dl">
+              <dt>Run</dt><dd>one execution, one input, one run id</dd>
+              <dt>Workflow</dt><dd>the recipe — an ordered list of steps</dd>
+              <dt>Step</dt><dd>one entry in it</dd>
+            </dl>
+          </div>
+          <div class="stack stack--tight">
+            <p class="note">
+              A failing step stops the workflow and returns what it has. No retry, no fallback, no
+              circuit breaker — but the final step runs on <em>every</em> exit, because a refused
+              run is when a caller most needs a sentence.
+            </p>
+            <p class="note">
+              Each step names its own server, so four steps may cross four models. They load one at
+              a time: the machine is the constraint.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5 ------------------------------------------------------- -->
+    <section class="slide" data-step="extract">
+      <div class="wrap stack">
+        <span class="eyebrow core-only">The main idea</span>
+        <span class="eyebrow detail-only">Inside step 1 — orchestration</span>
+        <h2 class="core-only">Each question starts with a blank page.</h2>
+        <h2 class="detail-only">Every pass starts from an empty context.</h2>
+        <p class="lede core-only">
+          Reading the note is not one big request. alkor asks a few small questions in sequence,
+          and each one starts fresh — the model never carries clutter from the last question.
+        </p>
+        <p class="lede detail-only">
+          "extract" is not one model call. A rule picks the questions; each question gets its own
+          call. No call sees another call's prompt.
+        </p>
+
+        <div class="cols cols--2 core-only" style="margin-top:calc(var(--fs) * 0.2)">
+          <div class="card">
+            <div class="cardhead"><span class="t">the obvious way</span><span class="s">one big prompt</span></div>
+            <p class="note" style="color:var(--ink)">
+              One instruction covering every question you might ask. It fills about
+              <strong>three quarters</strong> of everything the model can hold — before the patient
+              is even mentioned.
+            </p>
+            <p class="note" style="margin-top:calc(var(--fs) * 0.5)">
+              The model then has to find the relevant paragraph in its own instructions, and a small
+              model is bad at that.
+            </p>
+          </div>
+          <div class="card" style="border-color:var(--indigo-border)">
+            <div class="cardhead"><span class="t">alkor</span><span class="s">one question at a time</span></div>
+            <p class="note" style="color:var(--ink)">
+              Each question is sent on its own, with just the note attached — around
+              <strong>a tenth</strong> as much text. Nothing accumulates between questions.
+            </p>
+            <p class="note" style="margin-top:calc(var(--fs) * 0.5)">
+              Between the questions, ordinary code does the arithmetic and decides which question to
+              ask next. The model is never asked to do either.
+            </p>
+          </div>
+        </div>
+
+        <p class="callout core-only">
+          This is most of why it works. A small model is not just forgetful — it gets
+          <em>worse</em> the more you tell it at once.
+        </p>
+
+        <div class="scroll detail-only">
+          <table class="tbl" style="margin-top:calc(var(--fs) * 0.2)">
+            <thead>
+              <tr>
+                <th style="width:23%">pass</th>
+                <th style="width:15%">runs on</th>
+                <th style="width:22%">prompt it is sent</th>
+                <th>what it answers</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="k">vitals-first</td>
+                <td class="v"><span class="chip chip--model">model</span></td>
+                <td class="k">4,799 chars</td>
+                <td class="v">the numbers, with the words they came from</td>
+              </tr>
+              <tr>
+                <td class="k">calculations</td>
+                <td class="v"><span class="chip">rule</span></td>
+                <td class="k">—</td>
+                <td class="v">MAP 51.3 · shock index 1.51</td>
+              </tr>
+              <tr>
+                <td class="k">route</td>
+                <td class="v"><span class="chip">rule</span></td>
+                <td class="k">—</td>
+                <td class="v">shock-suspicion (0.92) → run these two</td>
+              </tr>
+              <tr>
+                <td class="k">shock-extraction</td>
+                <td class="v"><span class="chip chip--model">model</span></td>
+                <td class="k">1,939 chars</td>
+                <td class="v">the five bedside findings</td>
+              </tr>
+              <tr>
+                <td class="k">shock</td>
+                <td class="v"><span class="chip chip--model">model</span></td>
+                <td class="k">12,584 chars</td>
+                <td class="v">the category, and what supports it</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="cols cols--2u detail-only" style="margin-top:calc(var(--fs) * 0.3)">
+          <p class="callout">
+            Each model call is exactly <em>two messages</em>: its own prompt, and the 204-character
+            note. Nothing accumulates. The largest context any call sees is <em>~3,200 tokens</em>.
+          </p>
+          <p class="note">
+            One prompt that could answer every question in the pack would run
+            <span class="mono">103,912</span> characters — about 26,000 tokens, or
+            <strong style="color:var(--ink)">79% of this model's 32k window spent before the
+            patient is mentioned.</strong>
+          </p>
+        </div>
+
+        <p class="note detail-only">
+          Splitting is also what makes the prompt cache work: every pass sends a byte-identical
+          prefix, so llama.cpp re-evaluates almost none of it.
+        </p>
+      </div>
+    </section>
+
+    <!-- 6 ------------------------------------------------------- -->
+    <section class="slide" data-step="extract" data-depth="detail">
+      <div class="wrap stack">
+        <div style="display:flex; align-items:baseline; gap:calc(var(--fs) * 0.6); flex-wrap:wrap">
+          <span class="eyebrow">Inside step 1 — the contract</span>
+          <span class="chip chip--model">the shock-extraction pass</span>
+        </div>
+        <h2>Prose in, a payload out — and the shape is not optional.</h2>
+
+        <div class="cols cols--2">
+          <div class="card">
+            <div class="cardhead"><span class="t">the note</span><span class="s">what the model reads</span></div>
+            <p class="quote-doc" style="font-size:calc(var(--fs) * 0.78)">62-year-old male, hypotensive for <mark class="hit">90 minutes</mark>. <mark class="hit">BP 78/38</mark>. <mark class="hit">Heart rate 118 bpm</mark>. <mark class="hit">Warm</mark> peripheries. Jugular venous pressure <mark class="hit">normal to low</mark>. Capillary refill <mark class="hit">brisk</mark>. <mark class="hit">Bounding</mark> pulse. <mark class="gap">Lung examination not performed.</mark></p>
+          </div>
+          <div class="card">
+            <div class="cardhead"><span class="t">results.shock-extraction.output.exam</span><span class="s">what it wrote</span></div>
+<pre class="code">{
+  "hypotension": {
+    "systolic": 78,
+    "diastolic": 38,
+    "duration_minutes": 90
+  },
+  "heart_rate": 118,
+  "skin_temperature": "warm",
+  "jugular_venous_pressure": "normal_or_low",
+  "capillary_refill": "brisk",
+  "pulse_volume": "bounding",
+  "lung_exam": "not_assessed"
+}</pre>
+          </div>
+        </div>
+
+        <div class="cols cols--2" style="margin-top:calc(var(--fs) * 0.3)">
+          <p class="callout">
+            The JSON Schema goes to llama.cpp as <span class="mono">response_format</span> and
+            compiles into a grammar. Invalid JSON is not unlikely here — it is
+            <em>impossible to emit</em>.
+          </p>
+          <p class="note">
+            Look at the vocabulary it allows:
+            <span class="mono">["warm", "cool", "not_assessed"]</span>. The third member is
+            deliberate. There must be exactly one way to say nobody looked, or absence gets spelled
+            as a weak positive — and the model just used it.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 7 ------------------------------------------------------- -->
+    <section class="slide" data-step="verify-derived" data-depth="detail">
+      <div class="wrap stack">
+        <div style="display:flex; align-items:baseline; gap:calc(var(--fs) * 0.6); flex-wrap:wrap">
+          <span class="eyebrow">Step 2 — verify-derived</span>
+          <span class="chip">rule · no model</span>
+          <span class="chip chip--ok">250 ms</span>
+        </div>
+        <h2>Every number carries the words it came from.</h2>
+
+        <div class="cols cols--2">
+          <div class="card">
+            <div class="cardhead"><span class="t">results.vital-signs.output.vitals</span><span class="s">quote-backed</span></div>
+<pre class="code">"blood_pressure": {
+  "systolic": 78,
+  "diastolic": 38,
+  "unit": "mmHg",
+  "raw_text": "BP 78/38"
+},
+"heart_rate": {
+  "value": 118,
+  "unit": "bpm",
+  "raw_text": "Heart rate 118 bpm"
+},
+"temperature": null,
+"oxygen_saturation": null,
+"respiratory_rate": null</pre>
+          </div>
+          <div class="stack">
+            <p class="callout callout--ok">
+              <span class="mono">raw_text</span> is checked against the note by
+              <em>literal containment</em>. A derivation is checked as a deletion-only word
+              subsequence. Neither check is a regex, deliberately.
+            </p>
+            <div class="card">
+              <div class="cardhead"><span class="t">confirmation</span><span class="s">computed in code</span></div>
+<pre class="code">{
+  "confirmed": true,
+  "systolic": 78,
+  "shockIndex": 1.51,
+  "reason": "systolic 78 &lt; 90 mmHg,
+             shock index 1.51 &gt; 0.7"
+}</pre>
+            </div>
+            <p class="note">
+              The model was never asked for 1.51 — only for 78 and 118, with the words it read them
+              from. The arithmetic happens once, in one place, and everything downstream reads the
+              answer rather than re-deriving it.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 8 ------------------------------------------------------- -->
+    <section class="slide" data-step="verify-source" data-depth="detail">
+      <div class="wrap stack">
+        <div style="display:flex; align-items:baseline; gap:calc(var(--fs) * 0.6); flex-wrap:wrap">
+          <span class="eyebrow">Step 3 — verify-source</span>
+          <span class="chip chip--model">a second model</span>
+        </div>
+        <h2>A different model reads the note back.</h2>
+        <p class="lede">
+          Step 2 proved the quotes are <em>in</em> the note. Step 3 asks a separate model whether
+          they <em>say</em> what the extraction claims. It is the invention check, and the most
+          expensive step in the run.
+        </p>
+
+        <div class="cols cols--2">
+          <div class="card">
+            <div class="cardhead"><span class="t">step 3 output</span><span class="s">verifier · port 8085</span></div>
+<pre class="code">{
+  "verified": true,
+  "confidence": 1,
+  "issues": []
+}</pre>
+          </div>
+          <div class="stack stack--tight">
+            <p class="kicker">Why a whole second model for three fields?</p>
+            <p class="note">
+              Because a fabricated finding arrives in the same confident voice as a real one,
+              phrased exactly as a clinician would phrase it. Nothing downstream can tell them
+              apart — so something upstream must, and it has to read the source rather than the
+              extraction's account of itself.
+            </p>
+            <p class="note">
+              If this step returns issues, the run stops and the ending names the step that refused.
+              A verdict is never printed over a failed check.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 9 ------------------------------------------------------- -->
+    <section class="slide" data-step="">
+      <div class="wrap stack">
+        <span class="eyebrow">The decision itself</span>
+        <h2 class="core-only">The diagnosis is a lookup table, not a guess.</h2>
+        <h2 class="detail-only">The rule is twelve lines of code. The model is graded against it.</h2>
+        <p class="lede core-only">
+          Two findings decide the category: whether the skin is warm or cool, and whether the neck
+          vein is raised or not. That is the whole rule.
+        </p>
+
+        <div class="cols cols--2u">
+          <div class="stack stack--tight">
+            <div class="scroll">
+              <table class="grid2">
+                <thead>
+                  <tr><th></th><th>JVP normal / low</th><th>JVP elevated</th></tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <th>skin warm</th>
+                    <td class="lit">septic ←</td>
+                    <td class="ind">indeterminate</td>
+                  </tr>
+                  <tr>
+                    <th>skin cool</th>
+                    <td>hypovolemic</td>
+                    <td>cardiogenic</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="hint detail-only" style="margin-top:calc(var(--fs) * 0.3)">src/profiles/clinical/shock.ts — classify()</p>
+            <p class="note">
+              Our patient is warm with a low JVP. That cell is the only thing that decided the
+              category.
+            </p>
+            <p class="note detail-only">
+              The fourth cell is unassigned on purpose — a vasodilated patient who is also
+              volume-overloaded is the presentation the bedside cannot separate. The honest output
+              is the name of the ambiguity.
+            </p>
+          </div>
+
+          <div class="stack">
+            <p class="callout core-only">
+              So the table runs in code, not in the model. <em>A lookup the model gets right 95% of
+              the time is worse than just doing the lookup.</em>
+            </p>
+            <p class="note core-only">
+              The model is still asked the same question, and its answer is compared against the
+              table. That comparison is the score — it tells you whether the model is applying the
+              rule or substituting a hunch.
+            </p>
+            <p class="callout detail-only">
+              Nothing is gained by asking a 4B model to do a table lookup, and something is lost:
+              <em>a lookup the model gets right 95% of the time is strictly worse than a lookup.</em>
+            </p>
+            <p class="note detail-only">
+              So the table is the answer key, and the headline number is
+              <strong style="color:var(--ink)">agreement</strong>. High agreement means the table
+              should ship alone. Low means the model is wrong — on this input there is nothing else
+              for it to be. Either way the run says something.
+            </p>
+            <p class="note detail-only">
+              The model earns its place on the residue: where the table abstains, where findings
+              contradict, and why a case is undecidable. A 2×2 can express none of that.
+            </p>
+            <p class="note core-only" style="border-top:1px solid var(--hairline); padding-top:calc(var(--fs) * 0.5)">
+              <strong style="color:var(--ink)">And the honest part.</strong> The rule comes from a
+              2010 bedside study of 68 patients. It got <span class="mono">52 of 68</span> right —
+              76%. <em>That is the ceiling</em>, and no software raises it. alkor can make the
+              answer traceable; it cannot make the rule better than it is.
+            </p>
+            <p class="note detail-only" style="border-top:1px solid var(--hairline); padding-top:calc(var(--fs) * 0.5)">
+              <strong style="color:var(--ink)">Where the rule comes from.</strong>
+              Vazquez et al., J Hosp Med 2010;5(8):471–4 (PMID 20945471). Sixty-eight hypotensive
+              patients; skin temperature and JVP alone placed <span class="mono">52 of 68</span>
+              correctly — 76%, and the authors called it a pilot.
+              <em>That 76% is the ceiling</em>, and no software raises it.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 10 ------------------------------------------------------ -->
+    <section class="slide" data-step="assess">
+      <div class="wrap stack">
+        <div style="display:flex; align-items:baseline; gap:calc(var(--fs) * 0.6); flex-wrap:wrap">
+          <span class="eyebrow core-only">The result</span>
+          <span class="eyebrow detail-only">Step 4 — assess</span>
+          <span class="chip detail-only">rule · renders the ending</span>
+          <span class="chip chip--ok detail-only">0.6 ms</span>
+        </div>
+        <h2 class="core-only">What comes out the other end.</h2>
+        <h2 class="detail-only">The ending, exactly as it printed.</h2>
+
+        <div class="cols cols--2u">
+          <div class="card">
+<pre class="code" style="max-height:52vh">ASSESSMENT — supplied input
+
+Shock: septic
+  echo: skin warm · JVP normal_or_low
+  supporting: capillary_refill, pulse_volume
+  discordant: none
+  model confidence: 0.9 (self-reported, not measured)
+
+vital-signs: ran, states no syndrome verdict
+shock-extraction: ran, states no syndrome verdict
+
+Verification: derived passed · source passed (0 issues)
+
+<mark class="gap">Not assessed: lung_exam</mark>
+
+pack clinical spec 3 · medprotocol 0.7.10
+Not a diagnosis and not a medical device. Agreement with
+a published bedside heuristic, not clinical truth.</pre>
+          </div>
+
+          <div class="stack stack--tight">
+            <p class="callout callout--warn core-only">
+              Look at the second-to-last line. The note said the lungs were never examined — so the
+              summary <em>says so</em>, instead of leaving it out.
+            </p>
+            <p class="note core-only">
+              A summary that printed only what was found would have quietly turned "nobody looked"
+              into "normal". That difference is the whole point.
+            </p>
+            <p class="note core-only" style="border-top:1px solid var(--hairline); padding-top:calc(var(--fs) * 0.5)">
+              <strong style="color:var(--ink)">This last step invents nothing.</strong> It only
+              re-prints facts that earlier steps already produced and checked. Where the model wrote
+              words, they appear word for word — never reworded, because once reworded you cannot
+              tell which words were the model's.
+            </p>
+            <p class="callout callout--warn detail-only">
+              There it is. <em>Lung examination not performed</em> travelled eight sentences, one
+              grammar, two verifiers and a rule — and arrived as its own line.
+            </p>
+            <p class="note detail-only">
+              A summary printing only what was found would have reported "nobody looked" as
+              "normal". That difference is the product.
+            </p>
+            <p class="note detail-only" style="border-top:1px solid var(--hairline); padding-top:calc(var(--fs) * 0.5)">
+              <strong style="color:var(--ink)">This step computes nothing.</strong> Every fact was
+              produced by an earlier step and already checked. The model's own words are quoted
+              verbatim and attributed to their field — never paraphrased, because once paraphrased
+              nobody can tell which words were the model's.
+            </p>
+            <p class="note detail-only">
+              Note what is <em>not</em> claimed: the 0.9 is labelled
+              <span class="mono">self-reported, not measured</span>. It is the model's opinion of
+              itself, printed as such.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 11 ------------------------------------------------------ -->
+    <section class="slide" data-step="" data-depth="detail">
+      <div class="wrap stack">
+        <span class="eyebrow">What it cost</span>
+        <h2>Every run reports its own bill.</h2>
+
+        <div class="cols cols--2u">
+          <div class="card">
+            <div class="cardhead"><span class="t">what it cost</span><span class="s">the reference eval, 21 cases</span></div>
+<pre class="code">generation  11.4 tok/s   (4833 tokens in 425.0s)
+prompt      80.9 tok/s   (5301 evaluated,
+                          26660 from cache = 83% reuse)
+latency     median 23.3s  p95 29.0s
+            min 9819ms  max 41.9s
+first case  41.9s   cold cache, counted in the total
+wall total  490.8s  of which 336ms is transport
+conditions  Q4_K - Medium · ctx 32768 · 1 slot(s)
+            sequential, cache_prompt on</pre>
+          </div>
+
+          <div class="stack stack--tight">
+            <p class="callout">
+              Read a speed with more care than a score.
+              <em>Correctness travels between machines; throughput does not.</em>
+            </p>
+            <p class="note">
+              So the conditions line is read from the server, and nothing gates on it. There is no
+              <span class="mono">bench</span> verb, deliberately — llama-server returns its timings
+              unasked, so a measured run and an unmeasured one send identical bytes.
+            </p>
+            <p class="note" style="border-top:1px solid var(--hairline); padding-top:calc(var(--fs) * 0.5)">
+              <strong style="color:var(--ink)">The result that argues for the grammar.</strong>
+              gemma-3-4b-it, same weights, same corpus, same question:
+            </p>
+            <div class="scroll">
+              <table class="tbl">
+                <tbody>
+                  <tr>
+                    <td class="k">free</td>
+                    <td class="v"><span class="chip chip--warn">0 / 88</span> — 21 cases failed</td>
+                  </tr>
+                  <tr>
+                    <td class="k">constrained</td>
+                    <td class="v"><span class="chip chip--ok">88 / 88</span> detection</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="note">
+              And the footnote the harness prints rather than letting you guess:
+              <em>the 0/88 is a format failure.</em> Every reply came back in a
+              <span class="mono">```json</span> fence and nothing parsed. Re-scored with the fence
+              stripped, it is 84/84.
+            </p>
+            <p class="note">
+              A grammar buys shape, and only where shape is missing. Qwen3-4B's two arms are
+              identical — a model that already emits clean JSON has nothing left to buy.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 12 ------------------------------------------------------ -->
+    <section class="slide" data-step="">
+      <div class="wrap stack">
+        <span class="eyebrow">Where that leaves you</span>
+        <h2>What it is, what it is not, and how to run it yourself.</h2>
+
+        <div class="cols cols--2">
+          <div class="stack stack--tight">
+            <p class="kicker">It is not</p>
+            <div class="scroll core-only">
+              <table class="tbl">
+                <tbody>
+                  <tr><td class="k">a medical device</td><td class="v">and not a substitute for a clinician</td></tr>
+                  <tr><td class="k">proof of anything</td><td class="v">the test cases are written, not patients</td></tr>
+                  <tr><td class="k">an AI model</td><td class="v">it is the layer built around one</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="note core-only" style="margin-top:calc(var(--fs) * 0.4)">
+              A perfect score here shows two things, and only two: a published bedside rule was
+              applied faithfully, and the model said so when the rule did not reach far enough.
+            </p>
+
+            <div class="scroll detail-only">
+              <table class="tbl">
+                <tbody>
+                  <tr><td class="k">a medical device</td><td class="v">nor clinical decision support</td></tr>
+                  <tr><td class="k">validation evidence</td><td class="v">nothing here is for a regulator</td></tr>
+                  <tr><td class="k">an eval framework</td><td class="v">one assembly feeds eval and production</td></tr>
+                  <tr><td class="k">an inference server</td><td class="v">llama.cpp does that; alkor is the layer above</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="note detail-only" style="margin-top:calc(var(--fs) * 0.4)">
+              The corpus contains no patients — only payloads written to exercise distinct routes
+              through a rule. A perfect score shows two things: the heuristic was applied
+              faithfully, and the model declined where it did not reach. Nothing else.
+            </p>
+          </div>
+
+          <div class="stack stack--tight">
+            <p class="kicker core-only">How to try it</p>
+            <p class="kicker detail-only">Three doors in</p>
+            <div class="card core-only">
+<pre class="code">./start</pre>
+            </div>
+            <p class="note core-only">
+              One command, from a fresh clone to a running dashboard. Everything runs on your own
+              machine — no note ever leaves it.
+            </p>
+            <div class="card detail-only">
+<pre class="code">./start
+
+node src/cli.ts workflow \
+  --profile clinical-verified --input "…"
+
+curl -s localhost:3000/pipeline \
+  -d '{"input":"…"}'</pre>
+            </div>
+            <p class="note">
+              Or from the dashboard: <strong style="color:var(--ink)">Run</strong> rail →
+              <strong style="color:var(--ink)">Corpus</strong> →
+              <span class="mono">sh-01-septic-classic</span>, and watch the graph light up in the
+              order you just saw.
+            </p>
+            <p class="note core-only" style="border-top:1px solid var(--hairline); padding-top:calc(var(--fs) * 0.5)">
+              Every run ends one of three ways: an answer, a refusal that names the step that
+              stopped it, or a cancellation. All three are written to disk, so you can always go
+              back and see exactly what happened.
+            </p>
+            <p class="note detail-only" style="border-top:1px solid var(--hairline); padding-top:calc(var(--fs) * 0.5)">
+              Every run ends in a verdict, a refusal naming the step that stopped it, or a
+              cancellation. All three carry a run id tying the answer to everything the run emitted,
+              on disk, as JSONL.
+            </p>
+            <p class="hint detail-only">
+              this run: 8941f282-d742-46bd-affa-b86b348a7e0a
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="chrome chrome--foot">
+    <span class="caveat-text">
+      Not a diagnosis and not a medical device. Agreement with a published bedside heuristic, not
+      clinical truth. All patient data shown is synthetic.
+    </span>
+    <span style="display:flex; align-items:center; gap:calc(var(--fs) * 0.3); flex:none">
+      <button class="navbtn" id="prev" type="button" aria-label="Previous slide">←</button>
+      <button class="navbtn" id="next" type="button" aria-label="Next slide">→</button>
+      <span class="hint" style="margin-left:calc(var(--fs) * 0.4)"><kbd>←</kbd> <kbd>→</kbd> to move · <kbd>D</kbd> for depth</span>
+    </span>
+  </footer>
+</div>
+
+<script>
+  (function () {
+    var deck = document.querySelector('.deck');
+    var all = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+    var pips = Array.prototype.slice.call(document.querySelectorAll('.pip'));
+    var modeBtns = Array.prototype.slice.call(document.querySelectorAll('[data-set-mode]'));
+    var order = ['extract', 'verify-derived', 'verify-source', 'assess'];
+    var cur = document.getElementById('cur');
+    var tot = document.getElementById('tot');
+
+    var mode = 'core';
+    var i = 0;
+
+    /** The slides the current mode actually shows, in document order. */
+    function visible() {
+      return all.filter(function (s) {
+        return mode === 'detail' || s.getAttribute('data-depth') !== 'detail';
+      });
+    }
+
+    function paint() {
+      var vis = visible();
+      i = Math.max(0, Math.min(vis.length - 1, i));
+      var here = vis[i];
+
+      all.forEach(function (s) { s.classList.toggle('is-current', s === here); });
+      cur.textContent = i + 1;
+      tot.textContent = vis.length;
+
+      var at = order.indexOf(here.getAttribute('data-step') || '');
+      pips.forEach(function (p, n) {
+        p.classList.toggle('live', at !== -1 && n === at);
+        p.classList.toggle('done', at !== -1 && n < at);
+      });
+
+      modeBtns.forEach(function (b) {
+        b.setAttribute('aria-pressed', String(b.getAttribute('data-set-mode') === mode));
+      });
+
+      var hash = '#' + mode + '/' + (i + 1);
+      if (location.hash !== hash) history.replaceState(null, '', hash);
+    }
+
+    function go(n) {
+      i = n;
+      paint();
+    }
+
+    /**
+     * Switching depth keeps you where you are. If the slide you are on exists in the
+     * other mode you stay on it; if it is a detail slide being hidden, you fall back to
+     * the nearest earlier slide that survives — never to the top of the deck.
+     */
+    function setMode(next) {
+      if (next === mode) return;
+      var anchor = visible()[i];
+      mode = next;
+      deck.setAttribute('data-mode', mode);
+      try { localStorage.setItem('alkor.deck.mode', mode); } catch (e) { /* private mode */ }
+
+      var vis = visible();
+      var at = vis.indexOf(anchor);
+      if (at === -1) {
+        var from = all.indexOf(anchor);
+        at = 0;
+        for (var k = 0; k < vis.length; k++) {
+          if (all.indexOf(vis[k]) < from) at = k; else break;
+        }
+      }
+      go(at);
+    }
+
+    document.addEventListener('keydown', function (e) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      var n = visible().length;
+      switch (e.key) {
+        case 'ArrowRight': case 'PageDown': case ' ': go(Math.min(n - 1, i + 1)); e.preventDefault(); break;
+        case 'ArrowLeft': case 'PageUp': go(Math.max(0, i - 1)); e.preventDefault(); break;
+        case 'Home': go(0); e.preventDefault(); break;
+        case 'End': go(n - 1); e.preventDefault(); break;
+        case 'd': case 'D': setMode(mode === 'core' ? 'detail' : 'core'); e.preventDefault(); break;
+      }
+    });
+
+    modeBtns.forEach(function (b) {
+      b.addEventListener('click', function () { setMode(b.getAttribute('data-set-mode')); });
+    });
+    document.getElementById('next').addEventListener('click', function () { go(Math.min(visible().length - 1, i + 1)); });
+    document.getElementById('prev').addEventListener('click', function () { go(Math.max(0, i - 1)); });
+
+    // Start from the hash (#core/3 or #detail/7), then a remembered choice, then core.
+    var m = /^#(core|detail)\/(\d+)$/.exec(location.hash || '');
+    var startAt = 0;
+    if (m) {
+      mode = m[1];
+      startAt = parseInt(m[2], 10) - 1;
+    } else {
+      try {
+        var saved = localStorage.getItem('alkor.deck.mode');
+        if (saved === 'core' || saved === 'detail') mode = saved;
+      } catch (e) { /* private mode */ }
+      var bare = parseInt((location.hash || '').slice(1), 10);
+      if (!isNaN(bare)) startAt = bare - 1;
+    }
+    deck.setAttribute('data-mode', mode);
+    go(startAt);
+  })();
+</script>

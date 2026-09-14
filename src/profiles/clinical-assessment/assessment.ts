@@ -136,6 +136,17 @@ interface ClinicalReading {
   other: string[]
   /** Why a syndrome that WAS routed could not be read. */
   unreadable: string[]
+  /**
+   * False when the sepsis extraction reported that the note documented no mental state, so its
+   * GCS is the contract's default rather than an observation.
+   *
+   * It is carried all the way to the ending on purpose. An assumed GCS decides qSOFA's
+   * altered-mental-status criterion, which is a third of the screen, and a reader who is told
+   * the score without being told that one of its inputs was assumed has been told the screen is
+   * better evidenced than it is. Undefined means no extraction route ran and there is nothing
+   * to caveat.
+   */
+  gcsDocumented?: boolean
 }
 
 const readExam = (value: unknown): ShockExam | undefined => {
@@ -178,6 +189,14 @@ const readClinical = (output: unknown, initialInput: string): ClinicalReading =>
       } else if (route === 'shock-extraction') {
         reading.exam = readExam(object(value)?.exam)
         if (reading.exam) reading.examSource = 'route'
+        reading.other.push(route)
+      } else if (route === 'sepsis-extraction') {
+        // Only the provenance flag is taken. The three numbers are already in the sepsis
+        // reply's own echo, and reading them twice from two places is how the two start
+        // disagreeing.
+        const documented = object(results[route])?.output
+        const flag = object(documented)?.gcs_documented ?? object(object(documented)?.exam)?.gcs_documented
+        if (typeof flag === 'boolean') reading.gcsDocumented = flag
         reading.other.push(route)
       } else {
         reading.other.push(route)
@@ -233,12 +252,24 @@ const shockSyndrome = (reply: ShockReply): AssessedSyndrome => {
   }
 }
 
-const sepsisSyndrome = (reply: SepsisReply): AssessedSyndrome => {
+const sepsisSyndrome = (reply: SepsisReply, gcsDocumented?: boolean): AssessedSyndrome => {
   const at = (field: string) => `results.sepsis.output.${field}`
   const lines: ClaimLine[] = [
     { field: at('respiratory_rate'), text: `echo: RR ${reply.respiratory_rate} · SBP ${reply.systolic_bp} · GCS ${reply.gcs}` },
     { field: at('criteria_met'), text: `criteria: ${list(reply.criteria_met)}` },
   ]
+  // An assumed GCS decides one of the screen's three criteria, so the caveat sits with the
+  // score rather than in a footnote. It is stated whichever way that criterion went: an
+  // assumed 15 that scored altered_mental_status FALSE is exactly as unevidenced as one that
+  // scored it true, and a reader deciding what to do next needs to know which third of this
+  // screen rests on nobody having written anything down.
+  if (gcsDocumented === false) {
+    lines.push({
+      field: 'results.sepsis-extraction.output.gcs_documented',
+      text: 'GCS 15 was ASSUMED — the note documents no mental state. altered_mental_status was '
+        + 'scored against a contract default, not an observation.',
+    })
+  }
   if (reply.screen_reason) lines.push({ field: at('screen_reason'), text: reply.screen_reason, quoted: true })
   if (reply.notes) lines.push({ field: at('notes'), text: reply.notes, quoted: true })
   lines.push({
@@ -322,7 +353,7 @@ export const composeAssessment = (run: RunView, pack: PackView = {}): Assessment
 
   const syndromes: AssessedSyndrome[] = []
   if (reading.shock) syndromes.push(shockSyndrome(reading.shock))
-  if (reading.sepsis) syndromes.push(sepsisSyndrome(reading.sepsis))
+  if (reading.sepsis) syndromes.push(sepsisSyndrome(reading.sepsis, reading.gcsDocumented))
 
   const other: ClaimLine[] = [
     ...reading.other.map((route) => ({ field: `results.${route}`, text: `${route}: ran, states no syndrome verdict` })),

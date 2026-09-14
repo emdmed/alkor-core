@@ -388,3 +388,57 @@ test('a reason attached to a decided category is still an accusation', async () 
   assert.equal(result.ok, false)
   assert.match(result.text, /a reason was given for a category that is not indeterminate/)
 })
+
+/*
+ * The GCS provenance flag has to SURVIVE this projection.
+ *
+ * This is the step that dropped it. The flag is a sibling of `exam` on the extraction's output,
+ * and this adapter rebuilt `exam` alone — so the source verifier was handed a bare `gcs: 15` on
+ * a note that never mentions mental state and correctly called it a fabricated positive
+ * assertion. Being `critical`, that withheld the assessment on a run that had agreed with the
+ * rule on every other count.
+ *
+ * The verifier is asked to judge the PAIR (packs/verifier/prompt.md rule 3, Example 6b), so the
+ * pair must arrive and must be adjacent.
+ */
+test('an assumed GCS keeps its provenance flag on the way to the source verifier', async () => {
+  const plan = bothArms()
+  plan.results['sepsis-extraction'].output = {
+    exam: { respiratory_rate: 26, systolic_bp: 82, gcs: 15 },
+    screen: { positive: true, score: 2 },
+    gcs_documented: false,
+  }
+  plan.results.sepsis.output = {
+    respiratory_rate: 26,
+    systolic_bp: 82,
+    gcs: 15,
+    qsofa_score: 2,
+    positive: true,
+    criteria_met: ['respiratory_rate', 'systolic_bp'],
+    screen_reason: null,
+    assessment_confidence: 0.95,
+    notes: null,
+  }
+  const result = await reviewWith(septicShockNote, plan)
+  assert.equal(result.ok, true, result.text)
+  const report = result.report as Record<string, any>
+  // Inside the exam, beside the number it qualifies — not a sibling, and not dropped.
+  assert.deepEqual(report.extraction['sepsis-extraction'], {
+    exam: { respiratory_rate: 26, systolic_bp: 82, gcs: 15, gcs_documented: false },
+  })
+})
+
+test('a documented GCS is forwarded as documented', async () => {
+  const plan = bothArms()
+  plan.results['sepsis-extraction'].output = {
+    exam: { respiratory_rate: 26, systolic_bp: 82, gcs: 13 },
+    screen: { positive: true, score: 3 },
+    gcs_documented: true,
+  }
+  const result = await reviewWith(septicShockNote, plan)
+  assert.equal(result.ok, true, result.text)
+  const report = result.report as Record<string, any>
+  assert.deepEqual(report.extraction['sepsis-extraction'], {
+    exam: { respiratory_rate: 26, systolic_bp: 82, gcs: 13, gcs_documented: true },
+  })
+})

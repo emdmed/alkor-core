@@ -6,8 +6,9 @@ import { Badge } from './ui/badge'
 import { Separator } from './ui/separator'
 import { Check, Circle, LoaderCircle, X } from 'lucide-react'
 
-const statusVariant = (status: 'active' | 'done' | 'failed' | 'idle'): 'default' | 'secondary' | 'destructive' =>
-  status === 'active' ? 'default' : status === 'failed' ? 'destructive' : 'secondary'
+/* The pill variants name run states directly now, so this is the identity map for three of
+   the four and only has to decide what "done" and "idle" are told apart as. */
+const statusVariant = (status: 'active' | 'done' | 'failed' | 'idle') => status
 
 const StatusGlyph = ({ status }: { status: 'active' | 'done' | 'failed' | 'idle' }) =>
   status === 'active' ? <LoaderCircle className="status-spin" /> : status === 'done' ? <Check /> : status === 'failed' ? <X /> : <Circle />
@@ -20,10 +21,12 @@ export const ActivityPanel = memo(({ state }: { state: ProjectState }) => {
   return (
     <div className="activity-feed">
       <div className="activity-summary">
-        <Badge variant={active > 0 ? 'default' : 'secondary'}>
+        <Badge variant={active > 0 ? 'active' : 'idle'}>
           <StatusGlyph status={active > 0 ? 'active' : 'idle'} />
         </Badge>
-        <span className={active > 0 ? 'text-primary' : 'text-muted-foreground'}>
+        {/* In-flight work is a measured statement the operator reads, so it is ink rather than
+            the accent; the pill beside it is what carries the state, and it carries a glyph. */}
+        <span className={active > 0 ? 'text-foreground' : 'text-muted-foreground'}>
           {active > 0 ? `${active} model request${active === 1 ? '' : 's'} in flight` : 'Standing by for work'}
         </span>
       </div>
@@ -31,8 +34,8 @@ export const ActivityPanel = memo(({ state }: { state: ProjectState }) => {
       <h3 className="drawer-section-title">Recent runs</h3>
       {state.runs.size === 0 && (
         <div className="text-sm text-foreground">
-          <div>No runs have arrived yet.</div>
-          <div className="text-muted-foreground text-xs">Completed work will stay visible here.</div>
+          <div>No runs yet.</div>
+          <div className="text-muted-foreground text-xs">The six most recent stay here once they finish.</div>
         </div>
       )}
       {runs.map((run) => {
@@ -54,7 +57,7 @@ export const ActivityPanel = memo(({ state }: { state: ProjectState }) => {
       <Separator className="my-3" />
 
       <h3 className="drawer-section-title">Model requests</h3>
-      {state.llmRequests.size === 0 && <div className="drawer-empty">No model requests observed.</div>}
+      {state.llmRequests.size === 0 && <div className="drawer-empty">No model requests yet.</div>}
       {requests.map((request) => {
         const status = request.status === 'in-flight' ? 'active' : request.status === 'error' ? 'failed' : 'done'
         const tps = request.status === 'completed' ? tokPerSec(request) : undefined

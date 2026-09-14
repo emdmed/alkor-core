@@ -9,7 +9,15 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { familyLabel, groupDocuments, kindLabel, matchesQuery, type CorpusDocument } from '../web/src/lib/corpus.ts'
+import {
+  familyLabel,
+  groupDocuments,
+  kindLabel,
+  matchesQuery,
+  mediumRank,
+  rankedByDifficulty,
+  type CorpusDocument,
+} from '../web/src/lib/corpus.ts'
 
 const doc = (partial: Partial<CorpusDocument>): CorpusDocument => ({
   id: 'clinical/default/sh-01-septic-classic',
@@ -128,6 +136,78 @@ test('documents of one case become a run; documents of their own stay single', (
   assert.equal(group.runs[0]!.caseName, 'rec-01')
   assert.deepEqual(group.runs[0]!.documents.map((d) => d.case), ['rec-a', 'rec-b'])
   assert.deepEqual(group.singles.map((d) => d.case), ['solo'])
+})
+
+/* ---------------------------------------------------------------- difficulty */
+
+test('an unstructured transcription is the hardest medium a case can arrive in', () => {
+  const transcript = doc({ kind: 'transcript', case: 'tr-en-01-rambling', class: 'dictation-order' })
+  const note = doc({ kind: 'default' })
+  const exam = doc({ kind: 'exam', case: 'sh-01' })
+
+  assert.ok(mediumRank(transcript) < mediumRank(note), 'audio below prose')
+  assert.ok(mediumRank(note) < mediumRank(exam), 'prose below a closed payload')
+  // Dictated into sections by the speaker, so the format did the work the medium usually
+  // refuses to do. It is not unstructured audio and does not get the medium's bump.
+  assert.equal(
+    mediumRank(doc({ kind: 'transcript', case: 'tr-en-12', class: 'structured' })),
+    mediumRank(note),
+  )
+  // An unheard-of kind claims nothing about itself and sorts below the kinds that do.
+  assert.ok(mediumRank(doc({ kind: 'radiology' })) > mediumRank(exam))
+})
+
+test('cases order hardest first, across every section of the corpus', () => {
+  const ranked = rankedByDifficulty([
+    doc({ id: 'p/default/vs-1', case: 'vs-1', difficulty: 2, evals: ['vitalSignsCases'] }),
+    doc({ id: 'p/transcript/tr-5', case: 'tr-5', kind: 'transcript', difficulty: 5, evals: ['transcriptCases'] }),
+    doc({ id: 'p/default/vs-9', case: 'vs-9', difficulty: 5, evals: ['vitalSignsCases'] }),
+    doc({ id: 'p/exam/sh-3', case: 'sh-3', kind: 'exam', difficulty: 3, evals: ['shockCases'] }),
+  ])
+
+  assert.deepEqual(ranked.map((e) => e.documents[0]!.case), ['tr-5', 'vs-9', 'sh-3', 'vs-1'])
+})
+
+test('at the same rated difficulty, the transcription is the harder of the two', () => {
+  // The answer keys rate the case, not the form it arrives in. Two cases rated 4 are not
+  // equally hard to read when one of them has to be heard first.
+  const ranked = rankedByDifficulty([
+    doc({ id: 'p/default/vs-4', case: 'vs-4', difficulty: 4, evals: ['vitalSignsCases'] }),
+    doc({ id: 'p/transcript/tr-4', case: 'tr-4', kind: 'transcript', difficulty: 4, evals: ['transcriptCases'] }),
+  ])
+  assert.deepEqual(ranked.map((e) => e.documents[0]!.case), ['tr-4', 'vs-4'])
+})
+
+test('a transcription never outranks a case the answer key rated harder', () => {
+  // The medium is the tiebreak, not the sort: promoting every transcript to the top would
+  // make the order a statement about kinds rather than about difficulty.
+  const ranked = rankedByDifficulty([
+    doc({ id: 'p/default/vs-5', case: 'vs-5', difficulty: 5, evals: ['vitalSignsCases'] }),
+    doc({ id: 'p/transcript/tr-2', case: 'tr-2', kind: 'transcript', difficulty: 2, evals: ['transcriptCases'] }),
+  ])
+  assert.deepEqual(ranked.map((e) => e.documents[0]!.case), ['vs-5', 'tr-2'])
+})
+
+test('a case with several notes ranks once, at its own difficulty', () => {
+  const ranked = rankedByDifficulty([
+    doc({ id: 'p/default/rec-a', case: 'rec-a', caseName: 'rec-01', difficulty: 5, evals: ['summaryCases'] }),
+    doc({ id: 'p/default/rec-b', case: 'rec-b', caseName: 'rec-01', difficulty: 5, evals: ['summaryCases'] }),
+    doc({ id: 'p/default/vs-1', case: 'vs-1', difficulty: 4, evals: ['vitalSignsCases'] }),
+  ])
+
+  assert.equal(ranked.length, 2, 'one record is one entry, not two')
+  assert.equal(ranked[0]!.caseName, 'rec-01')
+  assert.deepEqual(ranked[0]!.documents.map((d) => d.case), ['rec-a', 'rec-b'])
+  assert.equal(ranked[0]!.difficulty, 5)
+  assert.equal(ranked[0]!.label, 'Summary', 'a flat row still says which question it answers')
+})
+
+test('an unrated document sorts last rather than being guessed at a middle rank', () => {
+  const ranked = rankedByDifficulty([
+    doc({ id: 'p/default/loose', case: 'loose', caseName: undefined, difficulty: undefined, evals: [] }),
+    doc({ id: 'p/default/vs-1', case: 'vs-1', difficulty: 1, evals: ['vitalSignsCases'] }),
+  ])
+  assert.deepEqual(ranked.map((e) => e.documents[0]!.case), ['vs-1', 'loose'])
 })
 
 test('documents with no case of their own are never merged into one run', () => {

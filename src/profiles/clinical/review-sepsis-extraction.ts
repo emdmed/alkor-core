@@ -24,7 +24,14 @@ import { HARNESS_VERSION } from '../../core/version.ts'
 import { extract } from '../../modes/extract.ts'
 import { CONTRACTS, buildRequest } from './contracts.ts'
 import { clinicalStages } from './stages.ts'
-import { assess, loadSepsisRule, parseSepsis, resolveSepsis, type SepsisExam } from './sepsis.ts'
+import {
+  assess,
+  examOf,
+  loadSepsisRule,
+  parseSepsisExtraction,
+  resolveSepsis,
+  type SepsisExtraction,
+} from './sepsis.ts'
 import { checkMedprotocolVersion, loadMedprotocolRule } from './medprotocol.ts'
 
 export interface SepsisExtractionReviewOptions {
@@ -60,7 +67,7 @@ export const reviewSepsisExtraction = async (o: SepsisExtractionReviewOptions): 
   const outcome = await stages.around('sepsis-extraction', () => extract({
     systemPrompt: req.prompt,
     document,
-    parse: (raw) => parseSepsis(raw, 'sepsis-extraction'),
+    parse: (raw) => parseSepsisExtraction(raw, 'sepsis-extraction'),
     schema: req.schema,
     schemaName: req.schemaName,
     maxTokens: req.sampling.max_tokens,
@@ -81,7 +88,11 @@ export const reviewSepsisExtraction = async (o: SepsisExtractionReviewOptions): 
   let text: string
   let report: unknown | undefined
   if (outcome.parsed) {
-    const exam = outcome.parsed as SepsisExam
+    const extraction = outcome.parsed as SepsisExtraction
+    // The screen takes the three numbers and nothing else. `gcs_documented` is a fact about the
+    // NOTE, not an argument medprotocol accepts, so it is stripped here rather than being
+    // allowed to travel into the payload the CLI is handed.
+    const exam = examOf(extraction)
     // The reference screen, computed by the CLI on the numbers just extracted. This is the same
     // arithmetic the downstream contract will be graded against, and it is run HERE so the
     // extraction step reports what its own output implies rather than three numbers whose
@@ -91,14 +102,29 @@ export const reviewSepsisExtraction = async (o: SepsisExtractionReviewOptions): 
     checkMedprotocolVersion(mp, o.pack.name)
     const rule = loadSepsisRule(o.pack)
     const screen = assess(resolveSepsis(exam, rule, mp))
-    stages.done('gateway', { via: 'qsofa', score: screen.score, positive: screen.positive })
+    stages.done('gateway', {
+      via: 'qsofa',
+      score: screen.score,
+      positive: screen.positive,
+      gcsDocumented: extraction.gcs_documented,
+    })
+    // The assumption is printed ON the line it qualifies. A reader scanning this block should
+    // not be able to take the GCS at face value and find the caveat somewhere else, or nowhere:
+    // an undocumented 15 decides the altered-mental-status criterion, so it is load-bearing for
+    // the score two lines below it.
+    const gcsLine = extraction.gcs_documented
+      ? `  gcs: ${exam.gcs}\n`
+      : `  gcs: ${exam.gcs}  (ASSUMED — the note does not document a mental state)\n`
     text =
       `${header}\n` +
       `  respiratory_rate: ${exam.respiratory_rate} breaths/min\n` +
       `  systolic_bp: ${exam.systolic_bp} mmHg\n` +
-      `  gcs: ${exam.gcs}\n` +
-      `  qsofa_screen: ${screen.positive ? 'POSITIVE' : 'NEGATIVE'} (score ${screen.score})\n`
-    report = { exam, screen }
+      gcsLine +
+      `  qsofa_screen: ${screen.positive ? 'POSITIVE' : 'NEGATIVE'} (score ${screen.score})\n` +
+      (extraction.gcs_documented
+        ? ''
+        : `  note: altered_mental_status was scored against an assumed GCS, not an observed one.\n`)
+    report = { exam, screen, gcs_documented: extraction.gcs_documented }
   } else {
     text = `${header}\nno extraction: ${outcome.error}`
   }

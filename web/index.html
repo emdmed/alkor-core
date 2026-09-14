@@ -7,28 +7,46 @@
     <!-- The name does not describe the product, so it never travels alone (PRODUCT.md). -->
     <title>alkor — local-model orchestration for medical workflows</title>
     <!--
-      The star pair, in indigo. The SVG follows the tab strip between light and dark; the
-      PNG is the Safari fallback and carries the light value only. Order matters: browsers
-      that understand image/svg+xml take the first, the rest fall through to the second.
+      The star pair: Mizar in the accent, Alcor as the counter. The SVG follows the tab strip
+      between light and dark; the PNG is the Safari fallback and carries the light values
+      only — regenerate it from the SVG whenever the mark changes, or it keeps serving the
+      previous identity to the one browser that cannot read the source of truth:
+
+        rsvg-convert -w 256 -h 256 public/favicon.svg -o /tmp/f.png
+        magick /tmp/f.png -filter Lanczos -resize 32x32 -strip PNG32:public/favicon.png
+
+      Order matters: browsers that understand image/svg+xml take the first, the rest fall
+      through to the second.
     -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
     <!--
-      Resolve the theme before first paint. Without this the document renders light, then
-      the React effect stamps data-theme and a dark-theme user watches the whole dashboard
-      flash white. It is inline and synchronous for exactly that reason.
+      Resolve the theme before first paint. Without this the document renders one way, then
+      the React effect stamps data-theme and the user watches the whole dashboard flash the
+      other. It is inline and synchronous for exactly that reason.
 
-      Light is the default here rather than the system preference: the surface is operated
-      at a desk in daylight for an hour at a stretch, and the choice, once made, is the
-      user's and persists.
+      THE DEFAULT IS THE SYSTEM PREFERENCE, and a stored choice overrides it. Neither this
+      file nor the design system gets to assert what the room looks like: the dashboard used
+      to force light on the grounds that it is read at a desk in daylight, and the ledger
+      world defaults to dark on the grounds that it is read beside a terminal — both are
+      guesses about a machine the code cannot see, and the OS already knows the answer.
+
+      Only an explicit toggle writes to storage. Until someone touches it there is nothing
+      stored, which is what lets the surface keep following the system as the day goes on.
     -->
     <script>
-      try {
-        var t = localStorage.getItem('alkor.theme')
-        document.documentElement.dataset.theme = t === 'dark' ? 'dark' : 'light'
-      } catch (_) {
-        document.documentElement.dataset.theme = 'light'
-      }
+      ;(function () {
+        var t = null
+        try {
+          t = localStorage.getItem('alkor.theme')
+        } catch (_) {
+          // A browser refusing storage still gets a theme; it just gets the system's.
+        }
+        if (t !== 'dark' && t !== 'light') {
+          t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+        }
+        document.documentElement.dataset.theme = t
+      })()
     </script>
   </head>
   <body>

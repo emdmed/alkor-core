@@ -1,27 +1,50 @@
 /*
- * alkor dashboard — visual system.
+ * alkor dashboard — the visual system, and the one place it is decided.
  *
- * The world here is the category standard, and that is a decision rather than a default.
- * Asked on 2026-09-12 to choose between four derived visual directions and the
- * conventional modern dashboard, the user chose convention in plain words and named
- * Linear, Vercel and Stripe as the craft bar. So: neutral surfaces, one accent, borders
- * carrying structure, shadows reserved for things that genuinely float, restrained
- * motion. The job is to execute that at a high level of finish, not to smuggle a
- * metaphor back in.
+ * THE WORLD IS THE ALKOR LEDGER, and that is a decision rather than a default. It is
+ * distilled in `alkor-ledger.css`, which is vendored beside this file UNCHANGED so it can be
+ * re-synced from its source (alkor-web/system/) without a merge. That file owns the palette,
+ * the two faces, the type ramp, the seven primitives and the rules. This file owns the
+ * dashboard: the shell, the canvas, the rail, the run panel, the settings view — everything
+ * built FROM those primitives.
  *
- * Two contracts in here are floors rather than preferences, and both have bitten before:
- *   - a measured value never renders below 12px, because a measurement nobody can read
- *     is not a measurement;
- *   - body and placeholder text hold 4.5:1 and state-bearing borders 3:1, in BOTH themes.
+ * The line between them matters. Add a colour, a face or a rule to alkor-ledger.css and it
+ * has to go back upstream; add a component here and it stays here until a second use earns
+ * it a promotion. Never edit the vendored file in place.
  *
- * A third is newer and just as load-bearing: the compact card's box model is duplicated
- * as numeric constants in `lib/graph/core.ts` (COMPACT_HEADER_H and friends), because the
- * graph layout is computed rather than measured. Changing a height in the compact-node
- * section below without changing its constant there silently mislays every edge on the
- * canvas. Each such rule is marked `LAYOUT CONTRACT`.
+ * WHAT THE WORLD IS. A ledger, not a dashboard chrome kit. Structure is drawn by 1px rules
+ * and space: no shadows, no tinted panels, no second surface colour, no card radii. The one
+ * filled object in a view is its primary action, and it carries the one accent. Nothing in
+ * the palette is a neutral — every rung is the accent at some distance in OKLCH, which is
+ * what stops a surface that is 95% text from reading as monochrome.
+ *
+ * THIS FILE'S JOB, IN ONE SENTENCE. Section 1 below re-points every semantic alias this
+ * dashboard already spoke — `--surface`, `--border`, `--primary`, `--muted-foreground` and
+ * the rest — at a ledger token. That is deliberate: the alias names are how 2,700 lines of
+ * shell, canvas and panel CSS address colour, and re-pointing them is what let the world
+ * change without rewriting every selector that uses it. The aliases are a VOCABULARY, not a
+ * second palette. If you need a value that is not here, take it from the ledger token it
+ * belongs to; do not invent a rung.
+ *
+ * Three contracts in here are floors rather than preferences, and all three have bitten:
+ *   - a measured value never renders below 12px, because a measurement nobody can read is
+ *     not a measurement;
+ *   - body and placeholder text hold 4.5:1 and state-bearing marks 3:1, in BOTH themes;
+ *   - the compact card's box model is duplicated as numeric constants in `lib/graph/core.ts`
+ *     (COMPACT_HEADER_H and friends), because the graph layout is computed rather than
+ *     measured. Changing a height in the compact-node section below without changing its
+ *     constant there silently mislays every edge on the canvas. Each such rule is marked
+ *     `LAYOUT CONTRACT`.
+ *
+ * AND ONE RULE THAT IS EASIEST TO BREAK BY ACCIDENT: the accent is never text. It fills and
+ * it marks. On the light ground it measures 3.33:1 — enough for a fill or a 1px rule, not
+ * enough for a word. Every place this surface used to letter a word in indigo now sets the
+ * word in `--foreground` and lets a mark beside it carry the colour. See section 1's note on
+ * `--primary-soft`, which is why that token is now `transparent` rather than deleted.
  */
 
 @import "tailwindcss";
+@import "./alkor-ledger.css";
 
 @theme inline {
   --color-background: var(--background);
@@ -41,8 +64,14 @@
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  /* The dimmest rung the system allows, as a utility, for the pill that means "nothing has
+     happened to this yet". `--color-ok`, `--color-warn` and `--color-danger` are not listed
+     here on purpose: the ledger's own `@theme` already publishes them, and re-declaring them
+     would put the three reserved hues in two places. */
+  --color-faint: var(--faint-foreground);
   --radius-sm: var(--r-sm);
   --radius-md: var(--r-md);
   --radius-lg: var(--r-lg);
@@ -50,11 +79,13 @@
 }
 
 /* ==========================================================================
-   1. Tokens
+   1. Tokens — the dashboard's vocabulary, pointed at the ledger's palette
    ========================================================================== */
 
 :root {
-  /* Spacing. One 4px unit, six rungs, nothing between them. */
+  /* Spacing. One 4px unit, six rungs, nothing between them. The ledger calls this surface's
+     rhythm dense — 12/16/24 — against the 96px bands of the marketing page, and these are
+     those numbers. */
   --s-1: 4px;
   --s-2: 6px;
   --s-3: 8px;
@@ -62,11 +93,21 @@
   --s-5: 16px;
   --s-6: 24px;
 
-  /* Radius. Three, told apart by what the shape is: control, surface, overlay. */
-  --r-sm: 5px;
-  --r-md: 6px;
-  --r-lg: 8px;
-  --r-xl: 10px;
+  /*
+   * Radius. Square is this world's corner language and it holds without exception, so the
+   * four rungs this file used to tell control from surface from overlay all collapse to the
+   * ledger's one. They are kept as separate names only because Tailwind's `rounded-md` and
+   * the shadcn primitives address them by name; there is no longer a size decision to make.
+   *
+   * `--r-pill` survives for things that are genuinely circles — a 6px state dot, a spinner —
+   * and for nothing else. A 999px radius on a chip, a badge, a switch track or a button is
+   * the single fastest way to make this surface stop reading as a ledger, so those are all
+   * square now.
+   */
+  --r-sm: var(--radius-sq);
+  --r-md: var(--radius-sq);
+  --r-lg: var(--radius-sq);
+  --r-xl: var(--radius-sq);
   --r-pill: 999px;
 
   /* Control heights. */
@@ -82,188 +123,252 @@
   --w-rail-strip: 48px;
   --bp-narrow: 900px;
 
-  /* Type scale. Five steps. 12px is the floor for anything measured. */
+  /*
+   * Type scale. Five steps, and every one of them is a rung of the ledger's Operate ramp —
+   * this surface simply sits one rung lower than a reading column, because it is a panel of
+   * live readings rather than prose. `--text-lead` and `--text-title` from the ledger are
+   * deliberately unused here: 20px is the cap and `--text-display` does not exist on an
+   * Operate surface at all.
+   *
+   * `--t-label` is the one value under the ledger's 12px floor, and it is allowed only
+   * because of what it is used for: an uppercase eyebrow, read once for orientation and
+   * never compared. The floor is a rule about MEASURED values. Nothing set at `--t-label`
+   * may be a figure, an identifier or a duration.
+   */
   --t-label: 11px;
-  --t-data: 12px;
-  --t-body: 13px;
-  --t-lead: 15px;
-  --t-title: 20px;
-
-  --font-ui: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-
-  /* ---- Light theme ---- */
-  color-scheme: light;
-
-  /* Greys, warm-neutral, eight rungs. */
-  --g-0: #ffffff;
-  --g-25: #fcfcfd;
-  --g-50: #f8f9fa;
-  --g-100: #f1f3f5;
-  --g-150: #e9ecef;
-  --g-200: #dee2e6;
-  --g-300: #ced4da;
-  --g-500: #868e96;
-  --g-600: #6b7280;
-  --g-700: #495057;
-  --g-900: #16181c;
-
-  --background: var(--g-50);
-  --surface: var(--g-0);
-  --surface-2: var(--g-25);
-  --surface-sunken: var(--g-100);
-  --foreground: var(--g-900);
-  --card: var(--g-0);
-  --card-foreground: var(--g-900);
-  --popover: var(--g-0);
-  --popover-foreground: var(--g-900);
-  --muted: var(--g-100);
-  /* Measured against the DARKEST ground each one actually sits on, not against white:
-     muted text lands on the sunken panel and the canvas at #f1f3f5, where the obvious
-     #6b7280 reads 4.35 and misses the floor. */
-  --muted-foreground: #686f7c;
-  --faint-foreground: #70767d;
-  --secondary: var(--g-100);
-  --secondary-foreground: var(--g-700);
-  --accent: var(--g-100);
-  --accent-foreground: var(--g-900);
-  --border: var(--g-200);
-  --border-strong: var(--g-300);
-  --input: var(--g-200);
-
-  /* One accent. Indigo, carrying action, focus and selection — and nothing else. */
-  --primary: #4f46e5;
-  --primary-hover: #4338ca;
-  --primary-foreground: #ffffff;
-  --primary-soft: #eef2ff;
-  --ring: #4f46e5;
-
-  /* Semantic state. Reserved for run state; never decorative. */
-  --ok: #0f7b4f;
-  --ok-soft: #e7f6ee;
-  --warn: #a35a00;
-  --warn-soft: #fdf3e3;
-  --danger: #c02626;
-  --danger-soft: #fdeced;
+  --t-data: var(--text-mono-sm);  /* 12px — the measured floor */
+  --t-body: var(--text-meta);     /* 13px */
+  --t-lead: var(--text-body);     /* 15px */
+  --t-title: var(--text-h);       /* 20px — the cap */
 
   /*
-   * State-bearing borders, and the reason they are this saturated.
+   * The two faces. Neither is optional and the nearest installed grotesque is a failure
+   * rather than a fallback, so both are bundled (see main.tsx) rather than fetched. The
+   * `Variable` suffix is what @fontsource names the variable cut; the bare family follows it
+   * so a copy installed on the machine still resolves.
    *
-   * The pastel tints these replaced (#c7d2fe and friends) measured 1.5:1 against the card
-   * they outline — which is to say the border of a running card was doing no work at all,
-   * and the 3:1 floor this surface inherits was missed in both themes. These are the
-   * lightest hue-preserving values that clear it. State is still never carried by colour
-   * alone: every one of them ships beside a glyph and a word.
+   * Archivo carries language. Spline Sans Mono carries anything a reader compares character
+   * by character — identifiers, ports, digests, durations, counts, measured values, code.
+   * Mono is never a costume for "technical", and everything mono is `tabular-nums`.
    */
-  --primary-border: #858cdf;   /* 3.08:1 on surface */
-  --ok-border: #5c9a76;        /* 3.31:1 */
-  --warn-border: #b5821f;      /* 3.40:1 */
-  --danger-border: #d96a74;    /* 3.35:1 */
-  --destructive: var(--danger);
-  --destructive-foreground: #ffffff;
+  --font-ui: "Archivo Variable", Archivo, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-sans: var(--font-ui);
+  --font-mono: "Spline Sans Mono Variable", "Spline Sans Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
-  /* Elevation. Only things that genuinely float. */
-  --shadow-sm: 0 1px 2px rgb(16 24 40 / 0.05);
-  --shadow-md: 0 4px 8px -2px rgb(16 24 40 / 0.08), 0 2px 4px -2px rgb(16 24 40 / 0.05);
-  --shadow-lg: 0 12px 20px -4px rgb(16 24 40 / 0.1), 0 4px 8px -4px rgb(16 24 40 / 0.05);
+  /*
+   * ---- Surfaces ----------------------------------------------------------------------
+   *
+   * THERE ARE EXACTLY TWO, AND THE SECOND ONE SINKS. `--color-ground` is the page and
+   * everything that used to be a lifted card now sits directly on it; `--color-veil` is the
+   * recessed surface — code blocks, log panes, the JSON readouts — and it sits UNDER the
+   * ground at 1.05:1, close enough that the 1px border draws the edge and the sink is only
+   * felt.
+   *
+   * `--surface`, `--surface-2` and `--card` therefore all resolve to the ground. They are
+   * not three surfaces any more; they are three names this file already used for "the page",
+   * kept so the selectors that reference them keep working. Do not give one of them a value
+   * of its own to make a panel feel separate — a panel that needs to feel separate gets a
+   * rule and more space, which is the whole argument of this system.
+   */
+  --background: var(--color-ground);
+  --surface: var(--color-ground);
+  --surface-2: var(--color-ground);
+  --surface-sunken: var(--color-veil);
+  --card: var(--color-ground);
+  --popover: var(--color-ground);
 
-  /* Canvas. */
-  --canvas: var(--g-100);
-  --canvas-dot: var(--g-300);
-  --edge: var(--g-300);
-  --edge-taken: var(--primary);
-  --edge-ghost: var(--g-300);
+  /* ---- Ink ---- */
+  --foreground: var(--color-ink);
+  --card-foreground: var(--color-ink);
+  --popover-foreground: var(--color-ink);
+  --secondary-foreground: var(--color-ink-2);
+  --accent-foreground: var(--color-ink);
+  --muted-foreground: var(--color-ink-2);
+  --faint-foreground: var(--color-ink-3);
+
+  /*
+   * ---- The hover wash ----------------------------------------------------------------
+   *
+   * `--muted` and `--accent` are the background an icon button, a list row or a tab takes
+   * under the pointer. This is the one fill in the system that is not the primary action,
+   * and it earns the exception by being transient: it exists for as long as the pointer is
+   * on the control and it is feedback, not structure. A tinted panel is a thing you can read
+   * a layout off; this is not.
+   *
+   * It is mixed from the ink rather than declared as a grey, so it stays inside the
+   * temperature gradient — a stock neutral is the one colour that will look wrong here.
+   */
+  --muted: color-mix(in oklab, var(--color-ink) 8%, transparent);
+  --accent: color-mix(in oklab, var(--color-ink) 8%, transparent);
+  --secondary: color-mix(in oklab, var(--color-ink) 8%, transparent);
+
+  /* ---- Structure. Three weights, and they carry the hierarchy. ----
+     `--border` for minor divisions — list rows, ledger columns, the ordinary boundary.
+     `--border-strong` for emphasis inside a block, for inputs, and for anything that floats
+     over the canvas. `--border-accent` for MAJOR divisions only: the rule that opens a
+     section, the top of the footer. Spending the accent rule on every boundary spends the
+     hierarchy — if everything is a major division, nothing is. */
+  --border: var(--color-rule);
+  --border-strong: var(--color-rule-strong);
+  --border-accent: var(--color-rule-accent);
+  --input: var(--color-rule-strong);
+
+  /*
+   * ---- The accent, and the four reserved roles -----------------------------------------
+   *
+   * `--primary` is identity and interaction, and NOTHING else: the primary button's fill,
+   * the focus ring, the current-item mark, Mizar in the lockup. It is the one accent in the
+   * product and there is one filled object in a view carrying it.
+   *
+   * It is never text. `--primary-mark` is the same accent at mark strength (3.6:1) for 1px
+   * borders on interactive containers; it does not letter anything either.
+   */
+  --primary: var(--color-action);
+  --primary-hover: var(--color-action-hover);
+  --primary-foreground: var(--color-action-ink);
+  --primary-mark: var(--color-action-mute);
+  --ring: var(--color-action);
+
+  /*
+   * `--primary-soft` and the three `*-soft` tints below are `transparent` rather than
+   * deleted, and that is load-bearing rather than lazy.
+   *
+   * This system has no tinted panels: a wash behind a word is exactly the "second surface"
+   * the ledger refuses, and every one of these used to paint one — a selected tab, a pinned
+   * log row, a live run chip, an error message. Emptying the value turns all of them off in
+   * one place. The rules that used to rely on them now say what they mean with a rule, a
+   * mark or a word, which is what the rest of this file does.
+   *
+   * Keep them declared. A `background: var(--primary-soft)` that resolves to nothing is
+   * inert; the same line resolving to an invalid value is a paint bug, and this file has
+   * shipped that bug before (see the graph role aliases below).
+   */
+  --primary-soft: transparent;
+  --ok-soft: transparent;
+  --warn-soft: transparent;
+  --danger-soft: transparent;
+
+  /*
+   * ---- Run state. Reserved, and not interchangeable with anything above. ----------------
+   *
+   * These three mean run state and nothing else — never emphasis, never branding, never a
+   * taxonomy, never UI feedback. A "Copied" confirmation is not a run outcome. They share
+   * one L/C band so only hue tells them apart and they read as siblings, and each clears
+   * CIELab dE 45.6 from the accent — which is why danger is rose at 346 deg rather than the
+   * salmon that would otherwise land on top of the accent's own hue.
+   *
+   * State is never carried by colour alone: every dot ships beside a word.
+   */
+  --ok: var(--color-ok);
+  --warn: var(--color-warn);
+  --danger: var(--color-danger);
+
+  /*
+   * State-bearing marks. The ledger sets a verdict pill's border in the state hue itself,
+   * which is both simpler and stronger than the separate desaturated ramp this file used to
+   * carry: every one of these now clears 5:1 as a mark rather than scraping 3:1.
+   *
+   * There is no `--primary-border` here any more. The accent's mark strength is
+   * `--primary-mark` above, named for what it is rather than for where it happened to be
+   * used, and it is the only one of these four that is not a state.
+   */
+  --ok-border: var(--color-ok);
+  --warn-border: var(--color-warn);
+  --danger-border: var(--color-danger);
+  --destructive: var(--color-danger);
+  --destructive-foreground: var(--color-ground);
+
+  /*
+   * ---- Elevation ------------------------------------------------------------------------
+   *
+   * There is none. Structure is rule and space; nothing in this world floats on a shadow,
+   * including the things that genuinely float — a popover over the canvas is separated by a
+   * `--border-strong` hairline against a ground that is one flat colour, which is enough
+   * because there is no competing surface underneath it to be confused with.
+   *
+   * The three names survive so that `box-shadow: var(--shadow-md)` anywhere in this file, or
+   * in a shadcn primitive's own classes, resolves to nothing instead of to a hard-coded
+   * default. Do not give one a value.
+   */
+  --shadow-sm: none;
+  --shadow-md: none;
+  --shadow-lg: none;
+
+  /*
+   * ---- Canvas and edges -------------------------------------------------------------
+   *
+   * The canvas is the page, not a sunken well: a graph is the run, so it reads on the same
+   * ground as everything else and its nodes are rows with a border rather than widgets on a
+   * tray.
+   *
+   * It does lift off the ground by a hair — and only a hair. Nodes paint in `--surface`,
+   * which IS the ground, so a canvas at exactly the ground gave a card nothing but its 1px
+   * border to be found by, and a board of forty of them read as one field. Lifting the
+   * paper ~1.1:1 lets a card sit fractionally darker than what surrounds it, which is
+   * enough to be scanned and far too little to read as a tray. Mixed from the ink so it
+   * stays in the temperature gradient; do not push it further to make cards "pop" — past
+   * this the canvas becomes a second surface and the whole argument above collapses.
+   *
+   * The three edge weights are a ladder in the temperature gradient and deliberately spend
+   * no accent. A taken route is drawn in ink because it is the thing you read the run off; a
+   * possible-but-not-taken route is drawn in the minor rule and dashed. The accent is
+   * reserved for the CURRENT item, which is a mark on a node, not a line across the board.
+   */
+  --canvas: color-mix(in oklab, var(--color-ground) 93%, var(--color-ink) 7%);
+  /* The dot grid is read against the canvas, so it moves with it: on the lifted dark paper
+     the minor rule alone falls to 1.14:1 and the grid stops being visible at all. Half a
+     step toward the strong rule puts it back where it always sat, ~1.4:1 — present when
+     looked for, invisible when not. The light twin's canvas moves the other way and the
+     minor rule gains separation there, so it keeps it (see the override below). */
+  --canvas-dot: color-mix(in oklab, var(--color-rule) 50%, var(--color-rule-strong) 50%);
+  --edge: var(--color-rule-strong);
+  --edge-taken: var(--color-ink-3);
+  --edge-ghost: var(--color-rule);
 
   /*
    * Role names the graph layer paints by.
    *
    * `lib/graph/**` is pure and renderer-free, so it names colours by what they MEAN and
    * never by what they are — it emits `var(--route-selected)` and leaves the value to this
-   * file. That contract is right and stays; what broke is that the redesign retired the
-   * old names without re-declaring them, so every one of these resolved to nothing: route
-   * edges, the canvas dot grid, and the minimap's node fills were painting with an invalid
-   * value. They are aliases rather than new colours, so there is still one source of truth.
+   * file. That contract is right and stays; what broke once before is that a redesign
+   * retired the old names without re-declaring them, so every one of these resolved to
+   * nothing and route edges, the canvas dot grid and the minimap's node fills painted with
+   * an invalid value. They are aliases rather than new colours, so there is still one source
+   * of truth — and they are the reason the retired `*-soft` tints above are emptied rather
+   * than removed.
    */
   --route-selected: var(--edge-taken);
   --route-possible: var(--edge-ghost);
   --graph-grid: var(--canvas-dot);
   --success: var(--ok);
 
+  /*
+   * NOTE FOR WHOEVER TOKENISES THE JSON PANES. `.inspected-json` and `.chat-msg-result` print
+   * a run's output as undifferentiated mono today, which is why there are no syntax aliases
+   * here — an alias with no tokeniser to serve is a colour nobody can see.
+   *
+   * When you add one, take `--color-syn-str` and `--color-syn-num` from the ledger and take
+   * nothing else. A run's output is NOT a run's state: borrowing `--ok` for a string and
+   * `--warn` for a number once printed a clinical verdict in the pass colour and
+   * `"unverified": 0` — the good outcome — as a warning, on a live page.
+   */
+
   --radius: var(--r-lg);
 }
 
-:root[data-theme="dark"] {
-  color-scheme: dark;
-
-  --g-0: #16181d;
-  --g-25: #191c22;
-  --g-50: #101215;
-  --g-100: #1e2127;
-  --g-150: #262a32;
-  --g-200: #2e333c;
-  --g-300: #3a404a;
-  --g-500: #7c848f;
-  --g-600: #9aa2ad;
-  --g-700: #c3c9d1;
-  --g-900: #f0f2f5;
-
-  --background: var(--g-50);
-  --surface: var(--g-0);
-  --surface-2: var(--g-25);
-  --surface-sunken: #0c0e11;
-  --foreground: var(--g-900);
-  --card: var(--g-0);
-  --card-foreground: var(--g-900);
-  --popover: var(--g-100);
-  --popover-foreground: var(--g-900);
-  --muted: var(--g-100);
-  --muted-foreground: var(--g-600);
-  --faint-foreground: var(--g-500);
-  --secondary: var(--g-150);
-  --secondary-foreground: var(--g-700);
-  --accent: var(--g-150);
-  --accent-foreground: var(--g-900);
-  --border: var(--g-200);
-  --border-strong: var(--g-300);
-  --input: var(--g-300);
-
-  --primary: #7c7ff2;
-  --primary-hover: #9093f5;
-  --primary-foreground: #14141f;
-  --primary-soft: #21223a;
-  --ring: #7c7ff2;
-
-  --ok: #4ade80;
-  --ok-soft: #12261c;
-  --warn: #fbbf24;
-  --warn-soft: #2a2113;
-  --danger: #f87171;
-  --danger-soft: #2c1618;
-
-  /* Same 3:1 floor, measured against the dark card rather than the light one. */
-  --primary-border: #6266c4;   /* 3.57:1 on surface */
-  --ok-border: #448569;        /* 4.06:1 */
-  --warn-border: #9d7830;      /* 4.37:1 */
-  --danger-border: #ab5158;    /* 3.42:1 */
-  --destructive: var(--danger);
-  --destructive-foreground: #17090a;
-
-  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
-  --shadow-md: 0 4px 8px -2px rgb(0 0 0 / 0.4), 0 2px 4px -2px rgb(0 0 0 / 0.3);
-  --shadow-lg: 0 12px 20px -4px rgb(0 0 0 / 0.5), 0 4px 8px -4px rgb(0 0 0 / 0.35);
-
-  --canvas: #0c0e11;
-  --canvas-dot: #2b303a;
-  --edge: var(--g-300);
-  --edge-taken: var(--primary);
-  --edge-ghost: var(--g-200);
-
-  /* The aliases follow their sources, so they need no dark overrides of their own —
-     listed here only so the set is visible in both blocks. */
-  --route-selected: var(--edge-taken);
-  --route-possible: var(--edge-ghost);
-  --graph-grid: var(--canvas-dot);
-  --success: var(--ok);
+/*
+ * The canvas lift, in the light twin.
+ *
+ * `--canvas` above mixes the ground toward the ink, which lifts a dark page and SINKS a
+ * light one — the light theme would get the tray the note up there rules out. So the light
+ * twin takes the same hair of separation in the direction that is still "lift" on paper:
+ * toward white, away from the warm ground the cards keep. Same magnitude, same result — a
+ * card reads a shade apart from what surrounds it — and this is the one place in the file
+ * where a theme needs its own value rather than a re-resolved one.
+ */
+:root[data-theme="light"] {
+  --canvas: color-mix(in oklab, var(--color-ground) 55%, #fff 45%);
+  --canvas-dot: var(--color-rule);
 }
 
 /* ==========================================================================
@@ -274,6 +379,10 @@
 
 html, body, #root { height: 100%; }
 
+/* The dashboard's body size is one rung below the ledger's reading-column default, because
+   this is a panel of live readings rather than prose — see the ramp note in section 1. The
+   face is Archivo, which needs no feature settings: the `cv05`/`ss01` pair that used to be
+   here were Inter's single-storey `l` and alternate `1`, and they now resolve to nothing. */
 body {
   margin: 0;
   font-family: var(--font-ui);
@@ -283,7 +392,6 @@ body {
   background: var(--background);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  font-feature-settings: "cv05" 1, "ss01" 1;
 }
 
 /* The theme swap should read as one deliberate change, not a cascade of transitions. */
@@ -293,38 +401,25 @@ body {
 
 button, input, textarea, select { font: inherit; color: inherit; }
 
-:where(button, [role="tab"], [role="button"], a, input, textarea, select):focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 1px;
-  border-radius: var(--r-sm);
-}
-
-/* The primary input on this surface is a textarea you paste a clinical note into, and the
-   log beside it is read by selecting and quoting lines out of it. Selection and the caret
-   are therefore working surfaces here, not decoration, and they ship themed rather than
-   as whatever the browser defaults to over a dark panel. */
-::selection {
-  background: color-mix(in oklab, var(--primary) 26%, transparent);
-  color: var(--foreground);
-}
-
-:root { caret-color: var(--primary); }
+/*
+ * The browser's own surfaces — selection, caret, scrollbar and the focus ring — are themed
+ * by `alkor-ledger.css`, not here. They used to be declared in this file too, which meant two
+ * sources of truth for four values that have to agree; the ledger owns them because they are
+ * part of the world rather than part of the dashboard, and it themes them for exactly the
+ * reason this file used to: they are the cheapest tell that a surface was assembled rather
+ * than built, and the first thing that gets skipped.
+ *
+ * One consequence worth knowing. The ledger's rules sit in `@layer base`, and anything
+ * declared here is unlayered — so an unlayered rule in this file silently outranks the
+ * ledger's no matter what the specificity says. If a focus ring or a scrollbar ever stops
+ * matching the rest of the product, look for a re-declaration in this file first.
+ */
 
 .sr-only {
   position: absolute; width: 1px; height: 1px;
   padding: 0; margin: -1px; overflow: hidden;
   clip-path: inset(50%); white-space: nowrap; border: 0;
 }
-
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb {
-  background: var(--g-300);
-  border-radius: var(--r-pill);
-  border: 3px solid transparent;
-  background-clip: content-box;
-}
-::-webkit-scrollbar-thumb:hover { background: var(--g-500); background-clip: content-box; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 .status-spin { animation: spin 1s linear infinite; }
@@ -343,9 +438,23 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .muted, .text-muted-foreground { color: var(--muted-foreground); }
 .faint { color: var(--faint-foreground); }
 .text-foreground { color: var(--foreground); }
-.text-primary { color: var(--primary); }
 .ok { color: var(--ok); }
 .err { color: var(--danger); }
+
+/*
+ * The accent, on a GLYPH.
+ *
+ * `.text-primary` used to live here and it is gone on purpose: a class that letters a word in
+ * the accent is the rule this system breaks most easily, and it was being spent on an active
+ * count, on an HTTP status and on a profile name — three measured values, all of them below
+ * the size where 3.33:1 is enough. Those now set in `--foreground`.
+ *
+ * What is left is the legitimate half of the job: a check mark, a run's status icon, the mark
+ * on the current item. A glyph is a mark, not language, so it may carry the accent — and it
+ * ships beside the word it belongs to either way. Use this, never `text-primary`, and never
+ * on anything with letters in it.
+ */
+.mark-accent { color: var(--primary); }
 .text-xs { font-size: var(--t-data); }
 .text-sm { font-size: var(--t-body); }
 .flex { display: flex; }
@@ -426,17 +535,27 @@ button, input, textarea, select { font: inherit; color: inherit; }
   flex: none;
 }
 
-/* The whole lockup carries the accent. This is the one place in the product where the One
-   Accent Rule is deliberately spent on something that is not an action, and it is a
-   standing decision rather than an oversight: identity is allowed the colour, nothing else
-   on this surface is. The descriptor beside it stays muted ink, which is what keeps the bar
-   from reading as a row of controls. */
+/*
+ * The lockup is TWO things, and only one of them carries the accent.
+ *
+ * This used to set `color: var(--primary)` on the whole lockup, wordmark included, which is
+ * the one rule this world will not bend: the accent fills and marks, and it is never
+ * language. `alkor` set in #e2542a measures 3.33:1 on the light ground — a mark colour
+ * lettering a word at 13px.
+ *
+ * So the word is ink and the disc is the accent. Identity is still allowed the colour;
+ * identity is just the star pair rather than the whole lockup, which is also what makes the
+ * pair read as a mark beside a name instead of the name reading as a control. StarPair paints
+ * its own two circles from `--color-action` and `--color-mark-counter` and inherits nothing,
+ * which is why there is no `color` on it here.
+ */
 .brand-mark,
 .brand-stars {
   width: auto;
-  color: var(--primary);
   flex: none;
 }
+
+.brand-mark { color: var(--foreground); }
 
 .brand-mark {
   height: 13px;
@@ -496,16 +615,37 @@ button, input, textarea, select { font: inherit; color: inherit; }
    It has no hide rule. The descriptor can go when the bar runs out of room because by then
    the operator knows what this is; what the tool must not be used for is true for every
    reader at every width. */
+/*
+ * WHY THIS IS NO LONGER IN THE WARN HUE, which is the part that will look like a regression.
+ *
+ * `--warn` is reserved. It means running, pending, unverified — a property of a RUN, and the
+ * operator learns that meaning from the run chips, the stage bar and the step glyphs twenty
+ * times an hour. Spending it on a standing product disclaimer teaches a second, contradictory
+ * meaning for the same colour: the caveat is not a run outcome, it is not going to resolve,
+ * and it is equally true before any run has started. The tinted amber pill it used to be also
+ * put a filled, tinted panel in a bar that otherwise has none.
+ *
+ * What it gets instead is the loudest thing this system has that is NOT a state: full-contrast
+ * ink at the major-division rule weight, on no fill. It is the only bordered object in the
+ * bar carrying `--foreground`, which is what makes it present in peripheral vision without
+ * pretending to be a status. `--border-accent` is the rule that opens a section elsewhere in
+ * the product, and this is the only other place it is spent.
+ *
+ * It has no hide rule. The descriptor can go when the bar runs out of room because by then the
+ * operator knows what this is; what the tool must not be used for is true for every reader at
+ * every width.
+ */
 .brand-disclaimer {
   flex: none;
   font-size: var(--t-label);
-  letter-spacing: 0.01em;
-  color: var(--warn);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--foreground);
   white-space: nowrap;
   padding: 2px var(--s-2);
-  border: 1px solid var(--warn-border);
+  border: 1px solid var(--border-accent);
   border-radius: var(--r-sm);
-  background: var(--warn-soft);
   cursor: help;
 }
 
@@ -537,7 +677,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .health-dot {
   width: 6px; height: 6px;
   border-radius: var(--r-pill);
-  background: var(--g-500);
+  background: var(--faint-foreground);
   flex: none;
 }
 .health-state.tone-ok .health-dot { background: var(--ok); }
@@ -598,7 +738,23 @@ button, input, textarea, select { font: inherit; color: inherit; }
   font-size: var(--t-data);
   color: var(--muted-foreground);
 }
-.counter.is-live dd { color: var(--primary); }
+/*
+ * A live count is a MEASURED VALUE, so it is ink and it stays ink — this used to letter the
+ * figure in the accent, which is the same 3.33:1 problem the wordmark had, on a number the
+ * operator reads rather than glances at.
+ *
+ * The accent moves to where it is allowed to be: a 1px rule under the figure, which is this
+ * world's emphasis device (see `em` in the ledger's base layer — emphasis is a rule under the
+ * words, never a highlight behind them). The figure also takes weight, so "live" survives for
+ * a reader who cannot see the mark at all.
+ *
+ * `--danger` on the other line is not the same call and is left alone: that one IS run state.
+ */
+.counter.is-live dd {
+  color: var(--foreground);
+  font-weight: 650;
+  box-shadow: inset 0 -1px 0 var(--primary);
+}
 .counter.is-danger dd { color: var(--danger); }
 
 .topbar-actions {
@@ -640,9 +796,11 @@ button, input, textarea, select { font: inherit; color: inherit; }
   flex-direction: column;
   gap: var(--s-3);
   background: var(--popover);
-  border: 1px solid var(--border);
+  /* Nothing floats on a shadow here, so the hairline is the whole separation — and it has to
+     be the strong one. A popover over the canvas sits on the same ground as the canvas, so a
+     minor rule would leave it edgeless. */
+  border: 1px solid var(--border-strong);
   border-radius: var(--r-xl);
-  box-shadow: var(--shadow-lg);
 }
 
 .conn-pop-row { display: flex; gap: var(--s-2); }
@@ -721,11 +879,14 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .run-chip svg { width: var(--sz-icon-sm); height: var(--sz-icon-sm); }
 .run-chip-id { font-family: var(--font-mono); color: var(--faint-foreground); }
 
+/* The run being looked at — this is the CURRENT-ITEM MARK, which is one of the four things
+   the accent is reserved for. It is spent as a 1px border and a weight, never as a tint
+   behind the label: `--primary-soft` is `transparent` now and the fill it used to paint was
+   the second surface this world does not have. */
 .run-chip-on {
-  background: var(--primary-soft);
-  border-color: var(--primary-border);
+  border-color: var(--primary-mark);
   color: var(--foreground);
-  font-weight: 500;
+  font-weight: 600;
 }
 .run-chip-on .run-chip-id { color: var(--muted-foreground); }
 
@@ -795,22 +956,33 @@ button, input, textarea, select { font: inherit; color: inherit; }
   flex: none;
 }
 
+/*
+ * Three run states, in the three reserved hues — and `is-live` changes colour here.
+ *
+ * It used to be the accent, which put the ONE identity-and-interaction colour on a run that
+ * is merely in progress, and left this surface with four state colours where the system has
+ * three. `--warn` is what "running, pending, unverified" means in this world; it is what the
+ * step glyphs and the health dot already say; and it is what the operator has learned. The
+ * accent goes back to meaning "this is the thing you are looking at" and nothing else.
+ *
+ * The hue is on the text, not behind it. State text in a reserved hue is allowed — these
+ * three clear 7.2:1 or better in dark and 5.1:1 or better in light — and the tinted panel
+ * each of these used to sit on is gone with `--*-soft`. The word beside the mark is still the
+ * primary signal; colour is never carrying this alone.
+ */
 .stagebar-position.is-live {
-  background: var(--primary-soft);
-  border-color: var(--primary-border);
-  color: var(--primary);
+  border-color: var(--warn-border);
+  color: var(--warn);
 }
-.stagebar-position.is-live .stagebar-position-name { color: var(--primary); }
+.stagebar-position.is-live .stagebar-position-name { color: var(--warn); }
 
 .stagebar-position.is-done {
-  background: var(--ok-soft);
   border-color: var(--ok-border);
   color: var(--ok);
 }
 .stagebar-position.is-done .stagebar-position-name { color: var(--ok); }
 
 .stagebar-position.is-failed {
-  background: var(--danger-soft);
   border-color: var(--danger-border);
   color: var(--danger);
 }
@@ -848,7 +1020,13 @@ button, input, textarea, select { font: inherit; color: inherit; }
   stroke-dasharray: 3 4;
   opacity: 0.75;
 }
-.react-flow__handle {
+/* Over-qualified with `.graph-canvas` for the same reason the controls below are: @xyflow's
+   stylesheet ships inside the lazy PipelineGraph chunk, so it is injected AFTER this file and
+   wins every tie on equal specificity. Its handle is a hard-coded blue-black (#1a192b) — the
+   one value on the whole surface that belongs to no palette here. It is invisible at
+   `opacity: 0`, which is how it survived this long, but a handle that ever becomes visible
+   should become visible in this system's colours. */
+.graph-canvas .react-flow__handle {
   width: 5px; height: 5px;
   min-width: 0; min-height: 0;
   background: var(--border-strong);
@@ -900,9 +1078,11 @@ button, input, textarea, select { font: inherit; color: inherit; }
   flex-direction: column;
   gap: var(--s-4);
   background: var(--surface);
-  border: 1px solid var(--border);
+  /* Floats over the canvas, so the strong hairline is doing the whole job the shadow used to
+     — and the hair of lift under it is separation you feel rather than see, which is exactly
+     why the minor rule is still not enough here. */
+  border: 1px solid var(--border-strong);
   border-radius: var(--r-xl);
-  box-shadow: var(--shadow-md);
 }
 
 .graph-legend-head { display: flex; align-items: center; justify-content: space-between; }
@@ -941,21 +1121,42 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .legend-edge-branch { border-top: 2px solid var(--edge-taken); }
 .legend-edge-ghost { border-top: 1.5px dotted var(--edge-ghost); }
 
+/* "Running now" is run state, so it takes the state hue the rest of the product uses for it.
+   It was the accent, which made this the fourth state colour on a surface that has three. */
 .legend-now {
   width: 10px; height: 10px; flex: none;
   border-radius: var(--r-pill);
-  background: var(--primary);
+  background: var(--warn);
 }
 
-.legend-work { width: 10px; height: 10px; flex: none; border-radius: 3px; }
-.legend-work-model { background: var(--primary); }
-.legend-work-code { background: var(--g-500); }
-.legend-work-route { background: var(--warn); }
+/*
+ * WHAT PERFORMS THE WORK IS A TAXONOMY, AND A TAXONOMY IS NOT A STATE.
+ *
+ * These three swatches used to be indigo / grey / amber — which taught the reader a second
+ * meaning for `--warn` ("a routing decision") three rows below the row where the same legend
+ * had just taught them the first one ("running now"). Classifying with the reserved hues is
+ * the mistake this system calls out by name.
+ *
+ * So they classify by SHAPE, in one ink: a filled disc, a hollow ring, a diamond. Shape
+ * survives colourblindness, which hue never did, and it costs nothing here because every one
+ * of them already ships beside its word — both in this legend and on the node badge itself.
+ */
+.legend-work {
+  width: 10px; height: 10px; flex: none;
+  background: var(--muted-foreground);
+}
+.legend-work-model { border-radius: var(--r-pill); }
+.legend-work-code {
+  border-radius: var(--r-pill);
+  background: transparent;
+  border: 1.5px solid var(--muted-foreground);
+}
+.legend-work-route { transform: rotate(45deg) scale(0.86); }
 
 .graph-legend-row .g-glyph { width: 10px; height: 10px; border-radius: var(--r-pill); flex: none; }
 .graph-legend-row .g-glyph.ok { background: var(--ok); }
 .graph-legend-row .g-glyph.err { background: var(--danger); }
-.graph-legend-row .g-glyph.faint { background: var(--g-300); }
+.graph-legend-row .g-glyph.faint { background: var(--faint-foreground); }
 
 /* An <svg> with a viewBox and no intrinsic size falls back to 300x150 or stretches to its
    container — in Full topology that put a giant unstyled overview across the bottom of the
@@ -968,14 +1169,13 @@ button, input, textarea, select { font: inherit; color: inherit; }
   width: 190px;
   height: 118px;
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r-lg);
-  box-shadow: var(--shadow-md);
   padding: var(--s-2);
   cursor: pointer;
 }
-.graph-minimap-node { fill: var(--g-300); }
-.graph-minimap-node.is-traversed { fill: var(--primary); }
+.graph-minimap-node { fill: var(--faint-foreground); }
+.graph-minimap-node.is-traversed { fill: var(--edge-taken); }
 .graph-minimap-node.is-muted { fill: var(--border); }
 .graph-minimap-viewport { fill: none; stroke: var(--foreground); stroke-width: 1.5; opacity: 0.5; }
 
@@ -987,10 +1187,9 @@ button, input, textarea, select { font: inherit; color: inherit; }
  * that is the reason for the extra `.graph-canvas`, not an accident.
  */
 .graph-canvas .react-flow__controls {
-  box-shadow: var(--shadow-md);
   border-radius: var(--r-lg);
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   background: var(--surface);
 }
 .graph-canvas .react-flow__controls-button {
@@ -1016,12 +1215,12 @@ button, input, textarea, select { font: inherit; color: inherit; }
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r-xl);
-  box-shadow: var(--shadow-sm);
   overflow: hidden;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease;
 }
 
-.g-compact:hover { box-shadow: var(--shadow-md); }
+/* Hover is a rule getting stronger, because there is no elevation to raise. */
+.g-compact:hover { border-color: var(--border-strong); }
 
 /* A route card runs inside a workflow, so it is recessed rather than lifted. */
 .g-compact.is-route {
@@ -1035,7 +1234,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .g-compact.is-muted { opacity: 0.75; }
 .g-compact.is-muted:hover { opacity: 1; }
 
-.g-compact.is-active { border-color: var(--primary-border); }
+.g-compact.is-active { border-color: var(--warn-border); }
 .g-compact.is-failed { border-color: var(--danger-border); }
 
 /* --- header: 38px LAYOUT CONTRACT (COMPACT_HEADER_H) --- */
@@ -1061,7 +1260,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
   color: var(--muted-foreground);
 }
 .c-header-glyph svg { width: 13px; height: 13px; }
-.is-active > .c-header .c-header-glyph { color: var(--primary); }
+.is-active > .c-header .c-header-glyph { color: var(--warn); }
 .is-done > .c-header .c-header-glyph { color: var(--ok); }
 .is-failed > .c-header .c-header-glyph { color: var(--danger); }
 
@@ -1083,17 +1282,19 @@ button, input, textarea, select { font: inherit; color: inherit; }
 }
 
 /* Only a state an operator can act on earns a word. */
+/* The status word. It used to sit on a tinted chip; with the fill gone the padding was
+   reserving room for a box that is not drawn, so it is a word now — uppercase, in its state's
+   hue, which is what it always was underneath. */
 .c-header-status {
   font-size: var(--t-label);
   font-weight: 600;
-  letter-spacing: 0.02em;
-  padding: 1px var(--s-2);
-  border-radius: var(--r-sm);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   flex: none;
   margin-left: auto;
 }
-.is-active > .c-header .c-header-status { background: var(--primary-soft); color: var(--primary); }
-.is-failed > .c-header .c-header-status { background: var(--danger-soft); color: var(--danger); }
+.is-active > .c-header .c-header-status { color: var(--warn); }
+.is-failed > .c-header .c-header-status { color: var(--danger); }
 
 .c-header-summary {
   font-size: var(--t-data);
@@ -1140,7 +1341,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
   background: var(--ok);
   transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
-.c-progress-active { background: var(--primary); }
+.c-progress-active { background: var(--warn); }
 .is-failed .c-progress-fill { background: var(--danger); }
 
 /* --- terminals: 28px LAYOUT CONTRACT (COMPACT_TERMINAL_H) --- */
@@ -1208,12 +1409,23 @@ button, input, textarea, select { font: inherit; color: inherit; }
  * LAYOUT CONTRACT with core.ts, and an animation that touched geometry would make the
  * canvas mislay its edges for the length of the transition.
  */
+/*
+ * These two mix their own wash rather than taking `--ok-soft` / `--danger-soft`, and that is
+ * deliberate: those tokens are `transparent` now, so reading them here would animate
+ * transparent to transparent and silently delete the one authored moment on this surface.
+ *
+ * A transient wash is not the tinted panel this world refuses. It exists for 900ms, it is
+ * gone before the eye can read a layout off it, and its whole job is to say THIS row is the
+ * one that just changed — which is the only thing motion is for here, on a surface where a
+ * run takes minutes. Mixed from the state hue at 14% so it reads as that state without ever
+ * becoming a second surface.
+ */
 @keyframes step-commit {
-  from { background-color: var(--ok-soft); }
+  from { background-color: color-mix(in oklab, var(--ok) 14%, transparent); }
   to { background-color: transparent; }
 }
 @keyframes step-commit-failed {
-  from { background-color: var(--danger-soft); }
+  from { background-color: color-mix(in oklab, var(--danger) 14%, transparent); }
   to { background-color: transparent; }
 }
 .c-step.is-settling > .c-step-main { animation: step-commit 900ms ease-out; }
@@ -1243,10 +1455,10 @@ button, input, textarea, select { font: inherit; color: inherit; }
   width: 14px; height: 14px;
   display: inline-flex; align-items: center; justify-content: center;
   flex: none;
-  color: var(--g-300);
+  color: var(--faint-foreground);
 }
 .c-step-status svg { width: 12px; height: 12px; }
-.c-step.is-active .c-step-status { color: var(--primary); }
+.c-step.is-active .c-step-status { color: var(--warn); }
 .c-step.is-done .c-step-status { color: var(--ok); }
 .c-step.is-failed .c-step-status { color: var(--danger); }
 
@@ -1390,7 +1602,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
   flex: none;
   color: var(--faint-foreground);
 }
-.c-stage.is-active .c-stage-glyph { color: var(--primary); }
+.c-stage.is-active .c-stage-glyph { color: var(--warn); }
 .c-stage.is-done .c-stage-glyph { color: var(--ok); }
 .c-stage.is-failed .c-stage-glyph { color: var(--danger); }
 
@@ -1454,20 +1666,21 @@ button, input, textarea, select { font: inherit; color: inherit; }
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
-  box-shadow: var(--shadow-sm);
   padding: var(--s-2) var(--s-4);
   font-size: var(--t-data);
   min-width: 0;
 }
 
-/* A branch is a chip, not a card: the pill shape is the whole point of it. */
+/* A branch is a chip, not a card — but a chip here is a 2px rectangle, not a 999px lozenge.
+   The shape that tells it from a card is now its proportion and its single row of content,
+   which is what the shape was actually doing; the radius was only ever saying "tag". */
 .g-card.g-chip {
   flex-direction: row;
   align-items: center;
   justify-content: flex-start;
   gap: var(--s-2);
   padding: 0 var(--s-3);
-  border-radius: var(--r-pill);
+  border-radius: var(--radius-sq);
 }
 
 /*
@@ -1478,16 +1691,16 @@ button, input, textarea, select { font: inherit; color: inherit; }
  * whether they had run, failed or never been visited.
  */
 .g-card.is-active,
-.g-card.g-active { border-color: var(--primary-border); }
+.g-card.g-active { border-color: var(--warn-border); }
 .g-card.is-failed,
 .g-card.g-failed { border-color: var(--danger-border); }
 .g-card.g-done { border-color: var(--ok-border); }
 .g-card.g-idle { border-color: var(--border); }
 
-.g-card.g-active .g-glyph { color: var(--primary); }
+.g-card.g-active .g-glyph { color: var(--warn); }
 .g-card.g-done .g-glyph { color: var(--ok); }
 .g-card.g-failed .g-glyph { color: var(--danger); }
-.g-card.g-idle .g-glyph { color: var(--g-300); }
+.g-card.g-idle .g-glyph { color: var(--faint-foreground); }
 .g-card.g-idle .g-label { color: var(--muted-foreground); }
 
 .g-card.g-muted-path { opacity: 0.6; }
@@ -1574,28 +1787,38 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .g-glyph svg { width: 13px; height: 13px; }
 .g-glyph.ok { color: var(--ok); }
 .g-glyph.err { color: var(--danger); }
-.g-glyph.faint { color: var(--g-300); }
+.g-glyph.faint { color: var(--faint-foreground); }
 
 .g-err-text { color: var(--danger); font-size: var(--t-data); }
 
-.g-now { color: var(--primary); }
+/* "NOW" is a word, so it is ink with the accent as a rule under it, not an accent word. */
+.g-now {
+  color: var(--foreground);
+  font-weight: 650;
+  box-shadow: inset 0 -1px 0 var(--primary);
+}
 
 .g-terminal-icon { color: var(--muted-foreground); }
 
-/* What performs the work, as an orientation label: the 11px step, uppercase, on the muted
-   wash — never louder than the name of the node it sits beside. */
+/* What performs the work, as an orientation label: the 11px step, uppercase, never louder than
+   the name of the node it sits beside.
+
+   It is ruled rather than washed. `--muted` is the hover wash — a fill that exists only while
+   the pointer is on a control — and using it as a RESTING background made this the one filled
+   object on a canvas full of nodes that are deliberately not filled. A tag says what a thing
+   is; the hairline is enough to say the label is a tag. */
 .g-work-badge {
   display: inline-flex;
   align-items: center;
   gap: var(--s-1);
   flex: none;
-  padding: 1px var(--s-2);
+  padding: 0 var(--s-2);
+  border: 1px solid var(--border);
   border-radius: var(--r-sm);
   font-size: var(--t-label);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  background: var(--muted);
   color: var(--muted-foreground);
 }
 .g-work-badge svg { width: 11px; height: 11px; flex: none; }
@@ -1612,7 +1835,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
   border: 1px dashed var(--border-strong);
   box-shadow: none;
 }
-.g-group-current { border-color: var(--primary-border); background: var(--primary-soft); }
+.g-group-current { border-color: var(--primary-mark); }
 
 .g-chip-wrap { display: flex; align-items: center; gap: var(--s-2); }
 
@@ -1623,13 +1846,13 @@ button, input, textarea, select { font: inherit; color: inherit; }
   height: 24px;
   padding-inline: var(--s-3);
   border: 1px solid var(--border);
-  border-radius: var(--r-pill);
+  border-radius: var(--radius-sq);
   background: var(--surface);
   font-size: var(--t-data);
   color: var(--secondary-foreground);
   white-space: nowrap;
 }
-.g-chip-dot { width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--g-500); flex: none; }
+.g-chip-dot { width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--faint-foreground); flex: none; }
 .g-chip-meta { color: var(--muted-foreground); }
 
 /*
@@ -1666,7 +1889,10 @@ button, input, textarea, select { font: inherit; color: inherit; }
 
 .g-profile-route { font-family: var(--font-mono); font-size: var(--t-data); color: var(--muted-foreground); }
 
-.g-router { border-color: var(--warn-border); }
+/* A router node is a KIND of node, and a kind is not a state — bordering it in `--warn` said
+   "this node is running" in the same hue the step glyphs use to mean exactly that. It keeps
+   the ordinary rule; what it does is carried by its badge, its glyph and its word. */
+.g-router { border-color: var(--border); }
 
 /* ==========================================================================
    9. Rail
@@ -1727,10 +1953,13 @@ body.is-rail-resizing .rail { transition: none; }
 .rail-tab span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rail-tab:hover { background: var(--muted); color: var(--foreground); }
 
+/* The tab you are on. The accent marks it with a rule under the label — this world's
+   emphasis device — and the label itself is ink, because a tab name is a word. The tinted
+   wash it used to sit on was the second surface this system does not have. */
 .rail-tab.is-on {
-  background: var(--primary-soft);
-  color: var(--primary);
-  font-weight: 500;
+  color: var(--foreground);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--primary);
 }
 
 /*
@@ -1749,12 +1978,12 @@ body.is-rail-resizing .rail { transition: none; }
   font-size: var(--t-label);
   font-variant-numeric: tabular-nums;
   padding: 0 var(--s-1);
-  border-radius: var(--r-sm);
-  background: var(--muted);
+  border: 1px solid var(--border);
   color: var(--muted-foreground);
   flex: none;
 }
-.rail-tab.is-on .rail-tab-count { background: var(--surface); color: var(--primary); }
+/* A feed count is a measured value, so it stays ink in both states. */
+.rail-tab.is-on .rail-tab-count { color: var(--foreground); }
 
 .rail-collapse {
   width: var(--sz-icon-btn);
@@ -1801,7 +2030,7 @@ body.is-rail-resizing .rail { transition: none; }
     position: absolute;
     right: 0; top: 0; bottom: 0;
     z-index: 30;
-    box-shadow: var(--shadow-lg);
+    border-left-color: var(--border-strong);
   }
 }
 
@@ -1825,14 +2054,26 @@ body.is-rail-resizing .rail { transition: none; }
    its centring lands in the middle of the rail rather than the middle of half of it. */
 .chat-scroll.is-idle { flex: 0 0 auto; padding: 0; }
 
+/*
+ * A transcript entry, opened by a rule rather than boxed.
+ *
+ * The card this used to be put a four-sided border and a tint around every message in a
+ * scrolling column, which is the card-list pattern this world replaced with the ledger line.
+ * One rule above, and the space below it, say the same thing: a new entry starts here.
+ *
+ * `border-top` rather than `border-bottom` because the head of a message is what the reader
+ * scans for, and the entries that matter most arrive at the bottom of a column that is
+ * already scrolled — the rule wants to be with the label, not trailing the body.
+ *
+ * The three `border-color` overrides further down (`.chat-msg-input`, `.chat-msg-error`) now
+ * colour this one rule, which is why they still read.
+ */
 .chat-msg {
   display: flex;
   flex-direction: column;
   gap: var(--s-2);
-  padding: var(--s-4);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  background: var(--surface-2);
+  padding: var(--s-4) 0 0;
+  border-top: 1px solid var(--border);
   font-size: var(--t-data);
 }
 
@@ -1847,10 +2088,7 @@ body.is-rail-resizing .rail { transition: none; }
   color: var(--muted-foreground);
 }
 
-.chat-msg-input {
-  background: var(--primary-soft);
-  border-color: var(--primary-border);
-}
+.chat-msg-input { border-color: var(--primary-mark); }
 
 .chat-msg-profile {
   font-family: var(--font-mono);
@@ -1868,8 +2106,8 @@ body.is-rail-resizing .rail { transition: none; }
 .chat-msg-status svg { width: var(--sz-icon-sm); height: var(--sz-icon-sm); }
 .chat-msg-status-wait { color: var(--muted-foreground); }
 
-.chat-msg-pending { color: var(--primary); }
-.chat-msg-error { color: var(--danger); border-color: var(--danger-border); background: var(--danger-soft); }
+.chat-msg-pending { color: var(--warn); }
+.chat-msg-error { color: var(--danger); border-color: var(--danger-border); }
 .chat-msg-ending { color: var(--muted-foreground); }
 
 .chat-msg-result,
@@ -1933,6 +2171,15 @@ body.is-rail-resizing .rail { transition: none; }
   flex-wrap: wrap;
 }
 
+/* Pushed away from Corpus and the workflow menu — it is not one of the controls that
+   shape the next run, and the space is what says so. The extra right margin keeps a
+   clearing click a deliberate distance from Run. */
+.chat-clear {
+  margin-left: auto;
+  margin-right: var(--s-2);
+  color: var(--muted-foreground);
+}
+
 
 /* The empty state owns the column and sits in the middle of it. */
 .chat-empty {
@@ -1958,9 +2205,8 @@ body.is-rail-resizing .rail { transition: none; }
   align-items: flex-start;
   gap: var(--s-3);
   padding: var(--s-3);
-  border: 1px solid var(--primary-border);
+  border: 1px solid var(--primary-mark);
   border-radius: var(--r-md);
-  background: var(--primary-soft);
   font-size: var(--t-data);
   color: var(--secondary-foreground);
   line-height: 1.5;
@@ -1999,15 +2245,27 @@ body.is-rail-resizing .rail { transition: none; }
 .chat-corpus-btn { flex: none; }
 
 /* The empty state's one action reads as the primary thing on an otherwise blank panel. */
+/*
+ * The empty state's suggestion — MARKED, not filled, and this is the whole "one filled object
+ * per view" rule being adjudicated in the one place the dashboard actually has two candidates.
+ *
+ * Both this and the footer's Run button are visible at the same time on an empty panel. Run is
+ * the view's primary action: it is always there, it is what the panel is for, and it is what
+ * the operator came to press. This is a shortcut to a corpus — the loudest possible *hint*,
+ * but still a hint. So Run keeps the fill and this takes the accent as a 1px mark with ink for
+ * the word, which is the accent's other legitimate job.
+ *
+ * It was briefly the filled one during the ledger migration, and with Run disabled beside it
+ * the view read as though browsing the corpus were the thing to do next. It is not.
+ */
 .chat-preset.is-corpus {
   height: var(--h-control-lg);
-  border-color: var(--primary-border);
-  background: var(--primary-soft);
-  color: var(--primary);
-  font-weight: 500;
+  border-color: var(--primary);
+  color: var(--foreground);
+  font-weight: 600;
 }
-.chat-preset.is-corpus:hover { background: var(--primary-soft); border-color: var(--primary); }
-.chat-preset.is-corpus svg { color: currentColor; }
+.chat-preset.is-corpus:hover { background: var(--muted); border-color: var(--primary); }
+.chat-preset.is-corpus svg { color: var(--primary); }
 
 /* Workflow picker: sits in the footer row beside Corpus, so it stays narrow
    enough to leave Run in place and truncates rather than wrapping the row. */
@@ -2018,9 +2276,11 @@ body.is-rail-resizing .rail { transition: none; }
 .chat-workflow-trigger > span,
 .chat-workflow-trigger { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Forcing a workflow is the off-nominal state; the border says so at a glance. */
+/* Forcing a workflow is the off-nominal state; the mark says so, the ink stays readable. */
 .chat-workflow-trigger.is-forced {
   border-color: var(--primary);
-  color: var(--primary);
+  color: var(--foreground);
+  font-weight: 600;
 }
 .chat-workflow-note {
   font-size: var(--t-data);
@@ -2043,16 +2303,13 @@ body.is-rail-resizing .rail { transition: none; }
   align-items: center;
   gap: var(--s-2);
   padding: var(--s-2) var(--s-3);
-  border: 1px solid var(--primary-border);
+  border: 1px solid var(--primary-mark);
   border-radius: var(--r-md);
-  background: var(--primary-soft);
   font-size: var(--t-data);
   min-width: 0;
 }
 .chat-loaded-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-loaded-meta { font-family: var(--font-mono); color: var(--muted-foreground); margin-left: auto; flex: none; }
-
-.chat-scroll-actions { display: flex; gap: var(--s-2); }
 
 /* ==========================================================================
    11. Corpus picker
@@ -2107,7 +2364,39 @@ body.is-rail-resizing .rail { transition: none; }
 }
 .corpus-close:hover { background: var(--muted); color: var(--foreground); }
 
+/* Two readings of one corpus, sitting under the filter because it answers the same
+   question the filter does: which of these hundred documents do I want. */
+.corpus-order {
+  flex: none;
+  display: flex;
+  gap: var(--s-1);
+  padding: var(--s-2) var(--s-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.corpus-order-btn {
+  padding: 2px var(--s-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: var(--t-label);
+  cursor: pointer;
+}
+.corpus-order-btn:hover { color: var(--foreground); background: var(--muted); }
+.corpus-order-btn.is-on {
+  background: var(--muted);
+  border-color: var(--border-strong);
+  color: var(--foreground);
+}
+
 .corpus-list { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-3); }
+
+/* With no section headings there is nothing to be indented under, so the rows sit at the
+   margin — except the notes of a multi-document case, which still hang off its heading. */
+.corpus-list.is-flat .corpus-row:not(.is-in-run) { padding-left: var(--s-3); }
+.corpus-list.is-flat .corpus-row:not(.is-in-run) .corpus-row-note,
+.corpus-list.is-flat .corpus-row:not(.is-in-run) .corpus-row-context { padding-left: 0; }
 
 .corpus-group-btn {
   width: 100%;
@@ -2149,6 +2438,13 @@ body.is-rail-resizing .rail { transition: none; }
 .corpus-row-name { font-size: var(--t-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .corpus-row-meta { margin-left: auto; font-family: var(--font-mono); font-size: var(--t-data); color: var(--muted-foreground); flex: none; }
 .corpus-row-note { font-size: var(--t-data); color: var(--muted-foreground); padding-left: 20px; }
+.corpus-row-context {
+  padding-left: 20px;
+  font-size: var(--t-label);
+  color: var(--muted-foreground);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
 
 .corpus-case { display: flex; flex-direction: column; gap: 2px; }
 .corpus-case-name { font-size: var(--t-body); }
@@ -2180,19 +2476,30 @@ body.is-rail-resizing .rail { transition: none; }
   border-bottom: 1px solid var(--border);
 }
 
-.activity-feed { display: flex; flex-direction: column; gap: var(--s-2); }
+.activity-feed { display: flex; flex-direction: column; }
 
 .drawer-section-title { margin-bottom: var(--s-2); }
 
+/*
+ * ONE UNIT OF WORK, READ AS A LEDGER LINE.
+ *
+ * This was a bordered, tinted box, and a column of them was a card list — four borders and a
+ * radius around each of twenty items, in a panel that is already inside a bordered rail. The
+ * ledger's answer is the row: a single rule under each line, and space doing the rest. The
+ * feed reads as one column of work now instead of twenty separate objects, which is also what
+ * the eye needs when the rows are arriving live.
+ *
+ * The gap between items is gone with the boxes — rows abut and the rule IS the separation.
+ * `.activity-feed` and `.inspector-feed` therefore set `gap: 0`.
+ */
 .drawer-item {
   display: flex;
   flex-direction: column;
   gap: var(--s-1);
-  padding: var(--s-3);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  background: var(--surface-2);
+  padding: var(--s-3) 0;
+  border-bottom: 1px solid var(--border);
 }
+.drawer-item:last-child { border-bottom: 0; }
 
 .drawer-item-row { display: flex; align-items: center; gap: var(--s-2); min-width: 0; }
 .drawer-item-name { font-size: var(--t-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2242,7 +2549,7 @@ body.is-rail-resizing .rail { transition: none; }
   word-break: break-word;
 }
 
-.inspector-feed { display: flex; flex-direction: column; gap: var(--s-3); }
+.inspector-feed { display: flex; flex-direction: column; }
 
 .stage-tree-item { display: flex; align-items: center; gap: var(--s-2); font-size: var(--t-data); }
 .stage-tree-children { margin-left: var(--s-4); padding-left: var(--s-3); border-left: 1px solid var(--border); }
@@ -2275,8 +2582,7 @@ body.is-rail-resizing .rail { transition: none; }
   align-items: center;
   gap: var(--s-2);
   padding: var(--s-2) var(--s-4);
-  border-bottom: 1px solid var(--border);
-  background: var(--primary-soft);
+  border-bottom: 1px solid var(--border-accent);
   font-size: var(--t-data);
   color: var(--secondary-foreground);
   min-width: 0;
@@ -2298,7 +2604,7 @@ body.is-rail-resizing .rail { transition: none; }
   border: none; border-radius: var(--r-sm);
   background: transparent; color: var(--muted-foreground); cursor: pointer;
 }
-.eventlog-focus-clear:hover { background: var(--surface); color: var(--foreground); }
+.eventlog-focus-clear:hover { background: var(--muted); color: var(--foreground); }
 .eventlog-focus-clear svg { width: var(--sz-icon-sm); height: var(--sz-icon-sm); }
 
 .eventlog-list {
@@ -2322,11 +2628,22 @@ body.is-rail-resizing .rail { transition: none; }
 /* The tint is the whole signal. A 2px coloured stripe down the left of a list row was
    doing the same job a second time, and a coloured left border above a hairline is a
    card-accent tell this system does not use. */
-.ev-pinned { background: var(--primary-soft); }
-.ev-pinned .ev-kind { color: var(--primary); font-weight: 600; }
+/*
+ * A pinned row, marked rather than washed.
+ *
+ * The tint that used to do this is gone with `--primary-soft`, so the 2px accent stripe this
+ * file once removed IN FAVOUR of that tint comes back — and it is the right device now that
+ * there is no fill competing with it. It is the current-item mark, which is one of the four
+ * things the accent is for, and it is inset so it cannot shift the row's geometry.
+ */
+.ev-pinned { box-shadow: inset 2px 0 0 var(--primary); }
+.ev-pinned .ev-kind { font-weight: 600; }
 
 .ev-time { color: var(--faint-foreground); flex: none; font-variant-numeric: tabular-nums; }
-.ev-kind { color: var(--primary); flex: none; }
+/* An event kind is an identifier the reader compares down the column, so it is ink and mono.
+   It was the accent, which is 3.33:1 on the light ground under 12px mono — the exact case the
+   "never letters a word" rule exists for, on the densest text on the surface. */
+.ev-kind { color: var(--foreground); flex: none; }
 .ev-id { color: var(--muted-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .eventlog-empty {
@@ -2342,7 +2659,6 @@ body.is-rail-resizing .rail { transition: none; }
   left: 50%;
   transform: translateX(-50%);
   z-index: 10;
-  box-shadow: var(--shadow-md);
 }
 
 .ev-detail {
@@ -2455,7 +2771,12 @@ body.is-rail-resizing .rail { transition: none; }
   transition: background 0.12s ease, color 0.12s ease;
 }
 .settings-nav-item:hover { background: var(--muted); color: var(--foreground); }
-.settings-nav-item.is-on { background: var(--primary-soft); color: var(--primary); font-weight: 500; }
+/* The section you are in: an accent rule down the left edge, and ink for the name. */
+.settings-nav-item.is-on {
+  color: var(--foreground);
+  font-weight: 600;
+  box-shadow: inset 2px 0 0 var(--primary);
+}
 
 .settings-scroll { flex: 1; min-width: 0; overflow-y: auto; scroll-behavior: smooth; }
 /*
@@ -2556,7 +2877,6 @@ body.is-rail-resizing .rail { transition: none; }
 }
 .settings-range::-webkit-slider-runnable-track {
   height: 4px;
-  border-radius: var(--r-pill);
   background: linear-gradient(
     to right,
     var(--primary) 0 var(--fill, 0%),
@@ -2565,12 +2885,10 @@ body.is-rail-resizing .rail { transition: none; }
 }
 .settings-range::-moz-range-track {
   height: 4px;
-  border-radius: var(--r-pill);
   background: var(--surface-sunken);
 }
 .settings-range::-moz-range-progress {
   height: 4px;
-  border-radius: var(--r-pill);
   background: var(--primary);
 }
 .settings-range::-webkit-slider-thumb {
@@ -2580,21 +2898,19 @@ body.is-rail-resizing .rail { transition: none; }
   height: 16px;
   margin-top: -6px;
   border: 1px solid var(--primary);
-  border-radius: var(--r-pill);
+  border-radius: var(--radius-sq);
   background: var(--surface);
-  box-shadow: 0 1px 2px rgb(16 24 40 / 0.05);
-  transition: box-shadow 0.12s ease;
+  transition: background 0.12s ease;
 }
 .settings-range::-moz-range-thumb {
   width: 16px;
   height: 16px;
   border: 1px solid var(--primary);
-  border-radius: var(--r-pill);
+  border-radius: var(--radius-sq);
   background: var(--surface);
-  box-shadow: 0 1px 2px rgb(16 24 40 / 0.05);
 }
-.settings-range:hover::-webkit-slider-thumb { box-shadow: 0 0 0 4px var(--primary-soft); }
-.settings-range:hover::-moz-range-thumb { box-shadow: 0 0 0 4px var(--primary-soft); }
+.settings-range:hover::-webkit-slider-thumb { background: var(--primary); }
+.settings-range:hover::-moz-range-thumb { background: var(--primary); }
 .settings-range:focus-visible { outline: none; }
 .settings-range:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--ring); outline-offset: 2px; }
 .settings-range:focus-visible::-moz-range-thumb { outline: 2px solid var(--ring); outline-offset: 2px; }
@@ -2616,18 +2932,22 @@ body.is-rail-resizing .rail { transition: none; }
 
 /* The escape from the range: "no limit" is a mode, not a position on it. Set as a text
    button rather than an outline one so it reads as the secondary path it is. */
+/* Ink with a rule under it, not an accent word — at 12px the accent is 3.33:1 on the light
+   ground, and this is the only sentence in the section that is also a control. The underline
+   is what makes it read as one; the colour never was. */
 .settings-link {
   align-self: flex-start;
   padding: 0;
   border: none;
   background: transparent;
   font-size: var(--t-data);
-  color: var(--primary);
+  color: var(--muted-foreground);
   cursor: pointer;
   text-decoration: underline;
+  text-decoration-color: var(--border-strong);
   text-underline-offset: 2px;
 }
-.settings-link:hover { text-decoration-thickness: 2px; }
+.settings-link:hover { color: var(--foreground); text-decoration-color: currentColor; }
 .settings-link:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: var(--r-sm); }
 
 /* A value on a server that cannot be written: the reading, not a dead input box. An input
@@ -2659,8 +2979,11 @@ body.is-rail-resizing .rail { transition: none; }
   background: var(--surface);
 }
 .settings-chip-text { font-family: var(--font-mono); font-size: var(--t-data); color: var(--foreground); }
-.settings-chip.is-open { border-color: var(--warn-border); background: var(--warn-soft); }
-.settings-chip.is-open .settings-chip-text { font-family: var(--font-ui); color: var(--warn); }
+/* An origin left open is a standing configuration fact, not a run in progress, so it does not
+   take `--warn` — same argument as the header's clinical disclaimer. It takes the major rule
+   and full-contrast ink, which is the loudest thing here that is not a state. */
+.settings-chip.is-open { border-color: var(--border-accent); }
+.settings-chip.is-open .settings-chip-text { font-family: var(--font-ui); color: var(--foreground); font-weight: 600; }
 .settings-chip-x {
   width: 18px; height: 18px;
   display: inline-flex; align-items: center; justify-content: center;
@@ -2704,8 +3027,8 @@ body.is-rail-resizing .rail { transition: none; }
   width: 30px; height: 18px;
   flex: none;
   border: 1px solid var(--border-strong);
-  border-radius: var(--r-pill);
-  background: var(--muted);
+  border-radius: var(--radius-sq);
+  background: transparent;
   transition: background 0.14s ease, border-color 0.14s ease;
 }
 .settings-switch-thumb {
@@ -2713,13 +3036,15 @@ body.is-rail-resizing .rail { transition: none; }
   top: 2px; left: 2px;
   width: 12px; height: 12px;
   display: inline-flex; align-items: center; justify-content: center;
-  border-radius: var(--r-pill);
-  background: var(--surface);
-  box-shadow: 0 1px 2px rgb(16 24 40 / 0.05);
-  transition: transform 0.14s ease;
+  border-radius: var(--radius-sq);
+  background: var(--border-strong);
+  transition: transform 0.14s ease, background 0.14s ease;
 }
-.settings-switch-thumb svg { width: 9px; height: 9px; color: var(--primary); }
+.settings-switch-thumb svg { width: 9px; height: 9px; color: var(--primary-foreground); }
 .settings-switch.is-on .settings-switch-track { background: var(--primary); border-color: var(--primary); }
+/* Off, the thumb is a structural block on an empty track; on, it gets out of the accent's way
+   and becomes the ground showing through, so the check inside it reads as the fill's counter. */
+.settings-switch.is-on .settings-switch-thumb { background: var(--color-ground); }
 .settings-switch.is-on .settings-switch-thumb { transform: translateX(12px); }
 .settings-switch:hover:not(:disabled) .settings-switch-track { border-color: var(--primary); }
 .settings-switch:focus-visible { outline: none; }
@@ -2760,11 +3085,12 @@ body.is-rail-resizing .rail { transition: none; }
 .settings-note svg { width: var(--sz-icon); height: var(--sz-icon); flex: none; margin-top: 1px; }
 .settings-status.is-error { color: var(--danger); }
 
+/* The aside, ruled rather than boxed — this is `.alk-note`'s shape: a heavier rule above, a
+   lighter one below, no fill, no left bar, no icon tile. */
 .settings-note {
-  padding: var(--s-3) var(--s-4);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  background: var(--surface-2);
+  padding-block: var(--s-4);
+  border-top: 1px solid var(--border-accent);
+  border-bottom: 1px solid var(--border);
   color: var(--foreground);
 }
 
@@ -2785,9 +3111,13 @@ body.is-rail-resizing .rail { transition: none; }
    15. Primitives
    ========================================================================== */
 
+/* A destructive action asking for its second click. `--danger` is a run-state hue everywhere
+   else, and this is the one deliberate exception: a refusal to proceed and a run that failed
+   are near enough the same signal, and the alternative — the accent — is the colour of the
+   button the user is trying NOT to press by accident. The word on the control changes too. */
 .is-confirming {
-  background: var(--danger-soft) !important;
   color: var(--danger) !important;
+  border-color: var(--danger) !important;
 }
 
 /* Badge variants are the component's own Tailwind classes, and they map to the tokens
@@ -2805,4 +3135,4 @@ body.is-rail-resizing .rail { transition: none; }
 /* The way into the settings panel. It reads as engaged while the rail is showing it, using
    the same wash the active rail tab uses — this control IS the tab, standing somewhere else. */
 .settings-open svg { width: var(--sz-icon); height: var(--sz-icon); }
-.settings-open.is-on { background: var(--primary-soft); color: var(--primary); }
+.settings-open.is-on { color: var(--foreground); box-shadow: inset 0 -2px 0 var(--primary); }

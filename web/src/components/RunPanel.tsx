@@ -210,14 +210,6 @@ export const RunPanel = memo(({ state, run, serverUrl }: RunPanelProps) => {
         </div>
       )}
 
-      {messages.length > 0 && (
-        <div className="chat-scroll-actions">
-          <Button variant="ghost" size="sm" onClick={clearMessages} type="button">
-            Clear transcript
-          </Button>
-        </div>
-      )}
-
       {/* Transcript.
           `is-idle` collapses this region to nothing while there is no transcript. It and
           the empty state are siblings and both used to claim `flex: 1`, so the column was
@@ -363,6 +355,16 @@ export const RunPanel = memo(({ state, run, serverUrl }: RunPanelProps) => {
             </DropdownMenuContent>
           </DropdownMenu>
           {forcedWorkflow && <span className="chat-workflow-note">bypasses the router</span>}
+          {/* Clearing belongs with the other things you do to this panel, not above the
+              transcript it clears: it used to open the panel body, which gave a rarely-used
+              action the one row directly under the tabs and pushed the first run down. It
+              floats to the right of the footer's left group, and only exists when there is
+              something to clear. */}
+          {messages.length > 0 && (
+            <Button variant="ghost" size="sm" className="chat-clear" onClick={clearMessages} type="button">
+              Clear transcript
+            </Button>
+          )}
           <Button
             size="sm"
             onClick={handleSend}

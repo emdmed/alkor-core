@@ -15,6 +15,12 @@
  * repair — so the first thing an operator reads is the question a document belongs to. They
  * start closed: six headings with counts is the map of the pack, and typing is faster than
  * scrolling anyway, so a query opens whatever it matches.
+ *
+ * OR ORDERED BY DIFFICULTY, which is a different question and needs a different list. "What
+ * does this pack grade" is answered by the sections; "what is the hardest thing in it" is
+ * answered by one flat list across every section, because the hardest cases are spread over
+ * five of them and a sectioned view hides exactly that. Under that order the sections become
+ * the meta line of each row, so a row still says what it is.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronRight, FileText, Loader2, Search, X } from 'lucide-react'
@@ -24,6 +30,7 @@ import {
   groupDocuments,
   kindLabel,
   matchesQuery,
+  rankedByDifficulty,
   type CorpusDocument,
   type CorpusGroup,
 } from '../lib/corpus.ts'
@@ -38,14 +45,28 @@ interface CorpusPickerProps {
 /** A rendered line. Group headers and documents take the cursor; case labels do not. */
 type Row =
   | { type: 'group'; key: string; group: CorpusGroup }
-  | { type: 'case'; key: string; caseName: string; count: number; note?: string; class?: string; difficulty?: number }
-  | { type: 'doc'; key: string; doc: CorpusDocument; inRun: boolean }
+  | {
+      type: 'case'
+      key: string
+      caseName: string
+      count: number
+      note?: string
+      class?: string
+      difficulty?: number
+      /** Which section this case came from, when the list has no section headings. */
+      context?: string
+    }
+  | { type: 'doc'; key: string; doc: CorpusDocument; inRun: boolean; context?: string }
+
+/** How the list is ordered. `corpus` is the pack's own shape; `difficulty` is hardest first. */
+type Order = 'corpus' | 'difficulty'
 
 export const CorpusPicker = ({ serverUrl, onPick, onClose }: CorpusPickerProps) => {
   const [documents, setDocuments] = useState<CorpusDocument[] | null>(null)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [query, setQuery] = useState('')
+  const [order, setOrder] = useState<Order>('corpus')
   const [opened, setOpened] = useState<ReadonlySet<string>>(new Set())
   const [cursor, setCursor] = useState(0)
   const [loadingId, setLoadingId] = useState('')
@@ -72,10 +93,13 @@ export const CorpusPicker = ({ serverUrl, onPick, onClose }: CorpusPickerProps) 
 
   const searching = query.trim().length > 0
 
-  const groups = useMemo(() => {
-    const matched = (documents ?? []).filter((doc) => matchesQuery(doc, query))
-    return groupDocuments(matched)
-  }, [documents, query])
+  const matched = useMemo(
+    () => (documents ?? []).filter((doc) => matchesQuery(doc, query)),
+    [documents, query],
+  )
+
+  const groups = useMemo(() => groupDocuments(matched), [matched])
+  const ranked = useMemo(() => rankedByDifficulty(matched), [matched])
 
   /**
    * The lines actually on screen, in order.
@@ -86,6 +110,29 @@ export const CorpusPicker = ({ serverUrl, onPick, onClose }: CorpusPickerProps) 
    */
   const rows = useMemo((): Row[] => {
     const out: Row[] = []
+
+    if (order === 'difficulty') {
+      for (const entry of ranked) {
+        const context = `${entry.label} · ${kindLabel(entry.kind)}`
+        if (entry.documents.length > 1) {
+          out.push({
+            type: 'case',
+            key: `d:${entry.key}`,
+            caseName: entry.caseName ?? entry.documents[0]!.case,
+            count: entry.documents.length,
+            note: entry.note,
+            class: entry.class,
+            difficulty: entry.difficulty,
+            context,
+          })
+          for (const doc of entry.documents) out.push({ type: 'doc', key: doc.id, doc, inRun: true })
+          continue
+        }
+        out.push({ type: 'doc', key: entry.documents[0]!.id, doc: entry.documents[0]!, inRun: false, context })
+      }
+      return out
+    }
+
     for (const group of groups) {
       out.push({ type: 'group', key: `g:${group.key}`, group })
       // A query is a statement about what you are looking for, so every section it matches
@@ -109,18 +156,18 @@ export const CorpusPicker = ({ serverUrl, onPick, onClose }: CorpusPickerProps) 
       for (const doc of group.singles) out.push({ type: 'doc', key: doc.id, doc, inRun: false })
     }
     return out
-  }, [groups, opened, searching])
+  }, [groups, ranked, opened, order, searching])
 
   const selectable = useMemo(
     () => rows.map((row, at) => ({ row, at })).filter(({ row }) => row.type !== 'case'),
     [rows],
   )
 
-  // A filter that moves the list under the cursor has to move the cursor with it, or Enter
-  // loads whatever happens to be sitting at the old index.
+  // A filter — or a reordering — that moves the list under the cursor has to move the cursor
+  // with it, or Enter loads whatever happens to be sitting at the old index.
   useEffect(() => {
     setCursor(0)
-  }, [query])
+  }, [query, order])
 
   useEffect(() => {
     listRef.current?.querySelector('[data-at-cursor="true"]')?.scrollIntoView({ block: 'nearest' })
@@ -204,9 +251,29 @@ export const CorpusPicker = ({ serverUrl, onPick, onClose }: CorpusPickerProps) 
         </button>
       </div>
 
+      {/* Two ways to read one corpus, so the control says which question each answers rather
+          than labelling itself "sort". */}
+      <div className="corpus-order" role="group" aria-label="Order the corpus">
+        {([
+          ['corpus', 'By pack', 'Grouped by the answer key that grades each document'],
+          ['difficulty', 'Hardest first', 'Every case in one list, by the difficulty its answer key states'],
+        ] as const).map(([value, label, title]) => (
+          <button
+            key={value}
+            type="button"
+            className={`corpus-order-btn${order === value ? ' is-on' : ''}`}
+            aria-pressed={order === value}
+            title={title}
+            onClick={() => setOrder(value)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       {error && <p className="corpus-error" role="alert">{error}</p>}
 
-      <div className="corpus-list" ref={listRef}>
+      <div className={`corpus-list${order === 'difficulty' ? ' is-flat' : ''}`} ref={listRef}>
         {documents === null && !error && (
           <p className="corpus-status"><Loader2 className="status-spin" aria-hidden="true" />Reading the corpus…</p>
         )}
@@ -227,6 +294,7 @@ export const CorpusPicker = ({ serverUrl, onPick, onClose }: CorpusPickerProps) 
                   <span className="corpus-case-count">{row.count} notes, one record</span>
                   {row.class && <> · {row.class}</>}
                   {row.difficulty != null && <> · difficulty {row.difficulty}</>}
+                  {row.context && <> · {row.context}</>}
                 </span>
                 {row.note && <span className="corpus-case-note">{row.note}</span>}
               </div>
@@ -257,7 +325,7 @@ export const CorpusPicker = ({ serverUrl, onPick, onClose }: CorpusPickerProps) 
             )
           }
 
-          const { doc, inRun } = row
+          const { doc, inRun, context } = row
           return (
             <button
               key={row.key}
@@ -278,6 +346,9 @@ export const CorpusPicker = ({ serverUrl, onPick, onClose }: CorpusPickerProps) 
                 {!inRun && doc.difficulty != null && <>difficulty {doc.difficulty} · </>}
                 {doc.lines} lines
               </span>
+              {/* Without section headings a row has to say where it came from, or an ordered
+                  list is a hundred slugs with no question attached to any of them. */}
+              {!inRun && context && <span className="corpus-row-context">{context}</span>}
               {/* Inside a run the description belongs to the case above and is already
                   printed once; repeating it on each note is three copies of one sentence. */}
               {!inRun && <span className="corpus-row-note">{doc.note ?? doc.preview}</span>}

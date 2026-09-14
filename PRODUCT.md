@@ -189,14 +189,47 @@ production reads. Narrower on purpose.
   clinical tool.
 - Voice in existing docs: plain, exact, unhedged; states what a number does not show in the
   same breath as the number. Never oversells.
-- **The web dashboard is a conventional modern dashboard, and that is a standing decision,
-  not a default nobody made.** Asked on 2026-09-12 to choose between four derived visual
-  directions and the category standard, the user chose the category standard in plain
-  words, with Linear, Vercel and Stripe named as the craft bar. Convention is therefore the
-  commitment: neutral surfaces, a single accent, borders carrying structure, restrained
-  motion, executed at that level of finish and without irony. Future work on this surface
-  raises the craft, never smuggles a metaphor back in. The one element carried across from
-  the superseded worlds is the `alkor` wordmark with its Mizar/Alcor star pair.
+- **The web dashboard wears the alkor ledger, and that is a standing decision, not a default
+  nobody made.** Asked on 2026-09-14 how far to take the design system distilled in
+  `web/src/alkor-ledger.css`, the user chose full adoption in plain words. **This supersedes
+  the commitment made on 2026-09-12**, which chose the category standard — a conventional
+  modern dashboard with Linear, Vercel and Stripe as the craft bar — over four derived
+  visual directions. That decision is recorded here rather than deleted, because the ledger
+  world contradicts it and an agent who finds only the new commitment cannot tell a
+  deliberate reversal from drift. The craft bar it named still stands; what changed is the
+  world, not the standard of finish.
+- **What the ledger world is, in the terms that govern a change to it.** Structure is drawn
+  by 1px rules and space: no shadows, no tinted panels, no second surface colour, no card
+  radii — square at 2px, without exception, pills included. There are exactly two surfaces
+  and the second one *sinks* (`--color-veil`, for code and log panes only). Nothing in the
+  palette is a neutral: every rung is the accent at some distance in OKLCH, which is what
+  stops a surface that is 95% text from reading as monochrome, and it is why dropping a
+  stock grey into it looks wrong. There is one filled object per view — the primary action —
+  and it carries the one accent.
+- **Four reserved roles, and they are not interchangeable.** `--color-action` (`#e2542a`) is
+  identity and interaction: Mizar in the lockup, the primary button's fill, the focus ring,
+  the current-item mark. `--color-ok` / `--color-warn` / `--color-danger` mean **run state**
+  and nothing else — never emphasis, never a taxonomy, never UI feedback, never a ranking. A
+  classification gets a shape rather than a hue, and state is never signalled by colour
+  alone: every dot ships beside a word.
+- **The accent fills and marks; it is never text.** On the light ground it measures 3.33:1 —
+  enough for a fill or a 1px rule, not enough for a word. Where the accent needs to read as
+  language, the word is set in ink and a mark beside it carries the colour. The marketing
+  page's one exception — a headline figure at display size, where 3:1 is the bar — does not
+  transfer: this surface caps at 20px, and `--text-display` does not exist on it.
+- **The theme follows the system preference, and an explicit toggle overrides it.** Both
+  earlier positions are retired: the dashboard's own "light, because it is read at a desk in
+  daylight" and the ledger's "dark, because it is read beside a terminal" are each a guess
+  about a room the code cannot see. Until the user touches the toggle nothing is stored and
+  the surface follows the OS live; after that it is their choice and it persists.
+- The one element carried across from every superseded world is the `alkor` wordmark with
+  its Mizar/Alcor star pair — the one piece of identity this system does not invent. **Paint
+  order in the star pair is load-bearing:** Alcor first, Mizar over it, so the companion is
+  the faint one you resolve at the disc's edge rather than a dot sitting on top of it.
+- `web/src/alkor-ledger.css` is **vendored and must not be edited in place.** It is the
+  distilled system and its home is `alkor-web/system/`; `web/src/styles.css` owns everything
+  built from it. A new colour, face or rule goes upstream; a new component stays local until
+  a second use earns it a promotion.
 - MIT. Contract packs under `packs/` carry CC BY 4.0 separately.
 
 ## Evidence on Hand

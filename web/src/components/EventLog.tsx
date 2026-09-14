@@ -143,7 +143,7 @@ export const EventLog = memo(({ state, selected, onClearSelection }: {
         {events.length === 0 && (
           <p className="eventlog-empty">
             {state.eventLog.length === 0
-              ? 'Listening for activity. Events appear here as the server emits them.'
+              ? 'Listening. Nothing from the server yet.'
               : focused && selected
                 ? `Nothing in the feed for ${selected.label} yet.`
                 : `No ${group} events in the last ${state.eventLog.length}.`}
