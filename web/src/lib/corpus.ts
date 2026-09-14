@@ -174,6 +174,104 @@ const kindRank = (kind: string): number => {
   return at < 0 ? KIND_ORDER.length : at
 }
 
+/* ------------------------------------------------------------- difficulty */
+
+/**
+ * The MEDIUM a document arrives in, ranked hardest first.
+ *
+ * Difficulty as the answer keys state it is a property of the case — what the note hides,
+ * how far the reasoning has to reach. It says nothing about the form the text arrives in,
+ * and the form is half the problem: an unstructured audio transcription has no headings to
+ * anchor on, states things in the order a clinician happened to say them, corrects itself
+ * mid-sentence, and carries whatever the microphone did to the words. A prose note is at
+ * least a document. An exam payload is a closed set of five findings and is the easiest
+ * thing in the pack to read, whatever the rule over it costs.
+ *
+ * So this is the tiebreak, not the sort. A transcript never outranks a harder case; it wins
+ * only against a note the answer key rated the same, which is where the extra cost of
+ * hearing rather than reading actually shows.
+ *
+ * ONE EXCEPTION: a transcript whose class says `structured` arrived already organised —
+ * dictated into sections, by a speaker doing the work the format usually doesn't. It is not
+ * unstructured audio and does not get the medium's bump.
+ */
+const MEDIUM_HARDNESS = ['transcript', 'default', 'exam']
+
+export const mediumRank = (doc: CorpusDocument): number => {
+  if (doc.kind === 'transcript' && doc.class === 'structured') return MEDIUM_HARDNESS.indexOf('default')
+  const at = MEDIUM_HARDNESS.indexOf(doc.kind)
+  // A kind this dashboard has never seen makes no claim about its own difficulty, so it
+  // sorts below the ones that do rather than ahead of them on an accident of naming.
+  return at < 0 ? MEDIUM_HARDNESS.length : at
+}
+
+/**
+ * One line of a difficulty-ordered corpus: a case and the documents it owns.
+ *
+ * The unit is the CASE rather than the document, for the same reason the grouped list
+ * clusters runs: a patient-summary case is three notes of one record rated once, and
+ * ordering them as three separate documents would spread one case across the list and
+ * repeat its difficulty three times.
+ */
+export interface CorpusEntry {
+  key: string
+  /** The case grading these documents, when an answer key named one. */
+  caseName?: string
+  documents: CorpusDocument[]
+  /** The answer key's rating, 1–5. Absent for a document no case reached. */
+  difficulty?: number
+  class?: string
+  note?: string
+  /** The kind and grading family, so a flat list can still say what a document is. */
+  kind: string
+  label: string
+}
+
+/**
+ * Every case in the corpus, hardest first.
+ *
+ * Grouping is still applied first — a document graded by several answer keys is filed under
+ * the first, exactly as the sectioned list files it — and then thrown away, because a single
+ * ordered list is the point: "what is the hardest thing in this pack" is a question about
+ * the corpus, not about one section of it.
+ *
+ * A case the answer keys never rated has no claim on a position and sorts last, below every
+ * rated case, rather than being guessed at a middle rank.
+ */
+export const rankedByDifficulty = (documents: readonly CorpusDocument[]): CorpusEntry[] => {
+  const entries: CorpusEntry[] = []
+
+  for (const group of groupDocuments(documents)) {
+    const add = (docs: CorpusDocument[], caseName?: string) => {
+      const head = docs[0]!
+      entries.push({
+        key: caseName ? `${group.key}/${caseName}` : head.id,
+        caseName,
+        documents: docs,
+        difficulty: head.difficulty,
+        class: head.class,
+        note: head.note,
+        kind: head.kind,
+        label: group.label,
+      })
+    }
+    for (const run of group.runs) add(run.documents, run.caseName)
+    for (const doc of group.singles) add([doc], doc.caseName)
+  }
+
+  return entries.sort(
+    (a, b) =>
+      (b.difficulty ?? 0) - (a.difficulty ?? 0) ||
+      hardestMedium(a) - hardestMedium(b) ||
+      a.label.localeCompare(b.label) ||
+      a.key.localeCompare(b.key),
+  )
+}
+
+/** A run is as hard to read as the hardest medium in it. */
+const hardestMedium = (entry: CorpusEntry): number =>
+  entry.documents.reduce((best, doc) => Math.min(best, mediumRank(doc)), MEDIUM_HARDNESS.length)
+
 /** Case-insensitive match across every field an operator would recognise a document by. */
 export const matchesQuery = (doc: CorpusDocument, query: string): boolean => {
   const q = query.trim().toLowerCase()

@@ -1079,7 +1079,8 @@ button, input, textarea, select { font: inherit; color: inherit; }
   gap: var(--s-4);
   background: var(--surface);
   /* Floats over the canvas, so the strong hairline is doing the whole job the shadow used to
-     — and the canvas is the same ground, which is exactly why the minor rule is not enough. */
+     — and the hair of lift under it is separation you feel rather than see, which is exactly
+     why the minor rule is still not enough here. */
   border: 1px solid var(--border-strong);
   border-radius: var(--r-xl);
 }
@@ -2363,7 +2364,39 @@ body.is-rail-resizing .rail { transition: none; }
 }
 .corpus-close:hover { background: var(--muted); color: var(--foreground); }
 
+/* Two readings of one corpus, sitting under the filter because it answers the same
+   question the filter does: which of these hundred documents do I want. */
+.corpus-order {
+  flex: none;
+  display: flex;
+  gap: var(--s-1);
+  padding: var(--s-2) var(--s-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.corpus-order-btn {
+  padding: 2px var(--s-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: var(--t-label);
+  cursor: pointer;
+}
+.corpus-order-btn:hover { color: var(--foreground); background: var(--muted); }
+.corpus-order-btn.is-on {
+  background: var(--muted);
+  border-color: var(--border-strong);
+  color: var(--foreground);
+}
+
 .corpus-list { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-3); }
+
+/* With no section headings there is nothing to be indented under, so the rows sit at the
+   margin — except the notes of a multi-document case, which still hang off its heading. */
+.corpus-list.is-flat .corpus-row:not(.is-in-run) { padding-left: var(--s-3); }
+.corpus-list.is-flat .corpus-row:not(.is-in-run) .corpus-row-note,
+.corpus-list.is-flat .corpus-row:not(.is-in-run) .corpus-row-context { padding-left: 0; }
 
 .corpus-group-btn {
   width: 100%;
@@ -2405,6 +2438,13 @@ body.is-rail-resizing .rail { transition: none; }
 .corpus-row-name { font-size: var(--t-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .corpus-row-meta { margin-left: auto; font-family: var(--font-mono); font-size: var(--t-data); color: var(--muted-foreground); flex: none; }
 .corpus-row-note { font-size: var(--t-data); color: var(--muted-foreground); padding-left: 20px; }
+.corpus-row-context {
+  padding-left: 20px;
+  font-size: var(--t-label);
+  color: var(--muted-foreground);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
 
 .corpus-case { display: flex; flex-direction: column; gap: 2px; }
 .corpus-case-name { font-size: var(--t-body); }
