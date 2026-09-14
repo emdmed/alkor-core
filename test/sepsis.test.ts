@@ -32,7 +32,9 @@ import {
   gate,
   loadSepsisCases,
   loadSepsisRule,
+  examOf,
   parseSepsis,
+  parseSepsisExtraction,
   parseSepsisReply,
   renderSepsis,
   resolveCriteria,
@@ -650,4 +652,104 @@ test('the qsofa-json shape routes to the sepsis task', async () => {
   const shock = routeClinicalShape(JSON.stringify({ systolic_bp: 80, heart_rate: 118, capillary_refill: 'delayed' }))
   assert.equal(shock.shape, 'exam-json')
   assert.equal(shock.task, 'shock')
+})
+
+/*
+ * The declared GCS assumption.
+ *
+ * qSOFA cannot be computed without a GCS, so a note that documents no mental state still has to
+ * produce one and this contract's default is 15. The failure that produced these tests is what
+ * happens when that assumption is INVISIBLE: the extraction asserted `gcs: 15` in the same shape
+ * whether a clinician had measured it or nobody had looked, a source-verifier reading the note
+ * correctly called the unmeasured case a fabricated positive assertion, and — the issue being
+ * `critical` — the assessment was withheld on a run whose verdict had otherwise agreed with the
+ * rule. The assumption is kept and declared; these pin the declaring.
+ */
+
+test('the extraction contract carries whether the note documented the GCS', () => {
+  const stated = parseSepsisExtraction(
+    JSON.stringify({ respiratory_rate: 24, systolic_bp: 88, gcs: 12, gcs_documented: true }),
+    'test',
+  )
+  assert.equal(stated.gcs, 12)
+  assert.equal(stated.gcs_documented, true)
+
+  const assumed = parseSepsisExtraction(
+    JSON.stringify({ respiratory_rate: 22, systolic_bp: 82, gcs: 15, gcs_documented: false }),
+    'test',
+  )
+  assert.equal(assumed.gcs, 15)
+  assert.equal(assumed.gcs_documented, false)
+})
+
+test('an extraction that will not say whether the GCS was documented is refused', () => {
+  // Neither default is safe, which is the whole reason this is required rather than defaulted.
+  // `true` silently re-creates the failure the field exists to fix, on exactly the runs where
+  // the model declined to answer; `false` marks measured scores as assumptions and teaches a
+  // reader to ignore the flag. So a payload that does not answer it is refused at the step that
+  // produced it, where the error can name the extraction.
+  assert.throws(
+    () => parseSepsisExtraction(JSON.stringify({ respiratory_rate: 22, systolic_bp: 82, gcs: 15 }), 'test'),
+    /gcs_documented/,
+  )
+  assert.throws(
+    () => parseSepsisExtraction(
+      JSON.stringify({ respiratory_rate: 22, systolic_bp: 82, gcs: 15, gcs_documented: 'no' }),
+      'test',
+    ),
+    /gcs_documented/,
+  )
+})
+
+test('the flag never reaches the screen, and never changes it', () => {
+  const pack = loadPack('packs/clinical')
+  const mp = loadMedprotocolRule(pack)
+  checkMedprotocolVersion(mp, pack.name)
+  const rule = loadSepsisRule(pack)
+
+  // The three numbers medprotocol takes, and nothing else: `gcs_documented` is a fact about the
+  // DOCUMENT, not an argument the CLI accepts.
+  const assumed = parseSepsisExtraction(
+    JSON.stringify({ respiratory_rate: 22, systolic_bp: 82, gcs: 15, gcs_documented: false }),
+    'test',
+  )
+  assert.deepEqual(examOf(assumed), { respiratory_rate: 22, systolic_bp: 82, gcs: 15 })
+
+  // Two readings that differ ONLY in provenance screen identically. The flag qualifies the
+  // evidence behind the result; it is not an input to it, and a screen that moved when the flag
+  // moved would be scoring the note's completeness as though it were a criterion.
+  const documented = parseSepsisExtraction(
+    JSON.stringify({ respiratory_rate: 22, systolic_bp: 82, gcs: 15, gcs_documented: true }),
+    'test',
+  )
+  const a = assess(resolveSepsis(examOf(assumed), rule, mp))
+  const b = assess(resolveSepsis(examOf(documented), rule, mp))
+  assert.deepEqual(a, b)
+  assert.equal(a.criteria.altered_mental_status, false)
+  assert.equal(a.positive, true) // rr 22 and sbp 82, without the mental-status criterion
+})
+
+test('a stored payload is still three numbers, and the prose flag is not one of them', () => {
+  // `SepsisExam` is the CLOSED payload the screen consumes and `exams/sp-*.exam.json` hold. The
+  // provenance flag exists only on the prose path, and adding it to the payload would have made
+  // twenty stored payloads answer a question none of them was written to answer.
+  const payload = parseSepsis(JSON.stringify({ respiratory_rate: 24, systolic_bp: 88, gcs: 12 }), 'test')
+  assert.deepEqual(payload, { respiratory_rate: 24, systolic_bp: 88, gcs: 12 })
+  assert.equal('gcs_documented' in payload, false)
+})
+
+test('the sepsis-extraction schema requires the flag, and its golden is current', () => {
+  const pack = loadPack('packs/clinical')
+  const spec = CONTRACTS['sepsis-extraction']
+  const schema = pack.json(spec.schemaKey) as {
+    required: string[]
+    properties: Record<string, unknown>
+    additionalProperties: boolean
+  }
+  assert.deepEqual(schema.required, ['respiratory_rate', 'systolic_bp', 'gcs', 'gcs_documented'])
+  // The first three stay contiguous and in medprotocol's --rr/--sbp/--gcs order, which the
+  // grammar compiles; the flag is appended after that run rather than interleaved with it.
+  assert.deepEqual(Object.keys(schema.properties), ['respiratory_rate', 'systolic_bp', 'gcs', 'gcs_documented'])
+  assert.equal(schema.additionalProperties, false)
+  assert.equal(JSON.stringify(pack.json(spec.schemaKey)), pack.read(spec.goldenKey).trim())
 })

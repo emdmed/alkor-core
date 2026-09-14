@@ -562,7 +562,9 @@ test('a septic shock note runs both workflows, each reasoning over its own extra
     pulse_volume: 'bounding',
     lung_exam: 'clear',
   }
-  const sepsisExam = { respiratory_rate: 24, systolic_bp: 88, gcs: 12 }
+  // `gcs_documented: true` because 12 is an abnormal score: a contract default is only ever
+  // 15, so a 12 can only have come off the note.
+  const sepsisExam = { respiratory_rate: 24, systolic_bp: 88, gcs: 12, gcs_documented: true }
 
   const calls: string[] = []
   const received: Record<string, string> = {}
@@ -884,7 +886,7 @@ test('a real run emits exactly the stages its routes publish', async () => {
     async chat(o: { label: string }): Promise<string> {
       if (o.label === 'vital_signs') return FRONT_DOOR_READING
       if (o.label === 'shock-extraction') return JSON.stringify(shockExam)
-      if (o.label === 'sepsis-extraction') return JSON.stringify({ respiratory_rate: 24, systolic_bp: 88, gcs: 12 })
+      if (o.label === 'sepsis-extraction') return JSON.stringify({ respiratory_rate: 24, systolic_bp: 88, gcs: 12, gcs_documented: true })
       if (o.label === 'shock') return JSON.stringify({
         skin_temperature: 'warm',
         jugular_venous_pressure: 'normal_or_low',

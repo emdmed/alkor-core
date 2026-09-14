@@ -195,7 +195,22 @@ const prepare = (ctx: ReviewContext, document: string | JsonObject, extraction: 
         // The three numbers ARE assertions about the prose, so they go on to the model
         // verifier. The screen beside them is arithmetic and is checked here instead — the
         // same split `shock-extraction` makes between its exam and its confirmation.
-        sourceExtraction[route] = { exam: sepsisExam }
+        //
+        // `gcs_documented` TRAVELS WITH THE GCS, INSIDE the exam, and that placement is the
+        // whole point of carrying it. qSOFA cannot run without a GCS, so a note that documents
+        // no mental state still yields one and this contract's default is 15. Forwarding the
+        // number WITHOUT the flag — which is what this projection did before, because the flag
+        // is a sibling of `exam` on the extraction's output and this line rebuilt `exam` alone
+        // — hands the source verifier a bare `gcs: 15` on a note that never mentions mental
+        // state, and it correctly calls that a fabricated positive assertion. Being `critical`,
+        // that withholds the assessment on a run that agreed with the rule.
+        //
+        // The verifier is asked to judge the PAIR, so the pair has to be adjacent and it has to
+        // arrive. See rule 3 and Example 6b in packs/verifier/prompt.md.
+        const documented = output.gcs_documented
+        sourceExtraction[route] = {
+          exam: typeof documented === 'boolean' ? { ...sepsisExam, gcs_documented: documented } : sepsisExam,
+        }
 
         const mp = loadMedprotocolRule(ctx.pack!)
         checkMedprotocolVersion(mp, ctx.pack!.name)

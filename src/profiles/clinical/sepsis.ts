@@ -68,6 +68,47 @@ export interface SepsisExam {
   gcs: number
 }
 
+/**
+ * The same three numbers, plus whether the note actually documented the third.
+ *
+ * WHY THIS IS A SEPARATE TYPE AND NOT A FOURTH FIELD ON `SepsisExam`. `SepsisExam` is the CLOSED
+ * payload the screen consumes — it is what `exams/sp-*.exam.json` hold and what
+ * `evaluateQSOFA` is handed, and every one of its members is an argument medprotocol takes.
+ * `gcs_documented` is not an argument; it is a fact about the DOCUMENT the numbers were read
+ * out of, and it exists only on the prose path. Putting it on the payload would have made
+ * twenty stored payloads answer a question none of them was written to answer.
+ *
+ * WHAT IT IS FOR. The screen cannot run without a GCS, so a note that never mentions mental
+ * state still has to produce one, and the contract's declared default is 15. That assumption
+ * used to be invisible: the extraction asserted `gcs: 15` in exactly the same shape whether a
+ * clinician had measured it or nobody had looked. A source-verifier reading the note then
+ * correctly called the unmeasured case a fabricated positive assertion — and, being `critical`,
+ * withheld the assessment on a run whose verdict had otherwise agreed with the rule.
+ *
+ * It is the qSOFA equivalent of shock's `not_assessed`, which this payload cannot express
+ * because a screen missing a criterion is a screen that never ran. The assumption is kept and
+ * declared instead of being removed, because declining to screen the commonest kind of note —
+ * one that says nothing about a GCS — costs more than the assumption does. A screen is a
+ * trigger for suspicion, not a diagnosis.
+ */
+export interface SepsisExtraction extends SepsisExam {
+  /**
+   * True when the note states a score or describes the mental state in words. False when the
+   * note is silent and `gcs` is this contract's default rather than an observation.
+   *
+   * False is not an error and fails nothing. It is the correct answer for most notes, and it
+   * is the flag a reader needs to tell "this patient was alert" from "nobody wrote it down".
+   */
+  gcs_documented: boolean
+}
+
+/** The three numbers the screen consumes, without the provenance flag that travels beside them. */
+export const examOf = (e: SepsisExtraction): SepsisExam => ({
+  respiratory_rate: e.respiratory_rate,
+  systolic_bp: e.systolic_bp,
+  gcs: e.gcs,
+})
+
 // --- What the pack declares -----------------------------------------------------------------
 
 /**
@@ -231,6 +272,34 @@ export const parseSepsis = (raw: string, where: string): SepsisExam => {
     )
   }
   return o as unknown as SepsisExam
+}
+
+/**
+ * The same payload as it arrives from a NOTE, where the GCS may be this contract's default.
+ *
+ * It reuses `parseSepsis` for the three numbers — there is one statement in this repository of
+ * what a qSOFA payload must contain and this is not a second one — and then requires the
+ * provenance flag on top.
+ *
+ * THE FLAG IS REQUIRED RATHER THAN DEFAULTED, and that is the point of validating it here. A
+ * missing `gcs_documented` defaulted to `true` would silently re-create the failure this field
+ * exists to fix, on exactly the runs where the model declined to answer it; defaulted to
+ * `false` it would mark documented scores as assumptions and train a reader to ignore the flag.
+ * Neither default is safe, so a payload that does not answer the question is refused at the
+ * step that produced it.
+ */
+export const parseSepsisExtraction = (raw: string, where: string): SepsisExtraction => {
+  const exam = parseSepsis(raw, where)
+  const o = JSON.parse(raw) as Record<string, unknown>
+  if (typeof o.gcs_documented !== 'boolean') {
+    throw new ProfileError(
+      `${where}: 'gcs_documented' must be true or false — it says whether the note supports the ` +
+        `GCS above, and this contract assumes 15 when a note is silent. Without the flag there ` +
+        `is no way to tell an assumed 15 from a measured one, which is the difference between ` +
+        `"the patient was alert" and "nobody looked"`,
+    )
+  }
+  return { ...exam, gcs_documented: o.gcs_documented }
 }
 
 // --- Scoring one reply --------------------------------------------------------------------------
