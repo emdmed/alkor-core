@@ -301,13 +301,26 @@
    * ground as everything else and its nodes are rows with a border rather than widgets on a
    * tray.
    *
+   * It does lift off the ground by a hair — and only a hair. Nodes paint in `--surface`,
+   * which IS the ground, so a canvas at exactly the ground gave a card nothing but its 1px
+   * border to be found by, and a board of forty of them read as one field. Lifting the
+   * paper ~1.1:1 lets a card sit fractionally darker than what surrounds it, which is
+   * enough to be scanned and far too little to read as a tray. Mixed from the ink so it
+   * stays in the temperature gradient; do not push it further to make cards "pop" — past
+   * this the canvas becomes a second surface and the whole argument above collapses.
+   *
    * The three edge weights are a ladder in the temperature gradient and deliberately spend
    * no accent. A taken route is drawn in ink because it is the thing you read the run off; a
    * possible-but-not-taken route is drawn in the minor rule and dashed. The accent is
    * reserved for the CURRENT item, which is a mark on a node, not a line across the board.
    */
-  --canvas: var(--color-ground);
-  --canvas-dot: var(--color-rule);
+  --canvas: color-mix(in oklab, var(--color-ground) 93%, var(--color-ink) 7%);
+  /* The dot grid is read against the canvas, so it moves with it: on the lifted dark paper
+     the minor rule alone falls to 1.14:1 and the grid stops being visible at all. Half a
+     step toward the strong rule puts it back where it always sat, ~1.4:1 — present when
+     looked for, invisible when not. The light twin's canvas moves the other way and the
+     minor rule gains separation there, so it keeps it (see the override below). */
+  --canvas-dot: color-mix(in oklab, var(--color-rule) 50%, var(--color-rule-strong) 50%);
   --edge: var(--color-rule-strong);
   --edge-taken: var(--color-ink-3);
   --edge-ghost: var(--color-rule);
@@ -341,6 +354,21 @@
    */
 
   --radius: var(--r-lg);
+}
+
+/*
+ * The canvas lift, in the light twin.
+ *
+ * `--canvas` above mixes the ground toward the ink, which lifts a dark page and SINKS a
+ * light one — the light theme would get the tray the note up there rules out. So the light
+ * twin takes the same hair of separation in the direction that is still "lift" on paper:
+ * toward white, away from the warm ground the cards keep. Same magnitude, same result — a
+ * card reads a shade apart from what surrounds it — and this is the one place in the file
+ * where a theme needs its own value rather than a re-resolved one.
+ */
+:root[data-theme="light"] {
+  --canvas: color-mix(in oklab, var(--color-ground) 55%, #fff 45%);
+  --canvas-dot: var(--color-rule);
 }
 
 /* ==========================================================================
